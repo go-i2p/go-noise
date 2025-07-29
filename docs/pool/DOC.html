@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pool - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" class="active">pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>pool - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="pool">pool</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/pool&quot;
+</code></pre>
+
+<p><img src="../images/pool.svg" alt="pool.svg" /></p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="type-connpool">type ConnPool</h4>
+
+<pre><code class="language-go">type ConnPool struct {
+}
+</code></pre>
+
+<p>ConnPool manages a pool of reusable connections for performance optimization. It
+only uses interface types (net.Conn, net.Addr) for maximum compatibility. Moved
+from: pool/buffer.go</p>
+
+<h4 id="func-newconnpool">func  NewConnPool</h4>
+
+<pre><code class="language-go">func NewConnPool(config *PoolConfig) *ConnPool
+</code></pre>
+
+<p>NewConnPool creates a new connection pool with the given configuration</p>
+
+<h4 id="func-connpool-close">func (*ConnPool) Close</h4>
+
+<pre><code class="language-go">func (p *ConnPool) Close() error
+</code></pre>
+
+<p>Close closes all connections in the pool and prevents new connections from being
+added</p>
+
+<h4 id="func-connpool-get">func (*ConnPool) Get</h4>
+
+<pre><code class="language-go">func (p *ConnPool) Get(remoteAddr string) net.Conn
+</code></pre>
+
+<p>Get retrieves a connection from the pool for the given remote address. Returns
+nil if no suitable connection is available.</p>
+
+<h4 id="func-connpool-put">func (*ConnPool) Put</h4>
+
+<pre><code class="language-go">func (p *ConnPool) Put(conn net.Conn) error
+</code></pre>
+
+<p>Put adds a connection to the pool for reuse</p>
+
+<h4 id="func-connpool-release">func (*ConnPool) Release</h4>
+
+<pre><code class="language-go">func (p *ConnPool) Release(remoteAddr string, conn net.Conn)
+</code></pre>
+
+<p>Release marks a connection as no longer in use, making it available for reuse</p>
+
+<h4 id="func-connpool-stats">func (*ConnPool) Stats</h4>
+
+<pre><code class="language-go">func (p *ConnPool) Stats() map[string]int
+</code></pre>
+
+<p>Stats returns pool statistics</p>
+
+<h4 id="type-poolconfig">type PoolConfig</h4>
+
+<pre><code class="language-go">type PoolConfig struct {
+	MaxSize int           // Maximum number of connections per remote address
+	MaxAge  time.Duration // Maximum age of a connection before it's closed
+	MaxIdle time.Duration // Maximum idle time before a connection is closed
+}
+</code></pre>
+
+<p>PoolConfig configures a connection pool Moved from: pool/buffer.go</p>
+
+<h4 id="type-poolconnwrapper">type PoolConnWrapper</h4>
+
+<pre><code class="language-go">type PoolConnWrapper struct {
+	net.Conn
+}
+</code></pre>
+
+<p>PoolConnWrapper wraps a pooled connection to handle automatic release Moved
+from: pool/buffer.go</p>
+
+<h4 id="func-poolconnwrapper-close">func (*PoolConnWrapper) Close</h4>
+
+<pre><code class="language-go">func (w *PoolConnWrapper) Close() error
+</code></pre>
+
+<p>Close returns the connection to the pool instead of closing it</p>
+
+<h4 id="type-pooledconn">type PooledConn</h4>
+
+<pre><code class="language-go">type PooledConn struct {
+	Conn       net.Conn
+	Created    time.Time
+	LastUsed   time.Time
+	InUse      bool
+	RemoteAddr string
+}
+</code></pre>
+
+<p>PooledConn represents a connection in the pool with metadata Moved from:
+pool/buffer.go</p>
+
+<p>pool</p>
+
+<p>github.com/go-i2p/go-noise/pool</p>
+
+<p><a href="../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

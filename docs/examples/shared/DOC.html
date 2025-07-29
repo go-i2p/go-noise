@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>shared - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" class="active">shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>shared - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="shared">shared</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/examples/shared&quot;
+</code></pre>
+
+<p><img src="../images/shared.svg" alt="shared.svg" /></p>
+
+<p>Package shared provides common utilities for go-noise examples</p>
+
+<p>Package shared provides common utilities for go-noise examples</p>
+
+<p>Package shared provides common utilities for go-noise examples</p>
+
+<p>Package shared provides common utilities for go-noise examples</p>
+
+<h2 id="usage">Usage</h2>
+
+<pre><code class="language-go">var PatternsRequiringLocalKey = map[string]bool{
+	&quot;K&quot;: true, &quot;X&quot;: true,
+	&quot;XK&quot;: true, &quot;XX&quot;: true,
+	&quot;KN&quot;: true, &quot;KK&quot;: true, &quot;KX&quot;: true,
+	&quot;IK&quot;: true, &quot;IX&quot;: true,
+}
+</code></pre>
+
+<p>PatternsRequiringLocalKey returns patterns that require a static key for the
+local party</p>
+
+<pre><code class="language-go">var PatternsRequiringRemoteKey = map[string]bool{
+	&quot;K&quot;: true, &quot;NK&quot;: true,
+	&quot;XK&quot;: true, &quot;KN&quot;: true, &quot;KK&quot;: true, &quot;KX&quot;: true,
+	&quot;IK&quot;: true, &quot;IN&quot;: true,
+}
+</code></pre>
+
+<p>PatternsRequiringRemoteKey returns patterns that require a remote static key</p>
+
+<pre><code class="language-go">var SupportedPatterns = []string{
+
+	&quot;N&quot;, &quot;K&quot;, &quot;X&quot;,
+
+	&quot;NN&quot;, &quot;NK&quot;, &quot;NX&quot;,
+	&quot;XN&quot;, &quot;XK&quot;, &quot;XX&quot;,
+	&quot;KN&quot;, &quot;KK&quot;, &quot;KX&quot;,
+	&quot;IN&quot;, &quot;IK&quot;, &quot;IX&quot;,
+}
+</code></pre>
+
+<p>SupportedPatterns lists all standard Noise Protocol patterns</p>
+
+<h4 id="func-generatekeypair">func  GenerateKeyPair</h4>
+
+<pre><code class="language-go">func GenerateKeyPair() (localKey, remoteKey []byte, err error)
+</code></pre>
+
+<p>GenerateKeyPair generates a pair of keys for testing (static key and remote key)</p>
+
+<h4 id="func-generaterandomkey">func  GenerateRandomKey</h4>
+
+<pre><code class="language-go">func GenerateRandomKey() ([]byte, error)
+</code></pre>
+
+<p>GenerateRandomKey generates a random 32-byte Curve25519 private key for testing</p>
+
+<h4 id="func-getpatternrequirements">func  GetPatternRequirements</h4>
+
+<pre><code class="language-go">func GetPatternRequirements(pattern string) (needsLocal, needsRemote bool)
+</code></pre>
+
+<p>GetPatternRequirements returns the key requirements for a pattern</p>
+
+<h4 id="func-keytohex">func  KeyToHex</h4>
+
+<pre><code class="language-go">func KeyToHex(key []byte) string
+</code></pre>
+
+<p>KeyToHex converts a 32-byte key to a hex string for display/storage</p>
+
+<h4 id="func-parsekeyfromhex">func  ParseKeyFromHex</h4>
+
+<pre><code class="language-go">func ParseKeyFromHex(keyStr string) ([]byte, error)
+</code></pre>
+
+<p>ParseKeyFromHex parses a hexadecimal string into a 32-byte key</p>
+
+<h4 id="func-parsekeys">func  ParseKeys</h4>
+
+<pre><code class="language-go">func ParseKeys(args *CommonArgs) (staticKey, remoteKey []byte, err error)
+</code></pre>
+
+<p>ParseKeys parses cryptographic keys based on pattern requirements for general
+Noise examples</p>
+
+<h4 id="func-printkeys">func  PrintKeys</h4>
+
+<pre><code class="language-go">func PrintKeys(localKey, remoteKey []byte)
+</code></pre>
+
+<p>PrintKeys displays keys in a user-friendly format</p>
+
+<h4 id="func-printusage">func  PrintUsage</h4>
+
+<pre><code class="language-go">func PrintUsage(appName, description string)
+</code></pre>
+
+<p>PrintUsage displays usage information for a Noise example</p>
+
+<h4 id="func-requireslocalstatickey">func  RequiresLocalStaticKey</h4>
+
+<pre><code class="language-go">func RequiresLocalStaticKey(pattern string) bool
+</code></pre>
+
+<p>RequiresLocalStaticKey returns true if the pattern requires a local static key</p>
+
+<h4 id="func-requiresremotestatickey">func  RequiresRemoteStaticKey</h4>
+
+<pre><code class="language-go">func RequiresRemoteStaticKey(pattern string) bool
+</code></pre>
+
+<p>RequiresRemoteStaticKey returns true if the pattern requires a remote static key</p>
+
+<h4 id="func-rundemo">func  RunDemo</h4>
+
+<pre><code class="language-go">func RunDemo()
+</code></pre>
+
+<p>RunDemo executes demonstration mode showing supported patterns and
+configurations</p>
+
+<h4 id="func-rungenerate">func  RunGenerate</h4>
+
+<pre><code class="language-go">func RunGenerate()
+</code></pre>
+
+<p>RunGenerate generates and displays cryptographic keys for testing</p>
+
+<h4 id="func-validatepattern">func  ValidatePattern</h4>
+
+<pre><code class="language-go">func ValidatePattern(pattern string) error
+</code></pre>
+
+<p>ValidatePattern checks if a pattern is supported</p>
+
+<h4 id="type-commonargs">type CommonArgs</h4>
+
+<pre><code class="language-go">type CommonArgs struct {
+	// Network configuration
+	ServerAddr string
+	ClientAddr string
+	Pattern    string
+
+	// Cryptographic material
+	StaticKey string
+	RemoteKey string
+
+	// Timeouts
+	HandshakeTimeout time.Duration
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+
+	// Operation modes
+	Demo     bool
+	Generate bool
+	Verbose  bool
+}
+</code></pre>
+
+<p>CommonArgs holds common command-line arguments for Noise examples</p>
+
+<h4 id="func-parsecommonargs">func  ParseCommonArgs</h4>
+
+<pre><code class="language-go">func ParseCommonArgs(appName string) (*CommonArgs, error)
+</code></pre>
+
+<p>ParseCommonArgs parses standard command-line arguments for Noise examples</p>
+
+<h4 id="func-commonargs-validateargs">func (*CommonArgs) ValidateArgs</h4>
+
+<pre><code class="language-go">func (args *CommonArgs) ValidateArgs() error
+</code></pre>
+
+<p>ValidateArgs performs validation on parsed arguments</p>
+
+<p>shared</p>
+
+<p>github.com/go-i2p/go-noise/examples/shared</p>
+
+<p><a href="../../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

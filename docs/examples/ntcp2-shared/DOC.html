@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>shared - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" class="active">shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>shared - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="shared">shared</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/examples/ntcp2-shared&quot;
+</code></pre>
+
+<p><img src="../images/shared.svg" alt="shared.svg" /></p>
+
+<p>Package shared provides NTCP2-specific utilities for go-noise examples</p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="func-parsentcp2keys">func  ParseNTCP2Keys</h4>
+
+<pre><code class="language-go">func ParseNTCP2Keys(args *NTCP2Args) (routerHash, remoteRouterHash, destHash, staticKey []byte, err error)
+</code></pre>
+
+<p>ParseNTCP2Keys handles parsing of NTCP2-specific cryptographic material</p>
+
+<h4 id="func-printntcp2usage">func  PrintNTCP2Usage</h4>
+
+<pre><code class="language-go">func PrintNTCP2Usage(appName, description string)
+</code></pre>
+
+<p>PrintNTCP2Usage displays usage information for an NTCP2 example</p>
+
+<h4 id="func-runntcp2demo">func  RunNTCP2Demo</h4>
+
+<pre><code class="language-go">func RunNTCP2Demo()
+</code></pre>
+
+<p>RunNTCP2Demo executes demonstration mode for NTCP2</p>
+
+<h4 id="func-runntcp2generate">func  RunNTCP2Generate</h4>
+
+<pre><code class="language-go">func RunNTCP2Generate()
+</code></pre>
+
+<p>RunNTCP2Generate generates and displays NTCP2 cryptographic material</p>
+
+<h4 id="type-ntcp2args">type NTCP2Args</h4>
+
+<pre><code class="language-go">type NTCP2Args struct {
+	// Network configuration
+	ServerAddr string
+	ClientAddr string
+
+	// NTCP2-specific material
+	RouterHash       string
+	RemoteRouterHash string
+	DestinationHash  string
+
+	// Cryptographic keys (Curve25519)
+	StaticKey string
+
+	// Timeouts
+	HandshakeTimeout time.Duration
+	ReadTimeout      time.Duration
+	WriteTimeout     time.Duration
+
+	// NTCP2 features
+	EnableAESObfuscation bool
+	EnableSipHashLength  bool
+	MaxFrameSize         int
+
+	// Operation modes
+	Demo     bool
+	Generate bool
+	Verbose  bool
+}
+</code></pre>
+
+<p>NTCP2Args holds NTCP2-specific command-line arguments</p>
+
+<h4 id="func-parsentcp2args">func  ParseNTCP2Args</h4>
+
+<pre><code class="language-go">func ParseNTCP2Args(appName string) (*NTCP2Args, error)
+</code></pre>
+
+<p>ParseNTCP2Args parses NTCP2-specific command-line arguments</p>
+
+<h4 id="func-ntcp2args-validateargs">func (*NTCP2Args) ValidateArgs</h4>
+
+<pre><code class="language-go">func (args *NTCP2Args) ValidateArgs() error
+</code></pre>
+
+<p>ValidateNTCP2Args performs validation on parsed NTCP2 arguments</p>
+
+<p>shared</p>
+
+<p>github.com/go-i2p/go-noise/examples/ntcp2-shared</p>
+
+<p><a href="../../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

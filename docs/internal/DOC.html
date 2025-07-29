@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>internal - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" class="active">internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>internal - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="internal">internal</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/internal&quot;
+</code></pre>
+
+<p><img src="../images/internal.svg" alt="internal.svg" /></p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="func-randombytes">func  RandomBytes</h4>
+
+<pre><code class="language-go">func RandomBytes(n int) ([]byte, error)
+</code></pre>
+
+<p>RandomBytes generates cryptographically secure random bytes</p>
+
+<h4 id="func-securezero">func  SecureZero</h4>
+
+<pre><code class="language-go">func SecureZero(b []byte)
+</code></pre>
+
+<p>SecureZero securely zeroes out the given byte slice</p>
+
+<h4 id="func-validatekeysize">func  ValidateKeySize</h4>
+
+<pre><code class="language-go">func ValidateKeySize(key []byte, expectedSize int) bool
+</code></pre>
+
+<p>ValidateKeySize validates that a key has the expected size</p>
+
+<h4 id="type-connstate">type ConnState</h4>
+
+<pre><code class="language-go">type ConnState int
+</code></pre>
+
+<p>ConnState represents the internal state of a NoiseConn</p>
+
+<pre><code class="language-go">const (
+	// StateInit represents a newly created connection
+	StateInit ConnState = iota
+	// StateHandshaking represents a connection performing handshake
+	StateHandshaking
+	// StateEstablished represents a connection with completed handshake
+	StateEstablished
+	// StateClosed represents a closed connection
+	StateClosed
+)
+</code></pre>
+
+<h4 id="func-connstate-string">func (ConnState) String</h4>
+
+<pre><code class="language-go">func (s ConnState) String() string
+</code></pre>
+
+<p>String returns the string representation of the connection state</p>
+
+<h4 id="type-connectionmetrics">type ConnectionMetrics</h4>
+
+<pre><code class="language-go">type ConnectionMetrics struct {
+	HandshakeStarted time.Time
+	HandshakeEnded   time.Time
+	BytesRead        int64
+	BytesWritten     int64
+	Created          time.Time
+}
+</code></pre>
+
+<p>ConnectionMetrics holds connection performance metrics</p>
+
+<h4 id="func-newconnectionmetrics">func  NewConnectionMetrics</h4>
+
+<pre><code class="language-go">func NewConnectionMetrics() *ConnectionMetrics
+</code></pre>
+
+<p>NewConnectionMetrics creates a new ConnectionMetrics instance</p>
+
+<h4 id="func-connectionmetrics-addbytesread">func (*ConnectionMetrics) AddBytesRead</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) AddBytesRead(n int64)
+</code></pre>
+
+<p>AddBytesRead increments the bytes read counter</p>
+
+<h4 id="func-connectionmetrics-addbyteswritten">func (*ConnectionMetrics) AddBytesWritten</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) AddBytesWritten(n int64)
+</code></pre>
+
+<p>AddBytesWritten increments the bytes written counter</p>
+
+<h4 id="func-connectionmetrics-getstats">func (*ConnectionMetrics) GetStats</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) GetStats() (bytesRead, bytesWritten int64, duration time.Duration)
+</code></pre>
+
+<p>GetStats returns current connection statistics</p>
+
+<h4 id="func-connectionmetrics-handshakeduration">func (*ConnectionMetrics) HandshakeDuration</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) HandshakeDuration() time.Duration
+</code></pre>
+
+<p>HandshakeDuration returns the duration of the handshake process</p>
+
+<h4 id="func-connectionmetrics-sethandshakeend">func (*ConnectionMetrics) SetHandshakeEnd</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) SetHandshakeEnd()
+</code></pre>
+
+<p>SetHandshakeEnd records the handshake completion time</p>
+
+<h4 id="func-connectionmetrics-sethandshakestart">func (*ConnectionMetrics) SetHandshakeStart</h4>
+
+<pre><code class="language-go">func (m *ConnectionMetrics) SetHandshakeStart()
+</code></pre>
+
+<p>SetHandshakeStart records the handshake start time</p>
+
+<p>internal</p>
+
+<p>github.com/go-i2p/go-noise/internal</p>
+
+<p><a href="../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

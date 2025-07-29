@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>handshake - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" class="active">handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>handshake - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="handshake">handshake</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/handshake&quot;
+</code></pre>
+
+<p><img src="../images/handshake.svg" alt="handshake.svg" /></p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="type-handshakemodifier">type HandshakeModifier</h4>
+
+<pre><code class="language-go">type HandshakeModifier interface {
+	// ModifyOutbound modifies data being sent during handshake
+	ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
+
+	// ModifyInbound modifies data being received during handshake
+	ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
+
+	// Name returns the modifier name for logging and debugging
+	Name() string
+}
+</code></pre>
+
+<p>HandshakeModifier defines the interface for modifying handshake data for
+obfuscation and padding purposes. Modifiers can be chained to create complex
+transformations while maintaining Noise protocol security.</p>
+
+<h4 id="type-handshakephase">type HandshakePhase</h4>
+
+<pre><code class="language-go">type HandshakePhase int
+</code></pre>
+
+<p>HandshakePhase represents the phase of the handshake process</p>
+
+<pre><code class="language-go">const (
+	// PhaseInitial represents the initial phase of the handshake
+	PhaseInitial HandshakePhase = iota
+	// PhaseExchange represents the message exchange phase
+	PhaseExchange
+	// PhaseFinal represents the final phase of the handshake
+	PhaseFinal
+)
+</code></pre>
+
+<h4 id="func-handshakephase-string">func (HandshakePhase) String</h4>
+
+<pre><code class="language-go">func (p HandshakePhase) String() string
+</code></pre>
+
+<p>String returns the string representation of the handshake phase</p>
+
+<h4 id="type-modifierchain">type ModifierChain</h4>
+
+<pre><code class="language-go">type ModifierChain struct {
+}
+</code></pre>
+
+<p>ModifierChain represents a chain of HandshakeModifier instances that are applied
+in sequence. The chain ensures that modifiers are applied in the correct order
+and provides error handling for the entire chain. Moved from: handshake/chain.go</p>
+
+<h4 id="func-newmodifierchain">func  NewModifierChain</h4>
+
+<pre><code class="language-go">func NewModifierChain(name string, modifiers ...HandshakeModifier) *ModifierChain
+</code></pre>
+
+<p>NewModifierChain creates a new modifier chain with the given modifiers.
+Modifiers are applied in the order they are provided.</p>
+
+<h4 id="func-modifierchain-count">func (*ModifierChain) Count</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) Count() int
+</code></pre>
+
+<p>Count returns the number of modifiers in the chain.</p>
+
+<h4 id="func-modifierchain-isempty">func (*ModifierChain) IsEmpty</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) IsEmpty() bool
+</code></pre>
+
+<p>IsEmpty returns true if the chain contains no modifiers.</p>
+
+<h4 id="func-modifierchain-modifiernames">func (*ModifierChain) ModifierNames</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) ModifierNames() []string
+</code></pre>
+
+<p>ModifierNames returns the names of all modifiers in the chain.</p>
+
+<h4 id="func-modifierchain-modifyinbound">func (*ModifierChain) ModifyInbound</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound applies all modifiers in the chain to inbound data. Modifiers are
+applied in reverse order to undo the transformations applied during outbound
+processing.</p>
+
+<h4 id="func-modifierchain-modifyoutbound">func (*ModifierChain) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound applies all modifiers in the chain to outbound data. Modifiers
+are applied in the order they were added to the chain.</p>
+
+<h4 id="func-modifierchain-name">func (*ModifierChain) Name</h4>
+
+<pre><code class="language-go">func (mc *ModifierChain) Name() string
+</code></pre>
+
+<p>Name returns the name of the modifier chain for logging and debugging.</p>
+
+<h4 id="type-paddingmodifier">type PaddingModifier</h4>
+
+<pre><code class="language-go">type PaddingModifier struct {
+}
+</code></pre>
+
+<p>PaddingModifier implements padding-based obfuscation by adding random padding to
+handshake messages and removing it during processing. Moved from:
+handshake/modifiers.go</p>
+
+<h4 id="func-newpaddingmodifier">func  NewPaddingModifier</h4>
+
+<pre><code class="language-go">func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifier, error)
+</code></pre>
+
+<p>NewPaddingModifier creates a new padding modifier with the specified minimum and
+maximum padding sizes.</p>
+
+<h4 id="func-paddingmodifier-modifyinbound">func (*PaddingModifier) ModifyInbound</h4>
+
+<pre><code class="language-go">func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound removes padding from inbound handshake data.</p>
+
+<h4 id="func-paddingmodifier-modifyoutbound">func (*PaddingModifier) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound adds padding to outbound handshake data. Padding format:
+[original_length:4][original_data][padding_data]</p>
+
+<h4 id="func-paddingmodifier-name">func (*PaddingModifier) Name</h4>
+
+<pre><code class="language-go">func (pm *PaddingModifier) Name() string
+</code></pre>
+
+<p>Name returns the name of the padding modifier for logging and debugging.</p>
+
+<h4 id="type-xormodifier">type XORModifier</h4>
+
+<pre><code class="language-go">type XORModifier struct {
+}
+</code></pre>
+
+<p>XORModifier implements a simple XOR-based obfuscation modifier. It XORs
+handshake data with a configurable key pattern to provide basic obfuscation
+without compromising Noise protocol security. Moved from: handshake/modifiers.go</p>
+
+<h4 id="func-newxormodifier">func  NewXORModifier</h4>
+
+<pre><code class="language-go">func NewXORModifier(name string, xorKey []byte) *XORModifier
+</code></pre>
+
+<p>NewXORModifier creates a new XOR modifier with the specified key. The key is
+repeated as needed to match the data length.</p>
+
+<h4 id="func-xormodifier-modifyinbound">func (*XORModifier) ModifyInbound</h4>
+
+<pre><code class="language-go">func (xm *XORModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound removes XOR obfuscation from inbound handshake data. Since XOR is
+symmetric, this performs the same operation as ModifyOutbound.</p>
+
+<h4 id="func-xormodifier-modifyoutbound">func (*XORModifier) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound applies XOR obfuscation to outbound handshake data.</p>
+
+<h4 id="func-xormodifier-name">func (*XORModifier) Name</h4>
+
+<pre><code class="language-go">func (xm *XORModifier) Name() string
+</code></pre>
+
+<p>Name returns the name of the XOR modifier for logging and debugging.</p>
+
+<p>handshake</p>
+
+<p>github.com/go-i2p/go-noise/handshake</p>
+
+<p><a href="../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

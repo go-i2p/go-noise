@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ntcp2 - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" class="active">ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>ntcp2 - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="ntcp2">ntcp2</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise/ntcp2&quot;
+</code></pre>
+
+<p><img src="../images/ntcp2.svg" alt="ntcp2.svg" /></p>
+
+<p>Package ntcp2 provides NTCP2-specific implementations for the Noise Protocol
+Framework supporting I2P&rsquo;s NTCP2 transport protocol with router identity and
+session management.</p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="type-aesobfuscationmodifier">type AESObfuscationModifier</h4>
+
+<pre><code class="language-go">type AESObfuscationModifier struct {
+}
+</code></pre>
+
+<p>AESObfuscationModifier implements NTCP2&rsquo;s AES-based ephemeral key obfuscation.
+This modifier encrypts/decrypts the X and Y ephemeral keys in messages 1 and 2
+using AES-256-CBC with the router hash as key and published IV. Moved from:
+ntcp2/modifier.go</p>
+
+<h4 id="func-newaesobfuscationmodifier">func  NewAESObfuscationModifier</h4>
+
+<pre><code class="language-go">func NewAESObfuscationModifier(name string, routerHash, iv []byte) (*AESObfuscationModifier, error)
+</code></pre>
+
+<p>NewAESObfuscationModifier creates a new AES obfuscation modifier for NTCP2.
+routerHash must be 32 bytes (RH_B), iv must be 16 bytes from network database.</p>
+
+<h4 id="func-aesobfuscationmodifier-modifyinbound">func (*AESObfuscationModifier) ModifyInbound</h4>
+
+<pre><code class="language-go">func (aom *AESObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound removes AES obfuscation from ephemeral keys in handshake messages.</p>
+
+<h4 id="func-aesobfuscationmodifier-modifyoutbound">func (*AESObfuscationModifier) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (aom *AESObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound applies AES obfuscation to ephemeral keys in handshake messages.
+For message 1: encrypts X key with RH_B and published IV For message 2: encrypts
+Y key with RH_B and AES state from message 1</p>
+
+<h4 id="func-aesobfuscationmodifier-name">func (*AESObfuscationModifier) Name</h4>
+
+<pre><code class="language-go">func (aom *AESObfuscationModifier) Name() string
+</code></pre>
+
+<p>Name returns the modifier name for logging and debugging.</p>
+
+<h4 id="type-ntcp2addr">type NTCP2Addr</h4>
+
+<pre><code class="language-go">type NTCP2Addr struct {
+}
+</code></pre>
+
+<p>NTCP2Addr implements net.Addr for NTCP2 transport connections. It provides
+I2P-specific addressing information including router identity, destination hash,
+and session parameters for the NTCP2 protocol. Moved from: ntcp2/addr.go</p>
+
+<h4 id="func-newntcp2addr">func  NewNTCP2Addr</h4>
+
+<pre><code class="language-go">func NewNTCP2Addr(underlying net.Addr, routerHash []byte, role string) (*NTCP2Addr, error)
+</code></pre>
+
+<p>NewNTCP2Addr creates a new NTCP2Addr with the specified TCP address and router
+hash. routerHash must be exactly 32 bytes representing the I2P router identity.
+role should be either &ldquo;initiator&rdquo; or &ldquo;responder&rdquo;.</p>
+
+<h4 id="func-ntcp2addr-destinationhash">func (*NTCP2Addr) DestinationHash</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) DestinationHash() []byte
+</code></pre>
+
+<p>DestinationHash returns a copy of the destination hash, or nil for
+router-to-router connections. The returned slice is a defensive copy to prevent
+external modification.</p>
+
+<h4 id="func-ntcp2addr-isroutertorouter">func (*NTCP2Addr) IsRouterToRouter</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) IsRouterToRouter() bool
+</code></pre>
+
+<p>IsRouterToRouter returns true if this is a router-to-router connection (no
+destination hash).</p>
+
+<h4 id="func-ntcp2addr-istunnelconnection">func (*NTCP2Addr) IsTunnelConnection</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) IsTunnelConnection() bool
+</code></pre>
+
+<p>IsTunnelConnection returns true if this is a tunnel connection (has destination
+hash).</p>
+
+<h4 id="func-ntcp2addr-network">func (*NTCP2Addr) Network</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) Network() string
+</code></pre>
+
+<p>Network returns &ldquo;ntcp2&rdquo; to identify this as an NTCP2 transport address. This
+implements the net.Addr interface requirement.</p>
+
+<h4 id="func-ntcp2addr-role">func (*NTCP2Addr) Role</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) Role() string
+</code></pre>
+
+<p>Role returns the connection role (&ldquo;initiator&rdquo; or &ldquo;responder&rdquo;).</p>
+
+<h4 id="func-ntcp2addr-routerhash">func (*NTCP2Addr) RouterHash</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) RouterHash() []byte
+</code></pre>
+
+<p>RouterHash returns a copy of the router identity hash. The returned slice is a
+defensive copy to prevent external modification.</p>
+
+<h4 id="func-ntcp2addr-sessiontag">func (*NTCP2Addr) SessionTag</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) SessionTag() []byte
+</code></pre>
+
+<p>SessionTag returns a copy of the session tag, or nil if not set. The returned
+slice is a defensive copy to prevent external modification.</p>
+
+<h4 id="func-ntcp2addr-string">func (*NTCP2Addr) String</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) String() string
+</code></pre>
+
+<p>String returns a string representation of the NTCP2 address. Format:
+&ldquo;ntcp2://[router_hash]/[role]/[tcp_address][?dest=dest_hash][&amp;session=session_tag]&rdquo;
+Router hash and optional parameters are base64 encoded for readability.</p>
+
+<h4 id="func-ntcp2addr-underlyingaddr">func (*NTCP2Addr) UnderlyingAddr</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) UnderlyingAddr() net.Addr
+</code></pre>
+
+<p>UnderlyingAddr returns the underlying TCP network address.</p>
+
+<h4 id="func-ntcp2addr-withdestinationhash">func (*NTCP2Addr) WithDestinationHash</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) WithDestinationHash(destHash []byte) (*NTCP2Addr, error)
+</code></pre>
+
+<p>WithDestinationHash sets the destination hash for tunnel connections. destHash
+must be exactly 32 bytes or nil for router-to-router connections.</p>
+
+<h4 id="func-ntcp2addr-withsessiontag">func (*NTCP2Addr) WithSessionTag</h4>
+
+<pre><code class="language-go">func (na *NTCP2Addr) WithSessionTag(sessionTag []byte) (*NTCP2Addr, error)
+</code></pre>
+
+<p>WithSessionTag sets the session tag for this connection. sessionTag must be
+exactly 8 bytes or nil.</p>
+
+<h4 id="type-ntcp2config">type NTCP2Config</h4>
+
+<pre><code class="language-go">type NTCP2Config struct {
+	// Pattern is the Noise protocol pattern for NTCP2
+	// Default: &quot;XK&quot; (standard NTCP2 pattern)
+	Pattern string
+
+	// Initiator indicates if this connection is the handshake initiator
+	// For listeners, this is always false
+	Initiator bool
+
+	// RouterHash is the local router identity (32 bytes)
+	// Required for NTCP2 addressing and session establishment
+	RouterHash []byte
+
+	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
+	StaticKey []byte
+
+	// RemoteRouterHash is the remote peer's router identity (32 bytes)
+	// Required for outbound connections, optional for listeners
+	RemoteRouterHash []byte
+
+	// HandshakeTimeout is the maximum time to wait for handshake completion
+	// Default: 30 seconds
+	HandshakeTimeout time.Duration
+
+	// ReadTimeout is the timeout for read operations after handshake
+	// Default: no timeout (0)
+	ReadTimeout time.Duration
+
+	// WriteTimeout is the timeout for write operations after handshake
+	// Default: no timeout (0)
+	WriteTimeout time.Duration
+
+	// HandshakeRetries is the number of handshake retry attempts
+	// Default: 3 attempts (0 = no retries, -1 = infinite retries)
+	HandshakeRetries int
+
+	// RetryBackoff is the base delay between retry attempts
+	// Actual delay uses exponential backoff: delay = RetryBackoff * (2^attempt)
+	// Default: 1 second
+	RetryBackoff time.Duration
+
+	// EnableAESObfuscation enables AES-based ephemeral key obfuscation
+	// Default: true (recommended for production)
+	EnableAESObfuscation bool
+
+	// ObfuscationIV is the 16-byte IV for AES obfuscation
+	// If nil, will be derived from router hash (recommended)
+	ObfuscationIV []byte
+
+	// EnableSipHashLength enables SipHash-based frame length obfuscation
+	// Default: true (recommended for production)
+	EnableSipHashLength bool
+
+	// SipHashKeys are the k1, k2 keys for SipHash length obfuscation
+	// If empty, will be derived during handshake
+	SipHashKeys [2]uint64
+
+	// Modifiers is a list of additional handshake modifiers for custom obfuscation
+	// These are applied in addition to NTCP2's standard modifiers
+	// Default: empty (no additional modifiers)
+	Modifiers []handshake.HandshakeModifier
+
+	// MaxFrameSize is the maximum size of NTCP2 data frames
+	// Default: 16384 bytes (16KB)
+	MaxFrameSize int
+
+	// FramePaddingEnabled enables random padding in NTCP2 frames
+	// Default: true (recommended for traffic analysis resistance)
+	FramePaddingEnabled bool
+
+	// MinPaddingSize is the minimum padding size for frames
+	// Default: 0 bytes
+	MinPaddingSize int
+
+	// MaxPaddingSize is the maximum padding size for frames
+	// Default: 64 bytes
+	MaxPaddingSize int
+}
+</code></pre>
+
+<p>NTCP2Config contains configuration for creating NTCP2 connections and listeners.
+It follows the builder pattern for optional configuration and validation,
+similar to the main ConnConfig but with NTCP2-specific parameters. Moved from:
+ntcp2/config.go</p>
+
+<h4 id="func-newntcp2config">func  NewNTCP2Config</h4>
+
+<pre><code class="language-go">func NewNTCP2Config(routerHash []byte, initiator bool) (*NTCP2Config, error)
+</code></pre>
+
+<p>NewNTCP2Config creates a new NTCP2Config with sensible defaults. routerHash must
+be exactly 32 bytes representing the local router identity. initiator indicates
+whether this connection will initiate the handshake.</p>
+
+<h4 id="func-ntcp2config-toconnconfig">func (*NTCP2Config) ToConnConfig</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) ToConnConfig() (*noise.ConnConfig, error)
+</code></pre>
+
+<p>ToConnConfig converts NTCP2Config to a standard ConnConfig for use with
+NoiseConn. This includes setting up NTCP2-specific modifiers based on the
+configuration.</p>
+
+<h4 id="func-ntcp2config-validate">func (*NTCP2Config) Validate</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) Validate() error
+</code></pre>
+
+<p>Validate checks if the configuration is valid for NTCP2.</p>
+
+<h4 id="func-ntcp2config-withaesobfuscation">func (*NTCP2Config) WithAESObfuscation</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithAESObfuscation(enabled bool, customIV []byte) *NTCP2Config
+</code></pre>
+
+<p>WithAESObfuscation enables or disables AES-based ephemeral key obfuscation. When
+enabled with a custom IV, the IV must be exactly 16 bytes.</p>
+
+<h4 id="func-ntcp2config-withframesettings">func (*NTCP2Config) WithFrameSettings</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithFrameSettings(maxSize int, paddingEnabled bool, minPadding, maxPadding int) *NTCP2Config
+</code></pre>
+
+<p>WithFrameSettings configures NTCP2 frame handling parameters. maxSize sets the
+maximum frame size (default: 16384 bytes). paddingEnabled enables random padding
+(default: true). minPadding and maxPadding set the padding size range (default:
+0-64 bytes).</p>
+
+<h4 id="func-ntcp2config-withhandshakeretries">func (*NTCP2Config) WithHandshakeRetries</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithHandshakeRetries(retries int) *NTCP2Config
+</code></pre>
+
+<p>WithHandshakeRetries sets the number of handshake retry attempts. Use 0 for no
+retries, -1 for infinite retries.</p>
+
+<h4 id="func-ntcp2config-withhandshaketimeout">func (*NTCP2Config) WithHandshakeTimeout</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithHandshakeTimeout(timeout time.Duration) *NTCP2Config
+</code></pre>
+
+<p>WithHandshakeTimeout sets the handshake timeout.</p>
+
+<h4 id="func-ntcp2config-withmodifiers">func (*NTCP2Config) WithModifiers</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *NTCP2Config
+</code></pre>
+
+<p>WithModifiers sets additional handshake modifiers for custom obfuscation. These
+are applied in addition to NTCP2&rsquo;s standard modifiers.</p>
+
+<h4 id="func-ntcp2config-withpattern">func (*NTCP2Config) WithPattern</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithPattern(pattern string) *NTCP2Config
+</code></pre>
+
+<p>WithPattern sets the Noise protocol pattern. For NTCP2, this should typically
+remain &ldquo;XK&rdquo;.</p>
+
+<h4 id="func-ntcp2config-withreadtimeout">func (*NTCP2Config) WithReadTimeout</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithReadTimeout(timeout time.Duration) *NTCP2Config
+</code></pre>
+
+<p>WithReadTimeout sets the read timeout for post-handshake operations.</p>
+
+<h4 id="func-ntcp2config-withremoterouterhash">func (*NTCP2Config) WithRemoteRouterHash</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithRemoteRouterHash(hash []byte) *NTCP2Config
+</code></pre>
+
+<p>WithRemoteRouterHash sets the remote peer&rsquo;s router identity. hash must be 32
+bytes. Required for outbound connections.</p>
+
+<h4 id="func-ntcp2config-withretrybackoff">func (*NTCP2Config) WithRetryBackoff</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithRetryBackoff(backoff time.Duration) *NTCP2Config
+</code></pre>
+
+<p>WithRetryBackoff sets the base delay between retry attempts.</p>
+
+<h4 id="func-ntcp2config-withsiphashlength">func (*NTCP2Config) WithSipHashLength</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithSipHashLength(enabled bool, k1, k2 uint64) *NTCP2Config
+</code></pre>
+
+<p>WithSipHashLength enables or disables SipHash-based frame length obfuscation.
+When enabled with custom keys, both k1 and k2 must be provided.</p>
+
+<h4 id="func-ntcp2config-withstatickey">func (*NTCP2Config) WithStaticKey</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithStaticKey(key []byte) *NTCP2Config
+</code></pre>
+
+<p>WithStaticKey sets the static key for this connection. key must be 32 bytes for
+Curve25519.</p>
+
+<h4 id="func-ntcp2config-withwritetimeout">func (*NTCP2Config) WithWriteTimeout</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Config) WithWriteTimeout(timeout time.Duration) *NTCP2Config
+</code></pre>
+
+<p>WithWriteTimeout sets the write timeout for post-handshake operations.</p>
+
+<h4 id="type-ntcp2conn">type NTCP2Conn</h4>
+
+<pre><code class="language-go">type NTCP2Conn struct {
+}
+</code></pre>
+
+<p>NTCP2Conn implements net.Conn for NTCP2 transport connections. It wraps a
+NoiseConn with NTCP2-specific addressing and protocol handling. Moved from:
+ntcp2/conn.go</p>
+
+<h4 id="func-dialntcp2">func  DialNTCP2</h4>
+
+<pre><code class="language-go">func DialNTCP2(network, addr string, config *NTCP2Config) (*NTCP2Conn, error)
+</code></pre>
+
+<p>DialNTCP2 creates a connection to the given address and wraps it with NTCP2Conn.
+This is a convenience function that combines net.Dial, NoiseConn creation, and
+NTCP2 wrapping. For more control over the underlying connection, use net.Dial
+followed by NewNoiseConn and NewNTCP2Conn.</p>
+
+<h4 id="func-dialntcp2withhandshake">func  DialNTCP2WithHandshake</h4>
+
+<pre><code class="language-go">func DialNTCP2WithHandshake(network, addr string, config *NTCP2Config) (*NTCP2Conn, error)
+</code></pre>
+
+<p>DialNTCP2WithHandshake creates a connection and performs the NTCP2 handshake
+automatically. This is a convenience function that combines DialNTCP2 and
+handshake execution.</p>
+
+<h4 id="func-dialntcp2withhandshakecontext">func  DialNTCP2WithHandshakeContext</h4>
+
+<pre><code class="language-go">func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, config *NTCP2Config) (*NTCP2Conn, error)
+</code></pre>
+
+<p>DialNTCP2WithHandshakeContext creates a connection and performs the NTCP2
+handshake with context. The context can be used to cancel the dial or handshake
+operations.</p>
+
+<h4 id="func-newntcp2conn">func  NewNTCP2Conn</h4>
+
+<pre><code class="language-go">func NewNTCP2Conn(noiseConn *noise.NoiseConn, localAddr, remoteAddr *NTCP2Addr) (*NTCP2Conn, error)
+</code></pre>
+
+<p>NewNTCP2Conn creates a new NTCP2Conn wrapping the provided NoiseConn. The
+NoiseConn must already be configured with appropriate NTCP2 modifiers.</p>
+
+<h4 id="func-wrapntcp2conn">func  WrapNTCP2Conn</h4>
+
+<pre><code class="language-go">func WrapNTCP2Conn(conn net.Conn, config *NTCP2Config) (*NTCP2Conn, error)
+</code></pre>
+
+<p>WrapNTCP2Conn wraps an existing net.Conn with NTCP2Conn. This function creates
+the necessary Noise wrapper and NTCP2 addressing.</p>
+
+<h4 id="func-ntcp2conn-close">func (*NTCP2Conn) Close</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) Close() error
+</code></pre>
+
+<p>Close implements net.Conn.Close. Closes the underlying Noise connection and
+cleans up resources.</p>
+
+<h4 id="func-ntcp2conn-destinationhash">func (*NTCP2Conn) DestinationHash</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) DestinationHash() []byte
+</code></pre>
+
+<p>DestinationHash returns the destination hash from the remote address. Returns
+nil for router-to-router connections.</p>
+
+<h4 id="func-ntcp2conn-localaddr">func (*NTCP2Conn) LocalAddr</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) LocalAddr() net.Addr
+</code></pre>
+
+<p>LocalAddr implements net.Conn.LocalAddr. Returns the NTCP2-specific local
+address.</p>
+
+<h4 id="func-ntcp2conn-read">func (*NTCP2Conn) Read</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) Read(b []byte) (int, error)
+</code></pre>
+
+<p>Read implements net.Conn.Read. Reads data from the underlying encrypted Noise
+connection.</p>
+
+<h4 id="func-ntcp2conn-remoteaddr">func (*NTCP2Conn) RemoteAddr</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) RemoteAddr() net.Addr
+</code></pre>
+
+<p>RemoteAddr implements net.Conn.RemoteAddr. Returns the NTCP2-specific remote
+address.</p>
+
+<h4 id="func-ntcp2conn-role">func (*NTCP2Conn) Role</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) Role() string
+</code></pre>
+
+<p>Role returns the connection role (initiator or responder).</p>
+
+<h4 id="func-ntcp2conn-routerhash">func (*NTCP2Conn) RouterHash</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) RouterHash() []byte
+</code></pre>
+
+<p>RouterHash returns the router hash from the remote address. This is I2P-specific
+functionality for NTCP2 connections.</p>
+
+<h4 id="func-ntcp2conn-sessiontag">func (*NTCP2Conn) SessionTag</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) SessionTag() []byte
+</code></pre>
+
+<p>SessionTag returns the session tag from the remote address. Returns nil if no
+session tag is set.</p>
+
+<h4 id="func-ntcp2conn-setdeadline">func (*NTCP2Conn) SetDeadline</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) SetDeadline(t time.Time) error
+</code></pre>
+
+<p>SetDeadline implements net.Conn.SetDeadline. Sets read and write deadlines on
+the underlying connection.</p>
+
+<h4 id="func-ntcp2conn-setreaddeadline">func (*NTCP2Conn) SetReadDeadline</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) SetReadDeadline(t time.Time) error
+</code></pre>
+
+<p>SetReadDeadline implements net.Conn.SetReadDeadline. Sets the read deadline on
+the underlying connection.</p>
+
+<h4 id="func-ntcp2conn-setwritedeadline">func (*NTCP2Conn) SetWriteDeadline</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) SetWriteDeadline(t time.Time) error
+</code></pre>
+
+<p>SetWriteDeadline implements net.Conn.SetWriteDeadline. Sets the write deadline
+on the underlying connection.</p>
+
+<h4 id="func-ntcp2conn-underlyingconn">func (*NTCP2Conn) UnderlyingConn</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) UnderlyingConn() *noise.NoiseConn
+</code></pre>
+
+<p>UnderlyingConn returns the underlying NoiseConn for advanced operations. This
+allows access to Noise-specific functionality when needed.</p>
+
+<h4 id="func-ntcp2conn-write">func (*NTCP2Conn) Write</h4>
+
+<pre><code class="language-go">func (nc *NTCP2Conn) Write(b []byte) (int, error)
+</code></pre>
+
+<p>Write implements net.Conn.Write. Writes data to the underlying encrypted Noise
+connection.</p>
+
+<h4 id="type-ntcp2listener">type NTCP2Listener</h4>
+
+<pre><code class="language-go">type NTCP2Listener struct {
+}
+</code></pre>
+
+<p>NTCP2Listener implements net.Listener for accepting NTCP2 transport connections.
+It wraps a NoiseListener and provides NTCP2-specific addressing and connection
+handling with I2P router identity management and session establishment. Moved
+from: ntcp2/listener.go</p>
+
+<h4 id="func-listenntcp2">func  ListenNTCP2</h4>
+
+<pre><code class="language-go">func ListenNTCP2(network, addr string, config *NTCP2Config) (*NTCP2Listener, error)
+</code></pre>
+
+<p>ListenNTCP2 creates a listener on the given address and wraps it with
+NTCP2Listener. This is a convenience function that combines net.Listen and
+NewNTCP2Listener. For more control over the underlying listener, use net.Listen
+followed by NewNTCP2Listener.</p>
+
+<h4 id="func-newntcp2listener">func  NewNTCP2Listener</h4>
+
+<pre><code class="language-go">func NewNTCP2Listener(underlying net.Listener, config *NTCP2Config) (*NTCP2Listener, error)
+</code></pre>
+
+<p>NewNTCP2Listener creates a new NTCP2Listener that wraps the underlying TCP
+listener. The listener will accept connections and wrap them in NTCP2Conn
+instances configured as responders with NTCP2-specific addressing and protocol
+handling.</p>
+
+<h4 id="func-wrapntcp2listener">func  WrapNTCP2Listener</h4>
+
+<pre><code class="language-go">func WrapNTCP2Listener(listener net.Listener, config *NTCP2Config) (*NTCP2Listener, error)
+</code></pre>
+
+<p>WrapNTCP2Listener wraps an existing net.Listener with NTCP2Listener. This is an
+alias for NewNTCP2Listener for consistency with the transport API.</p>
+
+<h4 id="func-ntcp2listener-accept">func (*NTCP2Listener) Accept</h4>
+
+<pre><code class="language-go">func (nl *NTCP2Listener) Accept() (net.Conn, error)
+</code></pre>
+
+<p>Accept waits for and returns the next connection to the listener. The returned
+connection is wrapped in an NTCP2Conn configured as a responder.</p>
+
+<h4 id="func-ntcp2listener-addr">func (*NTCP2Listener) Addr</h4>
+
+<pre><code class="language-go">func (nl *NTCP2Listener) Addr() net.Addr
+</code></pre>
+
+<p>Addr returns the listener&rsquo;s network address. This is an NTCP2Addr that wraps the
+underlying listener&rsquo;s address.</p>
+
+<h4 id="func-ntcp2listener-close">func (*NTCP2Listener) Close</h4>
+
+<pre><code class="language-go">func (nl *NTCP2Listener) Close() error
+</code></pre>
+
+<p>Close closes the listener and prevents new connections from being accepted. Any
+blocked Accept operations will be unblocked and return errors.</p>
+
+<h4 id="type-ntcp2paddingmodifier">type NTCP2PaddingModifier</h4>
+
+<pre><code class="language-go">type NTCP2PaddingModifier struct {
+}
+</code></pre>
+
+<p>NTCP2PaddingModifier implements NTCP2-specific padding strategies. Cleartext
+padding for messages 1 and 2 (outside AEAD frames). AEAD padding for message 3
+and data phase (inside AEAD frames). Moved from: ntcp2/modifier.go</p>
+
+<h4 id="func-newntcp2paddingmodifier">func  NewNTCP2PaddingModifier</h4>
+
+<pre><code class="language-go">func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error)
+</code></pre>
+
+<p>NewNTCP2PaddingModifier creates a new NTCP2 padding modifier. useAEADPadding:
+false for messages 1-2 (cleartext), true for message 3+ (AEAD).</p>
+
+<h4 id="func-ntcp2paddingmodifier-modifyinbound">func (*NTCP2PaddingModifier) ModifyInbound</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound removes NTCP2-specific padding.</p>
+
+<h4 id="func-ntcp2paddingmodifier-modifyoutbound">func (*NTCP2PaddingModifier) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound adds NTCP2-specific padding based on message phase.</p>
+
+<h4 id="func-ntcp2paddingmodifier-name">func (*NTCP2PaddingModifier) Name</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) Name() string
+</code></pre>
+
+<p>Name returns the modifier name for logging and debugging.</p>
+
+<h4 id="type-siphashlengthmodifier">type SipHashLengthModifier</h4>
+
+<pre><code class="language-go">type SipHashLengthModifier struct {
+}
+</code></pre>
+
+<p>SipHashLengthModifier implements NTCP2&rsquo;s SipHash-2-4 length obfuscation for data
+phase frame lengths. This prevents identification of frame lengths in the data
+stream. Moved from: ntcp2/modifier.go</p>
+
+<h4 id="func-newsiphashlengthmodifier">func  NewSipHashLengthModifier</h4>
+
+<pre><code class="language-go">func NewSipHashLengthModifier(name string, sipKeys [2]uint64, initialIV uint64) *SipHashLengthModifier
+</code></pre>
+
+<p>NewSipHashLengthModifier creates a new SipHash length obfuscation modifier.
+sipKeys must contain exactly 2 uint64 values (k1, k2). initialIV is the 8-byte
+IV from the data phase KDF.</p>
+
+<h4 id="func-siphashlengthmodifier-modifyinbound">func (*SipHashLengthModifier) ModifyInbound</h4>
+
+<pre><code class="language-go">func (slm *SipHashLengthModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyInbound removes SipHash obfuscation from frame lengths.</p>
+
+<h4 id="func-siphashlengthmodifier-modifyoutbound">func (*SipHashLengthModifier) ModifyOutbound</h4>
+
+<pre><code class="language-go">func (slm *SipHashLengthModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+</code></pre>
+
+<p>ModifyOutbound obfuscates 2-byte frame lengths using SipHash.</p>
+
+<h4 id="func-siphashlengthmodifier-name">func (*SipHashLengthModifier) Name</h4>
+
+<pre><code class="language-go">func (slm *SipHashLengthModifier) Name() string
+</code></pre>
+
+<p>Name returns the modifier name for logging and debugging.</p>
+
+<p>ntcp2</p>
+
+<p>github.com/go-i2p/go-noise/ntcp2</p>
+
+<p><a href="../../template.html">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>noise - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" >go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" class="active">noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>noise - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="noise">noise</h1>
+
+<p>&ndash;</p>
+
+<pre><code>import &quot;github.com/go-i2p/go-noise&quot;
+</code></pre>
+
+<p><img src="../images/noise.svg" alt="noise.svg" /></p>
+
+<p>Package noise provides a high-level wrapper around the flynn/noise package
+implementing net.Conn, net.Listener, and net.Addr interfaces for the Noise
+Protocol Framework. It supports extensible handshake modification for
+implementing I2P&rsquo;s NTCP2 and SSU2 transport protocols.</p>
+
+<h2 id="usage">Usage</h2>
+
+<h4 id="func-getglobalconnpool">func  GetGlobalConnPool</h4>
+
+<pre><code class="language-go">func GetGlobalConnPool() *pool.ConnPool
+</code></pre>
+
+<p>GetGlobalConnPool returns the current global connection pool</p>
+
+<h4 id="func-gracefulshutdown">func  GracefulShutdown</h4>
+
+<pre><code class="language-go">func GracefulShutdown() error
+</code></pre>
+
+<p>GracefulShutdown initiates graceful shutdown of all global components. This
+includes the global connection pool and all registered connections/listeners.</p>
+
+<h4 id="func-setglobalconnpool">func  SetGlobalConnPool</h4>
+
+<pre><code class="language-go">func SetGlobalConnPool(p *pool.ConnPool)
+</code></pre>
+
+<p>SetGlobalConnPool sets a custom connection pool for transport functions</p>
+
+<h4 id="func-setglobalshutdownmanager">func  SetGlobalShutdownManager</h4>
+
+<pre><code class="language-go">func SetGlobalShutdownManager(sm *ShutdownManager)
+</code></pre>
+
+<p>SetGlobalShutdownManager sets a custom shutdown manager for transport functions.
+The previous shutdown manager will be shut down gracefully.</p>
+
+<h4 id="type-connconfig">type ConnConfig</h4>
+
+<pre><code class="language-go">type ConnConfig struct {
+	// Pattern is the Noise protocol pattern (e.g., &quot;Noise_XX_25519_AESGCM_SHA256&quot;)
+	Pattern string
+
+	// Initiator indicates if this connection is the handshake initiator
+	Initiator bool
+
+	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
+	StaticKey []byte
+
+	// RemoteKey is the remote peer's static public key (32 bytes for Curve25519)
+	// Required for some patterns, optional for others
+	RemoteKey []byte
+
+	// HandshakeTimeout is the maximum time to wait for handshake completion
+	// Default: 30 seconds
+	HandshakeTimeout time.Duration
+
+	// ReadTimeout is the timeout for read operations after handshake
+	// Default: no timeout (0)
+	ReadTimeout time.Duration
+
+	// WriteTimeout is the timeout for write operations after handshake
+	// Default: no timeout (0)
+	WriteTimeout time.Duration
+
+	// HandshakeRetries is the number of handshake retry attempts
+	// Default: 3 attempts (0 = no retries, -1 = infinite retries)
+	HandshakeRetries int
+
+	// RetryBackoff is the base delay between retry attempts
+	// Actual delay uses exponential backoff: delay = RetryBackoff * (2^attempt)
+	// Default: 1 second
+	RetryBackoff time.Duration
+
+	// Modifiers is a list of handshake modifiers for obfuscation and padding
+	// Modifiers are applied in order during outbound processing and in reverse
+	// order during inbound processing. Default: empty (no modifiers)
+	Modifiers []handshake.HandshakeModifier
+}
+</code></pre>
+
+<p>ConnConfig contains configuration for creating a NoiseConn. It follows the
+builder pattern for optional configuration and validation.</p>
+
+<h4 id="func-newconnconfig">func  NewConnConfig</h4>
+
+<pre><code class="language-go">func NewConnConfig(pattern string, initiator bool) *ConnConfig
+</code></pre>
+
+<p>NewConnConfig creates a new ConnConfig with sensible defaults.</p>
+
+<h4 id="func-connconfig-addmodifier">func (*ConnConfig) AddModifier</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) AddModifier(modifier handshake.HandshakeModifier) *ConnConfig
+</code></pre>
+
+<p>AddModifier appends a single modifier to the existing modifier list.</p>
+
+<h4 id="func-connconfig-clearmodifiers">func (*ConnConfig) ClearModifiers</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) ClearModifiers() *ConnConfig
+</code></pre>
+
+<p>ClearModifiers removes all modifiers from the configuration.</p>
+
+<h4 id="func-connconfig-getmodifierchain">func (*ConnConfig) GetModifierChain</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) GetModifierChain() *handshake.ModifierChain
+</code></pre>
+
+<p>GetModifierChain returns a ModifierChain containing all configured modifiers.
+Returns nil if no modifiers are configured.</p>
+
+<h4 id="func-connconfig-validate">func (*ConnConfig) Validate</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) Validate() error
+</code></pre>
+
+<p>Validate checks if the configuration is valid and complete. Returns an error
+with context if validation fails.</p>
+
+<h4 id="func-connconfig-withhandshakeretries">func (*ConnConfig) WithHandshakeRetries</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithHandshakeRetries(retries int) *ConnConfig
+</code></pre>
+
+<p>WithHandshakeRetries sets the number of handshake retry attempts. Use 0 for no
+retries, -1 for infinite retries.</p>
+
+<h4 id="func-connconfig-withhandshaketimeout">func (*ConnConfig) WithHandshakeTimeout</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithHandshakeTimeout(timeout time.Duration) *ConnConfig
+</code></pre>
+
+<p>WithHandshakeTimeout sets the handshake timeout.</p>
+
+<h4 id="func-connconfig-withmodifiers">func (*ConnConfig) WithModifiers</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithModifiers(modifiers ...handshake.HandshakeModifier) *ConnConfig
+</code></pre>
+
+<p>WithModifiers sets the handshake modifiers for obfuscation and padding.
+Modifiers are applied in the order provided for outbound data and in reverse
+order for inbound data.</p>
+
+<h4 id="func-connconfig-withreadtimeout">func (*ConnConfig) WithReadTimeout</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithReadTimeout(timeout time.Duration) *ConnConfig
+</code></pre>
+
+<p>WithReadTimeout sets the read timeout for post-handshake operations.</p>
+
+<h4 id="func-connconfig-withremotekey">func (*ConnConfig) WithRemoteKey</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithRemoteKey(key []byte) *ConnConfig
+</code></pre>
+
+<p>WithRemoteKey sets the remote peer&rsquo;s static public key. key must be 32 bytes for
+Curve25519.</p>
+
+<h4 id="func-connconfig-withretrybackoff">func (*ConnConfig) WithRetryBackoff</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithRetryBackoff(backoff time.Duration) *ConnConfig
+</code></pre>
+
+<p>WithRetryBackoff sets the base delay between retry attempts. Actual delay uses
+exponential backoff: delay = backoff * (2^attempt).</p>
+
+<h4 id="func-connconfig-withstatickey">func (*ConnConfig) WithStaticKey</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithStaticKey(key []byte) *ConnConfig
+</code></pre>
+
+<p>WithStaticKey sets the static key for this connection. key must be 32 bytes for
+Curve25519.</p>
+
+<h4 id="func-connconfig-withwritetimeout">func (*ConnConfig) WithWriteTimeout</h4>
+
+<pre><code class="language-go">func (c *ConnConfig) WithWriteTimeout(timeout time.Duration) *ConnConfig
+</code></pre>
+
+<p>WithWriteTimeout sets the write timeout for post-handshake operations.</p>
+
+<h4 id="type-listenerconfig">type ListenerConfig</h4>
+
+<pre><code class="language-go">type ListenerConfig struct {
+	// Pattern is the Noise protocol pattern (e.g., &quot;Noise_XX_25519_AESGCM_SHA256&quot;)
+	Pattern string
+
+	// StaticKey is the long-term static key for this listener (32 bytes for Curve25519)
+	StaticKey []byte
+
+	// HandshakeTimeout is the maximum time to wait for handshake completion
+	// Default: 30 seconds
+	HandshakeTimeout time.Duration
+
+	// ReadTimeout is the timeout for read operations after handshake
+	// Default: no timeout (0)
+	ReadTimeout time.Duration
+
+	// WriteTimeout is the timeout for write operations after handshake
+	// Default: no timeout (0)
+	WriteTimeout time.Duration
+}
+</code></pre>
+
+<p>ListenerConfig contains configuration for creating a NoiseListener. It follows
+the builder pattern for optional configuration and validation.</p>
+
+<h4 id="func-newlistenerconfig">func  NewListenerConfig</h4>
+
+<pre><code class="language-go">func NewListenerConfig(pattern string) *ListenerConfig
+</code></pre>
+
+<p>NewListenerConfig creates a new ListenerConfig with sensible defaults.</p>
+
+<h4 id="func-listenerconfig-validate">func (*ListenerConfig) Validate</h4>
+
+<pre><code class="language-go">func (lc *ListenerConfig) Validate() error
+</code></pre>
+
+<p>Validate checks if the configuration is valid.</p>
+
+<h4 id="func-listenerconfig-withhandshaketimeout">func (*ListenerConfig) WithHandshakeTimeout</h4>
+
+<pre><code class="language-go">func (lc *ListenerConfig) WithHandshakeTimeout(timeout time.Duration) *ListenerConfig
+</code></pre>
+
+<p>WithHandshakeTimeout sets the handshake timeout.</p>
+
+<h4 id="func-listenerconfig-withreadtimeout">func (*ListenerConfig) WithReadTimeout</h4>
+
+<pre><code class="language-go">func (lc *ListenerConfig) WithReadTimeout(timeout time.Duration) *ListenerConfig
+</code></pre>
+
+<p>WithReadTimeout sets the read timeout for accepted connections.</p>
+
+<h4 id="func-listenerconfig-withstatickey">func (*ListenerConfig) WithStaticKey</h4>
+
+<pre><code class="language-go">func (lc *ListenerConfig) WithStaticKey(key []byte) *ListenerConfig
+</code></pre>
+
+<p>WithStaticKey sets the static key for this listener. key must be 32 bytes for
+Curve25519.</p>
+
+<h4 id="func-listenerconfig-withwritetimeout">func (*ListenerConfig) WithWriteTimeout</h4>
+
+<pre><code class="language-go">func (lc *ListenerConfig) WithWriteTimeout(timeout time.Duration) *ListenerConfig
+</code></pre>
+
+<p>WithWriteTimeout sets the write timeout for accepted connections.</p>
+
+<h4 id="type-noiseaddr">type NoiseAddr</h4>
+
+<pre><code class="language-go">type NoiseAddr struct {
+}
+</code></pre>
+
+<p>NoiseAddr implements net.Addr for Noise Protocol connections. It wraps an
+underlying net.Addr and adds Noise-specific addressing information.</p>
+
+<h4 id="func-newnoiseaddr">func  NewNoiseAddr</h4>
+
+<pre><code class="language-go">func NewNoiseAddr(underlying net.Addr, pattern, role string) *NoiseAddr
+</code></pre>
+
+<p>NewNoiseAddr creates a new NoiseAddr wrapping an underlying network address.
+pattern should be a valid Noise protocol pattern (e.g.,
+&ldquo;Noise_XX_25519_AESGCM_SHA256&rdquo;). role should be either &ldquo;initiator&rdquo; or
+&ldquo;responder&rdquo;.</p>
+
+<h4 id="func-noiseaddr-network">func (*NoiseAddr) Network</h4>
+
+<pre><code class="language-go">func (na *NoiseAddr) Network() string
+</code></pre>
+
+<p>Network returns the network type, prefixed with &ldquo;noise+&rdquo; to indicate Noise
+wrapping. For example, &ldquo;noise+tcp&rdquo; for Noise over TCP or &ldquo;noise+udp&rdquo; for Noise
+over UDP.</p>
+
+<h4 id="func-noiseaddr-pattern">func (*NoiseAddr) Pattern</h4>
+
+<pre><code class="language-go">func (na *NoiseAddr) Pattern() string
+</code></pre>
+
+<p>Pattern returns the Noise protocol pattern.</p>
+
+<h4 id="func-noiseaddr-role">func (*NoiseAddr) Role</h4>
+
+<pre><code class="language-go">func (na *NoiseAddr) Role() string
+</code></pre>
+
+<p>Role returns the role (initiator or responder).</p>
+
+<h4 id="func-noiseaddr-string">func (*NoiseAddr) String</h4>
+
+<pre><code class="language-go">func (na *NoiseAddr) String() string
+</code></pre>
+
+<p>String returns a string representation of the Noise address. Format:
+&ldquo;noise://[pattern]/[role]/[underlying_address]&rdquo; Example:
+&ldquo;noise://Noise_XX_25519_AESGCM_SHA256/initiator/192.168.1.1:8080&rdquo;</p>
+
+<h4 id="func-noiseaddr-underlying">func (*NoiseAddr) Underlying</h4>
+
+<pre><code class="language-go">func (na *NoiseAddr) Underlying() net.Addr
+</code></pre>
+
+<p>Underlying returns the wrapped network address. This allows access to the
+original address when needed.</p>
+
+<h4 id="type-noiseconn">type NoiseConn</h4>
+
+<pre><code class="language-go">type NoiseConn struct {
+}
+</code></pre>
+
+<p>NoiseConn implements net.Conn with Noise Protocol encryption. It wraps an
+underlying net.Conn and provides encrypted communication following the Noise
+Protocol Framework specification.</p>
+
+<h4 id="func-dialnoise">func  DialNoise</h4>
+
+<pre><code class="language-go">func DialNoise(network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoise creates a connection to the given address and wraps it with NoiseConn.
+This is a convenience function that combines net.Dial and NewNoiseConn. For more
+control over the underlying connection, use net.Dial followed by NewNoiseConn.</p>
+
+<h4 id="func-dialnoisewithhandshake">func  DialNoiseWithHandshake</h4>
+
+<pre><code class="language-go">func DialNoiseWithHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoiseWithHandshake creates a connection to the given address, wraps it with
+NoiseConn, and performs the handshake with retry logic. This is the recommended
+high-level function for establishing Noise connections with automatic retry
+capabilities.</p>
+
+<h4 id="func-dialnoisewithhandshakecontext">func  DialNoiseWithHandshakeContext</h4>
+
+<pre><code class="language-go">func DialNoiseWithHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoiseWithHandshakeContext creates a connection with context support for
+cancellation. It combines dialing, NoiseConn creation, and handshake with retry
+in a single operation.</p>
+
+<h4 id="func-dialnoisewithpool">func  DialNoiseWithPool</h4>
+
+<pre><code class="language-go">func DialNoiseWithPool(network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoiseWithPool creates a connection to the given address, checking the pool
+first. If a suitable connection is available in the pool, it will be reused.
+Otherwise, a new connection is created. The connection will be automatically
+returned to the pool when the NoiseConn is closed.</p>
+
+<h4 id="func-dialnoisewithpoolandhandshake">func  DialNoiseWithPoolAndHandshake</h4>
+
+<pre><code class="language-go">func DialNoiseWithPoolAndHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoiseWithPoolAndHandshake creates a connection with pool support and
+handshake retry. It checks the pool first, creates new if needed, and performs
+handshake with retry logic.</p>
+
+<h4 id="func-dialnoisewithpoolandhandshakecontext">func  DialNoiseWithPoolAndHandshakeContext</h4>
+
+<pre><code class="language-go">func DialNoiseWithPoolAndHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>DialNoiseWithPoolAndHandshakeContext combines pool checking, dialing, and
+handshake with context.</p>
+
+<h4 id="func-newnoiseconn">func  NewNoiseConn</h4>
+
+<pre><code class="language-go">func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>NewNoiseConn creates a new NoiseConn wrapping the underlying connection. The
+handshake must be completed before using Read/Write operations.</p>
+
+<h4 id="func-wrapconn">func  WrapConn</h4>
+
+<pre><code class="language-go">func WrapConn(conn net.Conn, config *ConnConfig) (*NoiseConn, error)
+</code></pre>
+
+<p>WrapConn wraps an existing net.Conn with NoiseConn. This is an alias for
+NewNoiseConn for consistency with the transport API.</p>
+
+<h4 id="func-noiseconn-close">func (*NoiseConn) Close</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) Close() error
+</code></pre>
+
+<p>Close closes the connection.</p>
+
+<h4 id="func-noiseconn-getconnectionmetrics">func (*NoiseConn) GetConnectionMetrics</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) GetConnectionMetrics() (bytesRead, bytesWritten int64, handshakeDuration time.Duration)
+</code></pre>
+
+<p>GetConnectionMetrics returns the current connection statistics</p>
+
+<h4 id="func-noiseconn-getconnectionstate">func (*NoiseConn) GetConnectionState</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) GetConnectionState() internal.ConnState
+</code></pre>
+
+<p>GetConnectionState returns the current connection state</p>
+
+<h4 id="func-noiseconn-handshake">func (*NoiseConn) Handshake</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) Handshake(ctx context.Context) error
+</code></pre>
+
+<p>Handshake performs the Noise Protocol handshake. This must be called before
+using Read/Write operations.</p>
+
+<h4 id="func-noiseconn-handshakewithretry">func (*NoiseConn) HandshakeWithRetry</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) HandshakeWithRetry(ctx context.Context) error
+</code></pre>
+
+<p>HandshakeWithRetry performs a handshake with retry logic based on configuration.
+It implements exponential backoff for retry delays and respects context
+cancellation.</p>
+
+<h4 id="func-noiseconn-localaddr">func (*NoiseConn) LocalAddr</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) LocalAddr() net.Addr
+</code></pre>
+
+<p>LocalAddr returns the local network address.</p>
+
+<h4 id="func-noiseconn-read">func (*NoiseConn) Read</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) Read(b []byte) (int, error)
+</code></pre>
+
+<p>Read reads data from the connection. If the handshake is not complete, it will
+return an error.</p>
+
+<h4 id="func-noiseconn-remoteaddr">func (*NoiseConn) RemoteAddr</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) RemoteAddr() net.Addr
+</code></pre>
+
+<p>RemoteAddr returns the remote network address.</p>
+
+<h4 id="func-noiseconn-setdeadline">func (*NoiseConn) SetDeadline</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) SetDeadline(t time.Time) error
+</code></pre>
+
+<p>SetDeadline sets the read and write deadlines.</p>
+
+<h4 id="func-noiseconn-setreaddeadline">func (*NoiseConn) SetReadDeadline</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) SetReadDeadline(t time.Time) error
+</code></pre>
+
+<p>SetReadDeadline sets the read deadline.</p>
+
+<h4 id="func-noiseconn-setshutdownmanager">func (*NoiseConn) SetShutdownManager</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) SetShutdownManager(sm *ShutdownManager)
+</code></pre>
+
+<p>SetShutdownManager sets the shutdown manager for this connection. If a shutdown
+manager is set, the connection will be automatically registered for graceful
+shutdown coordination.</p>
+
+<h4 id="func-noiseconn-setwritedeadline">func (*NoiseConn) SetWriteDeadline</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) SetWriteDeadline(t time.Time) error
+</code></pre>
+
+<p>SetWriteDeadline sets the write deadline.</p>
+
+<h4 id="func-noiseconn-write">func (*NoiseConn) Write</h4>
+
+<pre><code class="language-go">func (nc *NoiseConn) Write(b []byte) (int, error)
+</code></pre>
+
+<p>Write writes data to the connection. If the handshake is not complete, it will
+return an error.</p>
+
+<h4 id="type-noiselistener">type NoiseListener</h4>
+
+<pre><code class="language-go">type NoiseListener struct {
+}
+</code></pre>
+
+<p>NoiseListener implements net.Listener for accepting Noise Protocol connections.
+It wraps an underlying net.Listener and provides encrypted connections following
+the Noise Protocol Framework specification.</p>
+
+<h4 id="func-listennoise">func  ListenNoise</h4>
+
+<pre><code class="language-go">func ListenNoise(network, addr string, config *ListenerConfig) (*NoiseListener, error)
+</code></pre>
+
+<p>ListenNoise creates a listener on the given address and wraps it with
+NoiseListener. This is a convenience function that combines net.Listen and
+NewNoiseListener. For more control over the underlying listener, use net.Listen
+followed by NewNoiseListener.</p>
+
+<h4 id="func-newnoiselistener">func  NewNoiseListener</h4>
+
+<pre><code class="language-go">func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*NoiseListener, error)
+</code></pre>
+
+<p>NewNoiseListener creates a new NoiseListener that wraps the underlying listener.
+The listener will accept connections and wrap them in NoiseConn instances
+configured as responders (non-initiators) using the provided configuration.</p>
+
+<h4 id="func-wraplistener">func  WrapListener</h4>
+
+<pre><code class="language-go">func WrapListener(listener net.Listener, config *ListenerConfig) (*NoiseListener, error)
+</code></pre>
+
+<p>WrapListener wraps an existing net.Listener with NoiseListener. This is an alias
+for NewNoiseListener for consistency with the transport API.</p>
+
+<h4 id="func-noiselistener-accept">func (*NoiseListener) Accept</h4>
+
+<pre><code class="language-go">func (nl *NoiseListener) Accept() (net.Conn, error)
+</code></pre>
+
+<p>Accept waits for and returns the next connection to the listener. The returned
+connection is wrapped in a NoiseConn configured as a responder.</p>
+
+<h4 id="func-noiselistener-addr">func (*NoiseListener) Addr</h4>
+
+<pre><code class="language-go">func (nl *NoiseListener) Addr() net.Addr
+</code></pre>
+
+<p>Addr returns the listener&rsquo;s network address. This is a NoiseAddr that wraps the
+underlying listener&rsquo;s address.</p>
+
+<h4 id="func-noiselistener-close">func (*NoiseListener) Close</h4>
+
+<pre><code class="language-go">func (nl *NoiseListener) Close() error
+</code></pre>
+
+<p>Close closes the listener and prevents new connections from being accepted. Any
+blocked Accept operations will be unblocked and return errors.</p>
+
+<h4 id="func-noiselistener-setshutdownmanager">func (*NoiseListener) SetShutdownManager</h4>
+
+<pre><code class="language-go">func (nl *NoiseListener) SetShutdownManager(sm *ShutdownManager)
+</code></pre>
+
+<p>SetShutdownManager sets the shutdown manager for this listener. If a shutdown
+manager is set, the listener will be automatically registered for graceful
+shutdown coordination.</p>
+
+<h4 id="type-shutdownmanager">type ShutdownManager</h4>
+
+<pre><code class="language-go">type ShutdownManager struct {
+}
+</code></pre>
+
+<p>ShutdownManager coordinates graceful shutdown of noise components. It provides
+context-based cancellation and ensures proper resource cleanup with configurable
+timeouts for graceful vs forceful shutdown.</p>
+
+<h4 id="func-getglobalshutdownmanager">func  GetGlobalShutdownManager</h4>
+
+<pre><code class="language-go">func GetGlobalShutdownManager() *ShutdownManager
+</code></pre>
+
+<p>GetGlobalShutdownManager returns the current global shutdown manager.</p>
+
+<h4 id="func-newshutdownmanager">func  NewShutdownManager</h4>
+
+<pre><code class="language-go">func NewShutdownManager(timeout time.Duration) *ShutdownManager
+</code></pre>
+
+<p>NewShutdownManager creates a new shutdown manager with the given timeout. If
+timeout is 0, a default of 30 seconds is used.</p>
+
+<h4 id="func-shutdownmanager-context">func (*ShutdownManager) Context</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) Context() context.Context
+</code></pre>
+
+<p>Context returns the shutdown context for monitoring shutdown signals. Components
+can use this context to detect when shutdown has been initiated.</p>
+
+<h4 id="func-shutdownmanager-registerconnection">func (*ShutdownManager) RegisterConnection</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) RegisterConnection(conn *NoiseConn)
+</code></pre>
+
+<p>RegisterConnection adds a connection to be managed during shutdown. The
+connection will be gracefully closed during shutdown.</p>
+
+<h4 id="func-shutdownmanager-registerlistener">func (*ShutdownManager) RegisterListener</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) RegisterListener(listener *NoiseListener)
+</code></pre>
+
+<p>RegisterListener adds a listener to be managed during shutdown. The listener
+will be gracefully closed during shutdown.</p>
+
+<h4 id="func-shutdownmanager-shutdown">func (*ShutdownManager) Shutdown</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) Shutdown() error
+</code></pre>
+
+<p>Shutdown initiates graceful shutdown of all managed components. It closes
+listeners first, waits for connections to drain, then forcefully closes
+remaining connections after the timeout period.</p>
+
+<h4 id="func-shutdownmanager-unregisterconnection">func (*ShutdownManager) UnregisterConnection</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) UnregisterConnection(conn *NoiseConn)
+</code></pre>
+
+<p>UnregisterConnection removes a connection from shutdown management. This should
+be called when a connection is closed normally.</p>
+
+<h4 id="func-shutdownmanager-unregisterlistener">func (*ShutdownManager) UnregisterListener</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) UnregisterListener(listener *NoiseListener)
+</code></pre>
+
+<p>UnregisterListener removes a listener from shutdown management. This should be
+called when a listener is closed normally.</p>
+
+<h4 id="func-shutdownmanager-wait">func (*ShutdownManager) Wait</h4>
+
+<pre><code class="language-go">func (sm *ShutdownManager) Wait()
+</code></pre>
+
+<p>Wait blocks until shutdown is complete. This can be used to wait for shutdown to
+finish after calling Shutdown().</p>
+
+<p>noise</p>
+
+<p>github.com/go-i2p/go-noise</p>
+
+<p><a href="template.html" target="_blank">go-i2p template file</a></p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

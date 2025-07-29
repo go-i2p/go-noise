@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>go-noise Examples Documentation - go-i2p/go-noise</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="../index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="../index.html">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="../docs/template.html" >Template</a></li>
+        
+          <li><a href="../docs/examples/basic/DOC.html" >basic</a></li>
+        
+          <li><a href="../docs/examples/echoclient/DOC.html" >echoclient</a></li>
+        
+          <li><a href="../docs/examples/echoserver/DOC.html" >echoserver</a></li>
+        
+          <li><a href="../docs/examples/DOC.html" class="active">go-noise Examples Documentation</a></li>
+        
+          <li><a href="../docs/handshake/DOC.html" >handshake</a></li>
+        
+          <li><a href="../docs/internal/DOC.html" >internal</a></li>
+        
+          <li><a href="../docs/examples/listener/DOC.html" >listener</a></li>
+        
+          <li><a href="../docs/examples/modifiers/DOC.html" >modifiers</a></li>
+        
+          <li><a href="../docs/DOC.html" >noise</a></li>
+        
+          <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
+        
+          <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
+        
+          <li><a href="../docs/examples/state/DOC.html" >state</a></li>
+        
+          <li><a href="../docs/examples/transport/DOC.html" >transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="page-header">
+      <h1>go-noise Examples Documentation - go-i2p/go-noise</h1>
+    </header>
+    
+    <main>
+      <div class="doc-content">
+        <h1 id="go-noise-examples-documentation">go-noise Examples Documentation</h1>
+
+<h2 id="overview">Overview</h2>
+
+<p>The examples directory contains comprehensive demonstrations of the go-noise library functionality, organized by use case and following established architecture patterns. All examples have been refactored to ensure consistent argument handling and comprehensive Noise Protocol pattern support.</p>
+
+<h2 id="refactored-examples">Refactored Examples</h2>
+
+<p>The following examples have been updated to follow the established go-noise architecture patterns:</p>
+
+<h3 id="completed-refactoring">✅ Completed Refactoring</h3>
+
+<ol>
+<li><strong>ntcp2-config</strong> - NTCP2Config builder pattern demonstration
+
+<ul>
+<li>✅ Uses <code>ntcp2shared.ParseNTCP2Args()</code> for argument parsing</li>
+<li>✅ Supports <code>-demo</code>, <code>-generate</code>, <code>-server</code>, <code>-client</code> modes</li>
+<li>✅ Demonstrates builder pattern configuration with proper NTCP2 features</li>
+<li>✅ Includes comprehensive argument validation and error handling</li>
+</ul></li>
+</ol>
+
+<h3 id="already-well-refactored">✅ Already Well-Refactored</h3>
+
+<p>These examples were already following the established patterns:</p>
+
+<ol>
+<li><strong>basic</strong> - General Noise Protocol demonstration with all 15 patterns</li>
+<li><strong>echoclient</strong> - Echo client supporting all Noise patterns</li>
+<li><strong>echoserver</strong> - Echo server supporting all Noise patterns<br>
+</li>
+<li><strong>listener</strong> - NoiseListener demonstration with pattern support</li>
+<li><strong>pool</strong> - Connection pooling with Noise handshakes</li>
+<li><strong>retry</strong> - Handshake retry mechanisms</li>
+<li><strong>shutdown</strong> - Graceful shutdown demonstration</li>
+<li><strong>state</strong> - Connection state management</li>
+<li><strong>transport</strong> - Transport wrapping functionality</li>
+<li><strong>ntcp2</strong> - NTCP2 addressing demonstration</li>
+<li><strong>ntcp2-listener</strong> - NTCP2Listener with I2P router identity management</li>
+</ol>
+
+<h3 id="specialized-examples-no-refactoring-needed">✅ Specialized Examples (No Refactoring Needed)</h3>
+
+<ol>
+<li><strong>modifiers</strong> - Pure handshake modifier system demo (no network patterns needed)</li>
+</ol>
+
+<h2 id="architecture-compliance">Architecture Compliance</h2>
+
+<p>All refactored examples now follow these patterns:</p>
+
+<h3 id="argument-parsing">Argument Parsing</h3>
+
+<ul>
+<li><strong>General examples</strong>: Use <code>shared.ParseCommonArgs()</code> for standard Noise patterns</li>
+<li><strong>NTCP2 examples</strong>: Use <code>ntcp2shared.ParseNTCP2Args()</code> for NTCP2-specific functionality</li>
+<li><strong>Validation</strong>: All use <code>args.ValidateArgs()</code> for comprehensive validation</li>
+</ul>
+
+<h3 id="pattern-support">Pattern Support</h3>
+
+<ul>
+<li><strong>General examples</strong>: Support all 15 standard Noise patterns (N, K, X, NN, NK, NX, XN, XK, XX, KN, KK, KX, IN, IK, IX)</li>
+<li><strong>NTCP2 examples</strong>: Use IK pattern exclusively as per I2P specification</li>
+<li><strong>Short/Full names</strong>: Support both &ldquo;XX&rdquo; and &ldquo;Noise_XX_25519_AESGCM_SHA256&rdquo; formats</li>
+</ul>
+
+<h3 id="key-requirements">Key Requirements</h3>
+
+<p>Automatic handling based on pattern requirements:</p>
+
+<ul>
+<li><strong>No keys required</strong>: N, NN, NK, NX, XN, IN, IX</li>
+<li><strong>Local static key</strong>: X, XX, KN, KK, KX, IK, IX</li>
+<li><strong>Remote static key</strong>: K, NK, XK, KN, KK, KX, IK, IN</li>
+<li><strong>Both keys</strong>: K, XK, KK, IK</li>
+</ul>
+
+<h3 id="configuration-pattern">Configuration Pattern</h3>
+
+<p>All examples use the ConnConfig builder pattern:</p>
+
+<pre><code class="language-go">config := noise.NewConnConfig(pattern, initiator).
+    WithHandshakeTimeout(timeout).
+    WithReadTimeout(readTimeout).
+    WithWriteTimeout(writeTimeout).
+    WithStaticKey(staticKey)
+</code></pre>
+
+<h3 id="operation-modes">Operation Modes</h3>
+
+<p>Consistent support for:</p>
+
+<ul>
+<li><code>-demo</code>: Demonstration mode with pattern explanations</li>
+<li><code>-generate</code>: Generate cryptographic keys for testing</li>
+<li><code>-server addr</code>: Run as server/responder</li>
+<li><code>-client addr</code>: Run as client/initiator</li>
+</ul>
+
+<h2 id="usage-examples">Usage Examples</h2>
+
+<h3 id="general-noise-protocol-examples">General Noise Protocol Examples</h3>
+
+<pre><code class="language-bash"># Run demo showing all patterns
+go run examples/basic/main.go -demo
+
+# Generate keys for testing
+go run examples/basic/main.go -generate
+
+# Run server with XX pattern
+go run examples/basic/main.go -server localhost:8080 -pattern XX -static-key &lt;key&gt;
+
+# Run client with NN pattern (no keys required)
+go run examples/echoclient/main.go -client localhost:8080 -pattern NN
+</code></pre>
+
+<h3 id="ntcp2-specific-examples">NTCP2-Specific Examples</h3>
+
+<pre><code class="language-bash"># NTCP2 configuration demo
+go run examples/ntcp2-config/main.go -demo
+
+# Generate NTCP2 material
+go run examples/ntcp2-config/main.go -generate
+
+# NTCP2 listener
+go run examples/ntcp2-listener/main.go -server localhost:7654 -router-hash &lt;hash&gt;
+
+# NTCP2 with custom features
+go run examples/ntcp2-config/main.go -demo -aes-obfuscation=false -max-frame-size=32768
+</code></pre>
+
+<h2 id="pattern-testing">Pattern Testing</h2>
+
+<p>All examples can be tested with different patterns:</p>
+
+<pre><code class="language-bash"># Test with different patterns
+for pattern in NN NK XX IK; do
+    echo &quot;Testing pattern: $pattern&quot;
+    go run examples/basic/main.go -demo -pattern $pattern
+done
+</code></pre>
+
+<h2 id="key-generation">Key Generation</h2>
+
+<p>Examples automatically generate required keys when missing, or you can pre-generate:</p>
+
+<pre><code class="language-bash"># Generate keys for manual use
+go run examples/basic/main.go -generate
+# Copy the generated keys for use in server/client commands
+
+# NTCP2 key generation
+go run examples/ntcp2-config/main.go -generate
+</code></pre>
+
+<h2 id="error-handling">Error Handling</h2>
+
+<p>All examples include:</p>
+
+<ul>
+<li>Comprehensive argument validation</li>
+<li>Pattern requirement checking</li>
+<li>Key format validation (64-character hex strings for 32-byte keys)</li>
+<li>Mutual exclusion of operation modes</li>
+<li>Graceful error messages with usage information</li>
+</ul>
+
+<h2 id="testing-the-refactoring">Testing the Refactoring</h2>
+
+<p>To verify all examples work correctly:</p>
+
+<pre><code class="language-bash">cd /home/idk/go/src/github.com/go-i2p/go-noise
+
+# Test general examples
+for example in basic echoclient echoserver listener pool retry shutdown state transport; do
+    echo &quot;Testing $example demo mode...&quot;
+    go run examples/$example/main.go -demo &gt; /dev/null &amp;&amp; echo &quot;✅ $example&quot; || echo &quot;❌ $example&quot;
+done
+
+# Test NTCP2 examples  
+for example in ntcp2 ntcp2-config ntcp2-listener; do
+    echo &quot;Testing $example demo mode...&quot;
+    go run examples/$example/main.go -demo &gt; /dev/null &amp;&amp; echo &quot;✅ $example&quot; || echo &quot;❌ $example&quot;
+done
+
+# Test modifier system
+echo &quot;Testing modifiers...&quot;
+go run examples/modifiers/main.go &gt; /dev/null &amp;&amp; echo &quot;✅ modifiers&quot; || echo &quot;❌ modifiers&quot;
+</code></pre>
+
+<p>This refactoring ensures all examples follow consistent patterns, provide comprehensive argument handling, and demonstrate the full capabilities of the go-noise library across all supported Noise Protocol variants.</p>
+
+      </div>
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

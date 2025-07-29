@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>go-i2p/go-noise</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="nav-sidebar">
+    <div class="repo-info">
+      <h2>
+        <a href="index.html">go-i2p/go-noise</a>
+      </h2>
+      <div class="repo-meta">
+        📝 5 commits
+        
+      </div>
+    </div>
+    
+    <ul class="nav-links">
+      <li><a href="index.html" class="active">Repository Overview</a></li>
+      
+      
+        <div class="nav-section-title">Documentation:</div>
+        
+          <li><a href="docs/template.html">Template</a></li>
+        
+          <li><a href="docs/examples/basic/DOC.html">basic</a></li>
+        
+          <li><a href="docs/examples/echoclient/DOC.html">echoclient</a></li>
+        
+          <li><a href="docs/examples/echoserver/DOC.html">echoserver</a></li>
+        
+          <li><a href="docs/examples/DOC.html">go-noise Examples Documentation</a></li>
+        
+          <li><a href="docs/handshake/DOC.html">handshake</a></li>
+        
+          <li><a href="docs/internal/DOC.html">internal</a></li>
+        
+          <li><a href="docs/examples/listener/DOC.html">listener</a></li>
+        
+          <li><a href="docs/examples/modifiers/DOC.html">modifiers</a></li>
+        
+          <li><a href="docs/DOC.html">noise</a></li>
+        
+          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
+        
+          <li><a href="docs/ntcp2/DOC.html">ntcp2</a></li>
+        
+          <li><a href="docs/examples/ntcp2-config/DOC.html">ntcp2-config</a></li>
+        
+          <li><a href="docs/examples/ntcp2-listener/DOC.html">ntcp2-listener</a></li>
+        
+          <li><a href="docs/examples/pool/DOC.html">pool</a></li>
+        
+          <li><a href="docs/pool/DOC.html">pool</a></li>
+        
+          <li><a href="docs/examples/retry/DOC.html">retry</a></li>
+        
+          <li><a href="docs/examples/ntcp2-shared/DOC.html">shared</a></li>
+        
+          <li><a href="docs/examples/shared/DOC.html">shared</a></li>
+        
+          <li><a href="docs/examples/shutdown/DOC.html">shutdown</a></li>
+        
+          <li><a href="docs/examples/state/DOC.html">state</a></li>
+        
+          <li><a href="docs/examples/transport/DOC.html">transport</a></li>
+        
+      
+    </ul>
+    
+    <div class="nav-footer">
+      <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a>
+    </div>
+  </nav>
+  
+  <div class="main-content">
+    <header class="repo-header">
+      <h1>go-i2p/go-noise</h1>
+      <div class="repo-description">A wrapper library around the flynn/noise package that provides `net.Conn`, `net.Listener`, and `net.Addr` interfaces for the Noise Protocol Framewo...</div>
+      
+      <div class="repo-stats">
+        
+        <div class="repo-stat">
+          <span>📝</span> <span>5 commits</span>
+        </div>
+        
+        
+        <div class="repo-stat">
+          <span>📅</span> <span>Last updated: July 28, 2025</span>
+        </div>
+        
+        
+      </div>
+    </header>
+    
+    <main>
+      
+      <section id="readme" class="repo-section">
+        <h2>README</h2>
+        <div class="readme-content">
+          <h1 id="go-noise">go-noise</h1>
+
+<p>A wrapper library around the flynn/noise package that provides <code>net.Conn</code>, <code>net.Listener</code>, and <code>net.Addr</code> interfaces for the Noise Protocol Framework. Designed for implementing I2P&rsquo;s NTCP2 and SSU2 transport protocols with extensible handshake modification capabilities.</p>
+
+<h2 id="features">Features</h2>
+
+<ul>
+<li><strong>Configurable Noise Patterns</strong>: Support for all standard Noise Protocol patterns<br>
+</li>
+<li><strong>net.Conn Interface</strong>: Compatible with Go&rsquo;s standard network interfaces<br>
+</li>
+<li><strong>Error Handling</strong>: Contextual error information using samber/oops<br>
+</li>
+<li><strong>Thread-Safe</strong>: Concurrent connection handling with synchronization<br>
+</li>
+<li><strong>Memory Management</strong>: Structured buffer management<br>
+</li>
+</ul>
+
+<h2 id="supported-noise-patterns">Supported Noise Patterns</h2>
+
+<p>The library supports all standard Noise Protocol patterns with both short names and full specification:</p>
+
+<ul>
+<li><strong>One-way patterns</strong>: <code>N</code>, <code>K</code>, <code>X</code></li>
+<li><strong>Interactive patterns</strong>: <code>NN</code>, <code>NK</code>, <code>NX</code>, <code>XN</code>, <code>XK</code>, <code>XX</code>, <code>KN</code>, <code>KK</code>, <code>KX</code>, <code>IN</code>, <code>IK</code>, <code>IX</code></li>
+<li><strong>Full pattern names</strong>: <code>Noise_XX_25519_AESGCM_SHA256</code>, etc.</li>
+</ul>
+
+<h2 id="quick-start">Quick Start</h2>
+
+<pre><code class="language-go">package main
+
+import (
+    &quot;context&quot;
+    &quot;fmt&quot;
+    &quot;net&quot;
+    &quot;time&quot;
+    
+    &quot;github.com/go-i2p/go-noise&quot;
+)
+
+func main() {
+    // Create configuration for XX pattern
+    config := noise.NewConnConfig(&quot;XX&quot;, true).
+        WithHandshakeTimeout(10 * time.Second).
+        WithReadTimeout(5 * time.Second)
+    
+    // Wrap an existing connection
+    tcpConn, err := net.Dial(&quot;tcp&quot;, &quot;localhost:8080&quot;)
+    if err != nil {
+        panic(err)
+    }
+    defer tcpConn.Close()
+    
+    // Create Noise connection
+    noiseConn, err := noise.NewNoiseConn(tcpConn, config)
+    if err != nil {
+        panic(err)
+    }
+    defer noiseConn.Close()
+    
+    // Perform handshake
+    ctx := context.Background()
+    if err := noiseConn.Handshake(ctx); err != nil {
+        panic(err)
+    }
+    
+    // Use as regular net.Conn
+    _, err = noiseConn.Write([]byte(&quot;Hello, Noise!&quot;))
+    if err != nil {
+        panic(err)
+    }
+    
+    buffer := make([]byte, 1024)
+    n, err := noiseConn.Read(buffer)
+    if err != nil {
+        panic(err)
+    }
+    
+    fmt.Printf(&quot;Received: %s\n&quot;, buffer[:n])
+}
+</code></pre>
+
+<h2 id="configuration">Configuration</h2>
+
+<h3 id="connconfig-options">ConnConfig Options</h3>
+
+<pre><code class="language-go">config := noise.NewConnConfig(&quot;XX&quot;, true).
+    WithStaticKey(staticKey).              // 32-byte Curve25519 private key
+    WithHandshakeTimeout(30*time.Second).  // Handshake timeout
+    WithReadTimeout(5*time.Second).        // Read operation timeout
+    WithWriteTimeout(5*time.Second)        // Write operation timeout
+</code></pre>
+
+<h3 id="pattern-selection">Pattern Selection</h3>
+
+<p>Choose the appropriate pattern based on your security requirements:</p>
+
+<ul>
+<li><strong>XX</strong>: Mutual authentication with ephemeral keys</li>
+<li><strong>IK</strong>: Initiator knows responder&rsquo;s static key</li>
+<li><strong>NK</strong>: Responder has known static key, one-way authentication</li>
+<li><strong>NN</strong>: No authentication, only encryption (not recommended for production)</li>
+</ul>
+
+<h2 id="connection-state-management">Connection State Management</h2>
+
+<p>The library provides connection state tracking and metrics:</p>
+
+<pre><code class="language-go">// Check connection state
+state := noiseConn.GetConnectionState()
+switch state {
+case internal.StateInit:
+    fmt.Println(&quot;Connection created, handshake not started&quot;)
+case internal.StateHandshaking:
+    fmt.Println(&quot;Handshake in progress&quot;)
+case internal.StateEstablished:
+    fmt.Println(&quot;Handshake complete, ready for secure communication&quot;)
+case internal.StateClosed:
+    fmt.Println(&quot;Connection closed&quot;)
+}
+
+// Get connection metrics
+bytesRead, bytesWritten, handshakeDuration := noiseConn.GetConnectionMetrics()
+fmt.Printf(&quot;Transferred %d bytes read, %d bytes written\n&quot;, bytesRead, bytesWritten)
+fmt.Printf(&quot;Handshake completed in %v\n&quot;, handshakeDuration)
+</code></pre>
+
+<h3 id="state-transitions">State Transitions</h3>
+
+<p>Connections follow this lifecycle:</p>
+
+<ol>
+<li><strong>Init</strong> → Created with <code>NewNoiseConn()</code></li>
+<li><strong>Handshaking</strong> → <code>Handshake()</code> called</li>
+<li><strong>Established</strong> → Handshake completed successfully</li>
+<li><strong>Closed</strong> → <code>Close()</code> called or connection failed</li>
+</ol>
+
+<h3 id="monitoring">Monitoring</h3>
+
+<p>The library tracks:</p>
+
+<ul>
+<li><strong>Handshake Duration</strong>: Time taken to complete the Noise handshake</li>
+<li><strong>Bytes Read/Written</strong>: Total data transferred (plaintext, not encrypted)</li>
+<li><strong>Connection Lifecycle</strong>: Creation time and state transitions</li>
+</ul>
+
+<h2 id="implementation-status">Implementation Status</h2>
+
+<p>Core Noise and NTCP2 implementations completed. SSU2 implementation planned.</p>
+
+<h2 id="architecture">Architecture</h2>
+
+<pre><code>NoiseConn (net.Conn)
+├── Config (pattern, keys, timeouts)
+├── HandshakeState (flynn/noise)
+├── CipherState (post-handshake encryption)
+├── NoiseAddr (net.Addr with pattern info)
+└── Underlying net.Conn (TCP, UDP, etc.)
+</code></pre>
+
+<h2 id="dependencies">Dependencies</h2>
+
+<ul>
+<li><strong>flynn/noise</strong> v1.1.0: Core Noise Protocol implementation</li>
+<li><strong>go-i2p/logger</strong>: Structured logging support</li>
+<li><strong>samber/oops</strong> v1.19.0: Rich error context</li>
+</ul>
+
+<h2 id="testing">Testing</h2>
+
+<pre><code class="language-bash">go test -v ./...
+</code></pre>
+
+<p>Current test coverage includes unit and integration tests for core functionality across all components:</p>
+
+<ul>
+<li>Handshake pattern parsing and validation</li>
+<li>Configuration validation<br>
+</li>
+<li>NoiseAddr interface compliance</li>
+<li>NoiseConn read/write operations and error handling</li>
+<li>NTCP2Addr I2P-specific addressing functionality</li>
+<li>NTCP2Conn net.Conn interface compliance and error wrapping</li>
+<li>Handshake modifier chaining and transformations</li>
+<li>Error handling scenarios across all components</li>
+</ul>
+
+<h2 id="contributing">Contributing</h2>
+
+<p>This library follows Go best practices:</p>
+
+<ul>
+<li>Functions under 30 lines with single responsibility</li>
+<li>Explicit error handling (no ignored returns)</li>
+<li>Self-documenting code with clear naming</li>
+<li>Unit and integration testing with coverage monitoring</li>
+</ul>
+
+<h2 id="license">License</h2>
+
+<p>[License information to be added]</p>
+
+<h2 id="status">Status</h2>
+
+<p><strong>Development Status</strong>: Core functionality and handshake modification system implemented. Connection pooling and listener features in development.</p>
+
+        </div>
+      </section>
+      
+      
+      
+      <section id="contributors" class="repo-section">
+        <h2>Top Contributors</h2>
+        <div class="contributors-list">
+          
+          <div class="contributor-item">
+            <!-- Use first letter as avatar if no image available -->
+            <div class="contributor-avatar">
+              e
+            </div>
+            <div class="contributor-info">
+              <div class="contributor-name">
+                eyedeekay
+              </div>
+              <div class="contributor-commits">
+                5 commits
+              </div>
+            </div>
+          </div>
+          
+        </div>
+        <a href="https://github.com/go-i2p/go-noise/graphs/contributors" target="_blank">View all contributors on GitHub →</a>
+      </section>
+      
+    </main>
+    
+    <footer class="page-footer">
+      <p>Generated on 2025-07-29 01:51:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>
