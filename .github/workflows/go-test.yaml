@@ -1,0 +1,87 @@
+name: Go Tests
+
+on:
+    push:
+        branches: [ main, master, develop ]
+    pull_request:
+        branches: [ main, master, develop ]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                go-version: ['1.24.2', '1.23.x', '1.22.x']
+        
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v4
+          with:
+            go-version: ${{ matrix.go-version }}
+
+        - name: Cache Go modules
+          uses: actions/cache@v3
+          with:
+            path: |
+              ~/.cache/go-build
+              ~/go/pkg/mod
+            key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
+            restore-keys: |
+              ${{ runner.os }}-go-${{ matrix.go-version }}-
+
+        - name: Download dependencies
+          run: go mod download
+
+        - name: Verify dependencies
+          run: go mod verify
+
+        - name: Run unit tests
+          env:
+            DEBUG_I2P: "false"
+          run: go test -v -race -coverprofile=coverage.out ./...
+
+        - name: Check test coverage
+          run: |
+            go tool cover -func=coverage.out
+            COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+            echo "Total coverage: ${COVERAGE}%"
+            if (( $(echo "${COVERAGE} < 50" | bc -l) )); then
+                echo "Coverage ${COVERAGE}% is below required 50%"
+                exit 1
+            fi
+
+        - name: Upload coverage to Codecov
+          uses: codecov/codecov-action@v3
+          with:
+            file: ./coverage.out
+            flags: unittests
+            name: codecov-umbrella
+
+    lint:
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
+
+        - name: Set up Go
+          uses: actions/setup-go@v4
+          with:
+            go-version: '1.24.2'
+
+        - name: Run gofumpt
+          run: |
+            go install mvdan.cc/gofumpt@latest
+            gofumpt -l -d .
+            if [ "$(gofumpt -l .)" ]; then
+                echo "Code is not formatted with gofumpt"
+                exit 1
+            fi
+
+        #- name: Run golangci-lint
+        #  uses: golangci/golangci-lint-action@v3
+        #  with:
+        #    version: latest
+        #    args: --timeout=5m

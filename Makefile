@@ -1,0 +1,3 @@
+
+godoc:
+	./callgraph.sh
