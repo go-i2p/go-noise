@@ -597,17 +597,86 @@ type NTCP2PaddingModifier struct {
 }
 ```
 
-NTCP2PaddingModifier implements NTCP2-specific padding strategies. Cleartext
-padding for messages 1 and 2 (outside AEAD frames). AEAD padding for message 3
-and data phase (inside AEAD frames). Moved from: ntcp2/modifier.go
+NTCP2PaddingModifier implements production-grade NTCP2-specific padding
+strategies. Supports I2P NTCP2 specification requirements including: - Cleartext
+padding for messages 1 and 2 (outside AEAD frames) - AEAD padding for message 3
+and data phase (inside AEAD frames with type 254) - Cryptographically secure
+random padding distribution - Configurable padding ratios for traffic analysis
+resistance
 
 #### func  NewNTCP2PaddingModifier
 
 ```go
 func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error)
 ```
-NewNTCP2PaddingModifier creates a new NTCP2 padding modifier. useAEADPadding:
-false for messages 1-2 (cleartext), true for message 3+ (AEAD).
+NewNTCP2PaddingModifier creates a new production-grade NTCP2 padding modifier.
+
+Parameters:
+
+    - name: identifier for logging and debugging
+    - minPadding: minimum padding bytes (0-65516)
+    - maxPadding: maximum padding bytes (>= minPadding, 0-65516)
+    - useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
+
+The modifier uses cryptographically secure random padding by default. Padding
+sizes follow I2P NTCP2 specification guidelines.
+
+#### func  NewNTCP2PaddingModifierForTesting
+
+```go
+func NewNTCP2PaddingModifierForTesting(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error)
+```
+NewNTCP2PaddingModifierForTesting creates a modifier with deterministic padding
+for testing. This should NEVER be used in production as it compromises security.
+
+#### func  NewNTCP2PaddingModifierWithRatio
+
+```go
+func NewNTCP2PaddingModifierWithRatio(name string, minPadding, maxPadding int, useAEADPadding bool, paddingRatio float64) (*NTCP2PaddingModifier, error)
+```
+NewNTCP2PaddingModifierWithRatio creates a new NTCP2 padding modifier with a
+specific padding ratio.
+
+Parameters:
+
+    - name: identifier for logging and debugging
+    - minPadding: minimum padding bytes (0-65516)
+    - maxPadding: maximum padding bytes (>= minPadding, 0-65516)
+    - useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
+    - paddingRatio: ratio of padding to data (0.0 to 15.9375 as per I2P NTCP2 spec)
+
+A paddingRatio of 0.0 means no ratio-based padding (uses min/max only). A
+paddingRatio of 1.0 means 100% padding (double the message size).
+
+#### func (*NTCP2PaddingModifier) EstimatePaddingSize
+
+```go
+func (npm *NTCP2PaddingModifier) EstimatePaddingSize(dataLen int) int
+```
+EstimatePaddingSize estimates the padding size for a given data length. Useful
+for pre-allocating buffers and bandwidth calculations.
+
+#### func (*NTCP2PaddingModifier) GetPaddingLimits
+
+```go
+func (npm *NTCP2PaddingModifier) GetPaddingLimits() (int, int)
+```
+GetPaddingLimits returns the current min/max padding limits.
+
+#### func (*NTCP2PaddingModifier) GetPaddingRatio
+
+```go
+func (npm *NTCP2PaddingModifier) GetPaddingRatio() float64
+```
+GetPaddingRatio returns the current padding ratio.
+
+#### func (*NTCP2PaddingModifier) IsAEADMode
+
+```go
+func (npm *NTCP2PaddingModifier) IsAEADMode() bool
+```
+IsAEADMode returns true if this modifier is configured for AEAD padding (message
+3+).
 
 #### func (*NTCP2PaddingModifier) ModifyInbound
 
@@ -629,6 +698,32 @@ ModifyOutbound adds NTCP2-specific padding based on message phase.
 func (npm *NTCP2PaddingModifier) Name() string
 ```
 Name returns the modifier name for logging and debugging.
+
+#### func (*NTCP2PaddingModifier) SetPaddingLimits
+
+```go
+func (npm *NTCP2PaddingModifier) SetPaddingLimits(minPadding, maxPadding int) error
+```
+SetPaddingLimits updates the padding limits for dynamic adjustment. Supports I2P
+NTCP2 options negotiation during data phase.
+
+#### func (*NTCP2PaddingModifier) SetPaddingRatio
+
+```go
+func (npm *NTCP2PaddingModifier) SetPaddingRatio(ratio float64) error
+```
+SetPaddingRatio updates the padding ratio for dynamic adjustment during
+connection. This supports I2P NTCP2 options negotiation where padding parameters
+can be updated.
+
+#### func (*NTCP2PaddingModifier) ValidateAEADFrame
+
+```go
+func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool
+```
+ValidateAEADFrame validates that a frame contains properly formatted AEAD
+blocks. Returns true if the frame structure is valid according to I2P NTCP2
+spec.
 
 #### type SipHashLengthModifier
 
