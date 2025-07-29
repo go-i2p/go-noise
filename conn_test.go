@@ -416,7 +416,6 @@ func TestNoiseConnHandshakeInitiator(t *testing.T) {
 
 	// Perform handshake
 	err = conn.Handshake(ctx)
-
 	// Note: This test will likely fail because we need a real Noise handshake
 	// In a real implementation, you'd mock the Noise library or use integration tests
 	// For now, we're testing the error handling and structure

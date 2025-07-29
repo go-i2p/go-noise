@@ -59,7 +59,7 @@ func main() {
 }
 
 // parseServerKeys handles key parsing for server configuration
-func parseServerKeys(args *shared.CommonArgs) (staticKey []byte, _ []byte, err error) {
+func parseServerKeys(args *shared.CommonArgs) (staticKey, _ []byte, err error) {
 	needsLocal, _ := shared.GetPatternRequirements(args.Pattern)
 
 	// Parse or generate static key if needed
