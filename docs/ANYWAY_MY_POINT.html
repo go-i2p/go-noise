@@ -13,7 +13,7 @@
         <a href="../index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 8 commits
+        📝 9 commits
          • 📜 License
       </div>
     </div>
@@ -46,9 +46,9 @@
         
           <li><a href="../docs/DOC.html" >noise</a></li>
         
-          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
-        
           <li><a href="../docs/examples/ntcp2/DOC.html" >ntcp2</a></li>
+        
+          <li><a href="../docs/ntcp2/DOC.html" >ntcp2</a></li>
         
           <li><a href="../docs/examples/ntcp2-config/DOC.html" >ntcp2-config</a></li>
         
@@ -150,13 +150,20 @@ to make life much easier.</p>
 of SSU2. SSU2 implements peer testing, NAT traversal, and connection migration.
 Each of these in go-i2p will be a layered set of concrete implementations of
 yet another net.Addr, net.Conn, and net.Listener for each aspect of the
-protocol. These simply get nested inside the Noise connection/listener.</p>
+protocol. These simply get nested inside the Noise connection/listener. The same
+actually applies to every non-cryptographic aspect of the SSU transport.</p>
+
+<p><em>It&rsquo;s network interface types, all the way down.</em></p>
+
+<p>This is going to be incredibly powerful for us and provide us with significant
+agility when making new protocols or tweaking existing ones. This is why I
+wanted to make sure that I got it done <em>this exact way</em> before continuing.</p>
 
       </div>
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2025-08-01 20:27:09 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2025-08-01 20:28:44 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
