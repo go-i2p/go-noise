@@ -63,4 +63,11 @@ Moreover, we also have a clear path to finish the additional features of parts
 of SSU2. SSU2 implements peer testing, NAT traversal, and connection migration.
 Each of these in go-i2p will be a layered set of concrete implementations of
 yet another net.Addr, net.Conn, and net.Listener for each aspect of the
-protocol. These simply get nested inside the Noise connection/listener.
+protocol. These simply get nested inside the Noise connection/listener. The same
+actually applies to every non-cryptographic aspect of the SSU transport.
+
+*It's network interface types, all the way down.*
+
+This is going to be incredibly powerful for us and provide us with significant
+agility when making new protocols or tweaking existing ones. This is why I
+wanted to make sure that I got it done *this exact way* before continuing.
