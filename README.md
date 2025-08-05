@@ -182,7 +182,7 @@ This library follows Go best practices:
 
 ## License
 
-[License information to be added]
+MIT License
 
 ## Status
 
