@@ -1,4 +1,4 @@
-// Package noise provides a high-level wrapper around the flynn/noise package
+// Package noise provides a high-level wrapper around the go-i2p/noise package
 // implementing net.Conn, net.Listener, and net.Addr interfaces for the Noise Protocol Framework.
 // It supports extensible handshake modification for implementing I2P's NTCP2 and SSU2 transport protocols.
 package noise

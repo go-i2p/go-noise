@@ -198,7 +198,7 @@ func TestValidStateReachability(t *testing.T) {
 		t.Run("Valid pattern: "+pattern, func(t *testing.T) {
 			result, err := parseHandshakePattern(pattern)
 			if err != nil {
-				// Some patterns might not be supported by flynn/noise
+				// Some patterns might not be supported by go-i2p/noise
 				t.Logf("Pattern %s not supported: %v", pattern, err)
 			} else {
 				assert.NotNil(t, result, "Should return valid noise config for pattern: %s", pattern)

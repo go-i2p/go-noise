@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/go-i2p/noise"
 )
 
 func TestParseHandshakePattern(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/go-i2p/noise"
 	"github.com/go-i2p/go-noise/internal"
 )
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flynn/noise"
+	"github.com/go-i2p/noise"
 	"github.com/go-i2p/go-noise/internal"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -404,7 +404,7 @@ func (nc *NoiseConn) performResponderHandshake(ctx context.Context) error {
 	return nil
 }
 
-// parseHandshakePattern maps pattern name strings to flynn/noise HandshakePattern types.
+// parseHandshakePattern maps pattern name strings to go-i2p/noise HandshakePattern types.
 // This enables configurable pattern selection from string-based configuration.
 func parseHandshakePattern(patternName string) (noise.HandshakePattern, error) {
 	switch patternName {
