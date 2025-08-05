@@ -13,7 +13,7 @@
         <a href="../index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 9 commits
+        📝 13 commits
          • 📜 License
       </div>
     </div>
@@ -54,15 +54,15 @@
         
           <li><a href="../docs/examples/ntcp2-listener/DOC.html" >ntcp2-listener</a></li>
         
-          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
-        
           <li><a href="../docs/pool/DOC.html" >pool</a></li>
+        
+          <li><a href="../docs/examples/pool/DOC.html" >pool</a></li>
         
           <li><a href="../docs/examples/retry/DOC.html" >retry</a></li>
         
-          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
-        
           <li><a href="../docs/examples/ntcp2-shared/DOC.html" >shared</a></li>
+        
+          <li><a href="../docs/examples/shared/DOC.html" >shared</a></li>
         
           <li><a href="../docs/examples/shutdown/DOC.html" >shutdown</a></li>
         
@@ -681,17 +681,88 @@ blocked Accept operations will be unblocked and return errors.</p>
 }
 </code></pre>
 
-<p>NTCP2PaddingModifier implements NTCP2-specific padding strategies. Cleartext
-padding for messages 1 and 2 (outside AEAD frames). AEAD padding for message 3
-and data phase (inside AEAD frames). Moved from: ntcp2/modifier.go</p>
+<p>NTCP2PaddingModifier implements production-grade NTCP2-specific padding
+strategies. Supports I2P NTCP2 specification requirements including: - Cleartext
+padding for messages 1 and 2 (outside AEAD frames) - AEAD padding for message 3
+and data phase (inside AEAD frames with type 254) - Cryptographically secure
+random padding distribution - Configurable padding ratios for traffic analysis
+resistance</p>
 
 <h4 id="func-newntcp2paddingmodifier">func  NewNTCP2PaddingModifier</h4>
 
 <pre><code class="language-go">func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error)
 </code></pre>
 
-<p>NewNTCP2PaddingModifier creates a new NTCP2 padding modifier. useAEADPadding:
-false for messages 1-2 (cleartext), true for message 3+ (AEAD).</p>
+<p>NewNTCP2PaddingModifier creates a new production-grade NTCP2 padding modifier.</p>
+
+<p>Parameters:</p>
+
+<pre><code>- name: identifier for logging and debugging
+- minPadding: minimum padding bytes (0-65516)
+- maxPadding: maximum padding bytes (&gt;= minPadding, 0-65516)
+- useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
+</code></pre>
+
+<p>The modifier uses cryptographically secure random padding by default. Padding
+sizes follow I2P NTCP2 specification guidelines.</p>
+
+<h4 id="func-newntcp2paddingmodifierfortesting">func  NewNTCP2PaddingModifierForTesting</h4>
+
+<pre><code class="language-go">func NewNTCP2PaddingModifierForTesting(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error)
+</code></pre>
+
+<p>NewNTCP2PaddingModifierForTesting creates a modifier with deterministic padding
+for testing. This should NEVER be used in production as it compromises security.</p>
+
+<h4 id="func-newntcp2paddingmodifierwithratio">func  NewNTCP2PaddingModifierWithRatio</h4>
+
+<pre><code class="language-go">func NewNTCP2PaddingModifierWithRatio(name string, minPadding, maxPadding int, useAEADPadding bool, paddingRatio float64) (*NTCP2PaddingModifier, error)
+</code></pre>
+
+<p>NewNTCP2PaddingModifierWithRatio creates a new NTCP2 padding modifier with a
+specific padding ratio.</p>
+
+<p>Parameters:</p>
+
+<pre><code>- name: identifier for logging and debugging
+- minPadding: minimum padding bytes (0-65516)
+- maxPadding: maximum padding bytes (&gt;= minPadding, 0-65516)
+- useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
+- paddingRatio: ratio of padding to data (0.0 to 15.9375 as per I2P NTCP2 spec)
+</code></pre>
+
+<p>A paddingRatio of 0.0 means no ratio-based padding (uses min/max only). A
+paddingRatio of 1.0 means 100% padding (double the message size).</p>
+
+<h4 id="func-ntcp2paddingmodifier-estimatepaddingsize">func (*NTCP2PaddingModifier) EstimatePaddingSize</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) EstimatePaddingSize(dataLen int) int
+</code></pre>
+
+<p>EstimatePaddingSize estimates the padding size for a given data length. Useful
+for pre-allocating buffers and bandwidth calculations.</p>
+
+<h4 id="func-ntcp2paddingmodifier-getpaddinglimits">func (*NTCP2PaddingModifier) GetPaddingLimits</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) GetPaddingLimits() (int, int)
+</code></pre>
+
+<p>GetPaddingLimits returns the current min/max padding limits.</p>
+
+<h4 id="func-ntcp2paddingmodifier-getpaddingratio">func (*NTCP2PaddingModifier) GetPaddingRatio</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) GetPaddingRatio() float64
+</code></pre>
+
+<p>GetPaddingRatio returns the current padding ratio.</p>
+
+<h4 id="func-ntcp2paddingmodifier-isaeadmode">func (*NTCP2PaddingModifier) IsAEADMode</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) IsAEADMode() bool
+</code></pre>
+
+<p>IsAEADMode returns true if this modifier is configured for AEAD padding (message
+3+).</p>
 
 <h4 id="func-ntcp2paddingmodifier-modifyinbound">func (*NTCP2PaddingModifier) ModifyInbound</h4>
 
@@ -713,6 +784,32 @@ false for messages 1-2 (cleartext), true for message 3+ (AEAD).</p>
 </code></pre>
 
 <p>Name returns the modifier name for logging and debugging.</p>
+
+<h4 id="func-ntcp2paddingmodifier-setpaddinglimits">func (*NTCP2PaddingModifier) SetPaddingLimits</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) SetPaddingLimits(minPadding, maxPadding int) error
+</code></pre>
+
+<p>SetPaddingLimits updates the padding limits for dynamic adjustment. Supports I2P
+NTCP2 options negotiation during data phase.</p>
+
+<h4 id="func-ntcp2paddingmodifier-setpaddingratio">func (*NTCP2PaddingModifier) SetPaddingRatio</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) SetPaddingRatio(ratio float64) error
+</code></pre>
+
+<p>SetPaddingRatio updates the padding ratio for dynamic adjustment during
+connection. This supports I2P NTCP2 options negotiation where padding parameters
+can be updated.</p>
+
+<h4 id="func-ntcp2paddingmodifier-validateaeadframe">func (*NTCP2PaddingModifier) ValidateAEADFrame</h4>
+
+<pre><code class="language-go">func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool
+</code></pre>
+
+<p>ValidateAEADFrame validates that a frame contains properly formatted AEAD
+blocks. Returns true if the frame structure is valid according to I2P NTCP2
+spec.</p>
 
 <h4 id="type-siphashlengthmodifier">type SipHashLengthModifier</h4>
 
@@ -764,7 +861,7 @@ IV from the data phase KDF.</p>
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2025-08-05 20:26:16 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2025-08-05 21:04:31 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
