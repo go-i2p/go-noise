@@ -148,6 +148,24 @@ func TestTTLCache_DoubleClose(t *testing.T) {
 	assert.NotPanics(t, func() { c.Close() }, "double Close must not panic")
 }
 
+func TestTTLCache_ZeroConfigNoPanic(t *testing.T) {
+	// A zero-value Config has non-positive TTL and CleanupInterval. New must
+	// not panic in its background cleanup goroutine (MEDIUM-1).
+	var c *TTLCache
+	assert.NotPanics(t, func() { c = New(Config{}) }, "New(Config{}) must not panic")
+	defer c.Close()
+
+	// Give the background cleanupLoop a moment to start its ticker; a
+	// non-positive interval would panic the goroutine and crash the process.
+	time.Sleep(50 * time.Millisecond)
+
+	var key [32]byte
+	key[0] = 0x42
+	// With a zero TTL every entry is immediately expired, so no replay is
+	// detected; the assertion of interest is simply that nothing panicked.
+	assert.False(t, c.CheckAndAdd(key), "first insert should not be a replay")
+}
+
 func TestTTLCache_ConcurrentClose(t *testing.T) {
 	c := New(testConfig())
 	const n = 10

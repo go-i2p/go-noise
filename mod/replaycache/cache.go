@@ -12,6 +12,15 @@ import (
 	"github.com/go-i2p/logger"
 )
 
+// defaultCleanupInterval is the fallback cleanup interval used when neither
+// CleanupInterval nor TTL provide a positive duration. It guarantees that
+// time.NewTicker in cleanupLoop never receives a non-positive interval (MEDIUM-1).
+const defaultCleanupInterval = 60 * time.Second
+
+// defaultMaxSize is the fallback maximum number of cache entries used when
+// MaxSize is non-positive. It prevents silent weakening of replay detection.
+const defaultMaxSize = 10000
+
 // Config holds the parameters for constructing a TTLCache.
 type Config struct {
 	// TTL is the time-to-live for cache entries. Entries older than TTL
@@ -47,8 +56,10 @@ type TTLCache struct {
 
 // New creates a new TTLCache and starts a background cleanup goroutine.
 // Call Close when the cache is no longer needed.
-// Defaults: if CleanupInterval is non-positive, defaults to TTL.
-// If MaxSize is non-positive, defaults to 10000 (see LOW-2 audit finding).
+// Defaults: if CleanupInterval is non-positive, defaults to TTL; if TTL is
+// also non-positive, defaults to defaultCleanupInterval so the background
+// cleanup goroutine never panics (MEDIUM-1).
+// If MaxSize is non-positive, defaults to defaultMaxSize (see LOW-2 audit finding).
 func New(cfg Config) *TTLCache {
 	log.WithFields(logger.Fields{"pkg": "replaycache", "func": "New", "ttl": cfg.TTL, "max_size": cfg.MaxSize}).Debug("Creating new replay cache")
 	nf := cfg.NowFunc
@@ -56,18 +67,16 @@ func New(cfg Config) *TTLCache {
 		nf = time.Now
 	}
 
-	// Default CleanupInterval to TTL if not specified or non-positive.
-	// This ensures time.NewTicker doesn't panic (LOW-2).
-	cleanupInterval := cfg.CleanupInterval
-	if cleanupInterval <= 0 {
-		cleanupInterval = cfg.TTL
-	}
+	// Default CleanupInterval to TTL, then to defaultCleanupInterval, so
+	// time.NewTicker in cleanupLoop never panics on an all-non-positive
+	// config (MEDIUM-1). A zero-value Config{} is therefore safe.
+	cleanupInterval := resolveCleanupInterval(cfg)
 
-	// Default MaxSize to 10000 if not specified or non-positive.
+	// Default MaxSize to defaultMaxSize if not specified or non-positive.
 	// This prevents silent weakening of replay detection.
 	maxSize := cfg.MaxSize
 	if maxSize <= 0 {
-		maxSize = 10000
+		maxSize = defaultMaxSize
 	}
 
 	c := &TTLCache{
@@ -80,6 +89,20 @@ func New(cfg Config) *TTLCache {
 	}
 	go c.cleanupLoop()
 	return c
+}
+
+// resolveCleanupInterval returns a strictly positive cleanup interval for the
+// given config. It prefers CleanupInterval, falls back to TTL, and finally to
+// defaultCleanupInterval, guaranteeing time.NewTicker never receives a
+// non-positive duration (MEDIUM-1).
+func resolveCleanupInterval(cfg Config) time.Duration {
+	if cfg.CleanupInterval > 0 {
+		return cfg.CleanupInterval
+	}
+	if cfg.TTL > 0 {
+		return cfg.TTL
+	}
+	return defaultCleanupInterval
 }
 
 // CheckAndAdd returns true if the key has been seen within the TTL window
