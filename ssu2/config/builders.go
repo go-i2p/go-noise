@@ -24,6 +24,19 @@ func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {
 	return sc
 }
 
+// WithLocalRouterInfo sets the local RouterInfo to transmit during handshake.
+// The RouterInfo MUST contain an SSU2 RouterAddress with the "s" parameter
+// matching the static public key derived from StaticKey, otherwise peers
+// with strict static key verification will reject the handshake.
+// Required for initiator connections; optional for responders.
+func (sc *SSU2Config) WithLocalRouterInfo(routerInfo []byte) *SSU2Config {
+	if len(routerInfo) > 0 {
+		sc.LocalRouterInfo = make([]byte, len(routerInfo))
+		copy(sc.LocalRouterInfo, routerInfo)
+	}
+	return sc
+}
+
 // WithRemoteRouterHash sets the remote peer's router identity hash.
 // Used for identity verification.
 func (sc *SSU2Config) WithRemoteRouterHash(hash data.Hash) *SSU2Config {

@@ -26,6 +26,15 @@ type SSU2Config struct {
 	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
 	StaticKey []byte
 
+	// LocalRouterInfo is the local router's RouterInfo to transmit during the SSU2
+	// handshake (SessionConfirmed message for initiators). This RouterInfo MUST contain
+	// an SSU2 RouterAddress with the "s" parameter set to the static public key derived
+	// from StaticKey, otherwise the peer will reject the handshake.
+	// Required for initiator connections (Initiator=true); optional for responders.
+	// If nil or empty, the connection will transmit RouterHash instead (legacy behavior,
+	// incompatible with strict static key verification).
+	LocalRouterInfo []byte
+
 	// RemoteRouterHash is the remote peer's router identity hash
 	// Used for identity verification, optional for listeners
 	RemoteRouterHash *data.Hash
