@@ -155,9 +155,14 @@ func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session
 		if pendingTag == tag {
 			session.pendingTags[i] = session.pendingTags[len(session.pendingTags)-1]
 			session.pendingTags = session.pendingTags[:len(session.pendingTags)-1]
-			break
+			return
 		}
 	}
+	// The tag was present in the manager's tag index but absent from this
+	// session's pendingTags, violating the invariant tagIndex ⊆ pendingTags.
+	// Surface it at Warn so CI under WARNFAIL_I2P catches any future
+	// desynchronization between the two structures.
+	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "removeTagFromPendingList"}).Warn("tag not found in session pending list; tagIndex/pendingTags out of sync")
 }
 
 // bytesLess returns true if a is lexicographically less than b.

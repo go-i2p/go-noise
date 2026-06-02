@@ -9,9 +9,12 @@ import (
 
 // advanceRatchets advances the symmetric and tag ratchets to generate message key and session tag.
 // Returns an error if the message counter exceeds MaxMessageNumber (65535).
+// Per the ECIES-Ratchet spec the maximum usable message number is 65535
+// inclusive ("Maximum value is 65535. ... Higher values must never be used"),
+// so the guard rejects only counters strictly greater than MaxMessageNumber.
 func advanceRatchets(session *Session) (messageKey [32]byte, sessionTag [8]byte, err error) {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "advanceRatchets", "message_counter": session.MessageCounter}).Debug("advancing symmetric and tag ratchets")
-	if session.MessageCounter >= MaxMessageNumber {
+	if session.MessageCounter > MaxMessageNumber {
 		return [32]byte{}, [8]byte{}, oops.Errorf(
 			"message number %d exceeds maximum %d, session must be ratcheted",
 			session.MessageCounter, MaxMessageNumber,
@@ -105,4 +108,3 @@ func performDHRatchetStep(session *Session) error {
 
 	return nil
 }
-

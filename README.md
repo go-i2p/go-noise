@@ -24,7 +24,7 @@ This package MUST NOT use any of the following libraries.
 ## Features
 
 - **Configurable Noise Patterns**: Support for all standard Noise Protocol patterns  
-- **net.Conn Interface**: The core Noise connection wrapper (`conn/conn.go`) implements `net.Conn` fully. NTCP2 connections (`ntcp2/conn.go`) implement `net.Conn`. SSU2 connections (`ssu2/session/conn.go`) implement partial `net.Conn` (Close, LocalAddr, RemoteAddr, deadlines) but use callback-based message I/O via `DataHandler.MessageChan()` instead of Read/Write — see [SSU2 README](ssu2/README.md) for details.  
+- **net.Conn Interface**: The core Noise connection wrapper (`conn/conn.go`) implements `net.Conn` fully. NTCP2 connections (`ntcp2/conn.go`) implement `net.Conn`. SSU2 connections (`ssu2/session/conn.go`) also implement the full `net.Conn` interface: `Read` returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer) and `Write` auto-fragments. A callback-based message path is additionally available via `DataHandler.MessageChan()` — see [SSU2 README](ssu2/README.md) for details.  
 - **Error Handling**: Contextual error information using samber/oops  
 - **Thread-Safe**: Concurrent connection handling with synchronization - Read/Write operations can be called concurrently, Close() is idempotent, and state access is atomic  
 - **Memory Management**: Structured buffer management  

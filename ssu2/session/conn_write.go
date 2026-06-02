@@ -34,7 +34,7 @@ func (h *SSU2Conn) Write(b []byte) (int, error) {
 	const blockHdrSize = 3 // wire.minBlockHeaderSize: Type(1)+Length(2)
 	maxBlockData := h.config.MTU - 80 - blockHdrSize
 
-	if len(b)+blockHdrSize <= maxBlockData+blockHdrSize {
+	if len(b) <= maxBlockData {
 		// Fits in a single I2NP message block
 		block := &SSU2Block{
 			Type: BlockTypeI2NPMessage,

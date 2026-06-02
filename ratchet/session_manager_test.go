@@ -1239,10 +1239,15 @@ func TestMaxMessageNumberEnforced(t *testing.T) {
 	_, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("before limit"))
 	require.NoError(t, err, "Encryption at MaxMessageNumber-1 should succeed")
 
-	// After incrementing, counter is now MaxMessageNumber
-	// The next attempt should fail (counter >= MaxMessageNumber)
+	// After incrementing, counter is now MaxMessageNumber (65535). Per the spec
+	// 65535 is an inclusive valid message number, so this message must succeed.
 	_, err = sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("at limit"))
-	assert.Error(t, err, "Encryption at MaxMessageNumber should fail")
+	require.NoError(t, err, "Encryption at MaxMessageNumber (65535) should succeed")
+
+	// Counter is now MaxMessageNumber+1; the next attempt must fail because
+	// higher values than 65535 must never be used.
+	_, err = sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("over limit"))
+	assert.Error(t, err, "Encryption above MaxMessageNumber should fail")
 	assert.Contains(t, err.Error(), "exceeds maximum")
 }
 
