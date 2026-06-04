@@ -5,7 +5,7 @@ go 1.26.3
 require (
 	github.com/go-i2p/common v0.1.55
 	github.com/go-i2p/crypto v0.1.55
-	github.com/go-i2p/logger v0.1.55
+	github.com/go-i2p/logger v0.1.56
 	github.com/go-i2p/noise v1.1.1-0.20260327201800-8e41bb3d9f1e
 	github.com/go-i2p/path v0.0.0-20260524090922-541ac8d0307c
 	github.com/go-i2p/pool v0.0.0-20260524090918-318e509454da
