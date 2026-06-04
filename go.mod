@@ -6,7 +6,7 @@ require (
 	github.com/go-i2p/common v0.1.56
 	github.com/go-i2p/crypto v0.1.56
 	github.com/go-i2p/logger v0.1.56
-	github.com/go-i2p/noise v1.1.1-0.20260327201800-8e41bb3d9f1e
+	github.com/go-i2p/noise v0.1.56
 	github.com/go-i2p/path v0.1.56
 	github.com/go-i2p/pool v0.1.56
 	github.com/samber/oops v1.22.0
