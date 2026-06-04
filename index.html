@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 382 commits
+        📝 386 commits
          • 📜 License
       </div>
     </div>
@@ -84,12 +84,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>382 commits</span>
+          <span>📝</span> <span>386 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: June 1, 2026</span>
+          <span>📅</span> <span>Last updated: June 4, 2026</span>
         </div>
         
         
@@ -139,7 +139,7 @@ It is currently slightly jumbled with <code>go-i2p/crypto</code> on the lower le
 <ul>
 <li><strong>Configurable Noise Patterns</strong>: Support for all standard Noise Protocol patterns<br>
 </li>
-<li><strong>net.Conn Interface</strong>: The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully. NTCP2 connections (<code>ntcp2/conn.go</code>) implement <code>net.Conn</code>. SSU2 connections (<code>ssu2/session/conn.go</code>) implement partial <code>net.Conn</code> (Close, LocalAddr, RemoteAddr, deadlines) but use callback-based message I/O via <code>DataHandler.MessageChan()</code> instead of Read/Write — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.<br>
+<li><strong>net.Conn Interface</strong>: The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully. NTCP2 connections (<code>ntcp2/conn.go</code>) implement <code>net.Conn</code>. SSU2 connections (<code>ssu2/session/conn.go</code>) also implement the full <code>net.Conn</code> interface: <code>Read</code> returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer) and <code>Write</code> auto-fragments. A callback-based message path is additionally available via <code>DataHandler.MessageChan()</code> — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.<br>
 </li>
 <li><strong>Error Handling</strong>: Contextual error information using samber/oops<br>
 </li>
@@ -445,7 +445,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                382 commits
+                386 commits
               </div>
             </div>
           </div>
@@ -457,7 +457,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-06-04 11:59:21 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-06-04 14:13:24 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
