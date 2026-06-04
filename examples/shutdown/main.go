@@ -86,6 +86,7 @@ func createShutdownListener(addr, pattern string, staticKey []byte) (net.Listene
 func awaitShutdownSignal(cancel context.CancelFunc, wg *sync.WaitGroup) {
 	exampleutil.AwaitShutdownSignal(cancel, wg)
 }
+
 func runShutdownServerFunc(addr, pattern string, staticKey []byte) error {
 	listener, config, err := createShutdownListener(addr, pattern, staticKey)
 	if err != nil {
@@ -155,14 +156,17 @@ func runShutdownClient(args *exampleutil.CommonArgs, staticKey []byte) {
 func acceptConnections(ctx context.Context, listener net.Listener, config *noise.ConnConfig) {
 	exampleutil.AcceptConnections(ctx, listener, config)
 }
+
 // handleConnection is a thin wrapper around exampleutil.HandleEchoConnection.
 func handleConnection(rawConn net.Conn) {
 	exampleutil.HandleEchoConnection(rawConn)
 }
+
 // sendPeriodicMessages is a thin wrapper around exampleutil.SendPeriodicMessages.
 func sendPeriodicMessages(conn net.Conn, clientID, count int) {
 	exampleutil.SendPeriodicMessages(conn, clientID, count)
 }
+
 // runLongRunningClient is a thin wrapper around exampleutil.RunLongRunningClient.
 func runLongRunningClient(addr, pattern string, clientID int, staticKey []byte) {
 	exampleutil.RunLongRunningClient(addr, pattern, clientID, staticKey)

@@ -1,12 +1,11 @@
 package ratchet
 
 import (
-
-	"github.com/go-i2p/noise"
-		"github.com/go-i2p/crypto/chacha20poly1305"
+	"github.com/go-i2p/crypto/chacha20poly1305"
 	"github.com/go-i2p/crypto/kdf"
 	"github.com/go-i2p/crypto/ratchet"
 	"github.com/go-i2p/logger"
+	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
 )
 

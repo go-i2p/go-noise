@@ -7,7 +7,6 @@ import (
 	i2plogger "github.com/go-i2p/logger"
 )
 
-
 // performKNInitiator handles KN pattern as initiator: → e, ← e, ee, se, es
 func (nc *Conn) performKNInitiator(ctx context.Context) error {
 	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.performKNInitiator"}).Debug("starting KN pattern initiator")
@@ -44,7 +43,6 @@ func (nc *Conn) performKKResponder(ctx context.Context) error {
 	return nc.sendNoiseHandshakeMsg(handshake.PhaseExchange, "second KK")
 }
 
-
 // performKXInitiator handles KX pattern as initiator (2 messages):
 //
 //	pre-message: → s
@@ -70,4 +68,3 @@ func (nc *Conn) performKXResponder(ctx context.Context) error {
 	}
 	return nc.sendNoiseHandshakeMsg(handshake.PhaseExchange, "second KX")
 }
-

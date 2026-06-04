@@ -1273,8 +1273,10 @@ func TestApplyModifier_InvokesPhaseData(t *testing.T) {
 // one connection does not affect other connections using the same config.
 func TestConfigReuseAfterClose(t *testing.T) {
 	// Create a shared config with a static key
-	originalKey := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+	originalKey := []byte{
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+	}
 	keyBackup := make([]byte, len(originalKey))
 	copy(keyBackup, originalKey)
 

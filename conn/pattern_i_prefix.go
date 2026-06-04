@@ -7,7 +7,6 @@ import (
 	i2plogger "github.com/go-i2p/logger"
 )
 
-
 // performINInitiator handles IN pattern as initiator: → e, s, ← e, ee, se, es
 func (nc *Conn) performINInitiator(ctx context.Context) error {
 	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.performINInitiator"}).Debug("starting IN pattern initiator")

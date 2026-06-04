@@ -8,7 +8,6 @@ import (
 	"github.com/samber/oops"
 )
 
-
 // NewTokenBlock represents a NewToken (Type 17) block.
 // Per SSU2 spec, this block contains:
 //   - 4 bytes: Token expiration timestamp (seconds since epoch)

@@ -7,7 +7,6 @@ import (
 	i2plogger "github.com/go-i2p/logger"
 )
 
-
 // TWO-MESSAGE INTERACTIVE PATTERNS
 // ============================================================================
 
@@ -64,4 +63,3 @@ func (nc *Conn) performNXResponder(ctx context.Context) error {
 	}
 	return nc.sendNoiseHandshakeMsg(handshake.PhaseExchange, "second NX")
 }
-
