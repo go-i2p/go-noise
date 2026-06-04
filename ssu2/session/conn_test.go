@@ -462,6 +462,43 @@ func TestSSU2Conn_ReadWriteNotEstablished(t *testing.T) {
 	assert.Contains(t, err.Error(), "not established")
 }
 
+// TestSSU2Conn_ReadShortBufferReassembles verifies the MED-1 fix: when the
+// caller's buffer is smaller than the next message, Read returns the partial
+// data with a nil error (not a "buffer too small" error) and the remainder is
+// returned on subsequent Read calls, mirroring conn.Conn.Read and honoring the
+// io.Reader/net.Conn contract.
+func TestSSU2Conn_ReadShortBufferReassembles(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Manually mark the connection as established so Read proceeds to the data path.
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	// Inject a complete message larger than the read buffer used below.
+	msg := []byte("hello world, this is a multi-segment I2NP message")
+	conn.dataHandler.messageQueue <- msg
+
+	// Read it back in small chunks; each Read must return a nil error.
+	buf := make([]byte, 10)
+	var got []byte
+	for len(got) < len(msg) {
+		n, rerr := conn.Read(buf)
+		require.NoError(t, rerr, "short-buffer Read must not return an error while buffering the remainder")
+		require.Greater(t, n, 0)
+		got = append(got, buf[:n]...)
+	}
+	assert.Equal(t, msg, got, "message must be fully reassembled across multiple Reads")
+}
+
 // Handshake tests
 
 func TestSSU2Conn_HandshakeInvalidState(t *testing.T) {

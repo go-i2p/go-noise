@@ -77,7 +77,12 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 			"pkg": "session", "func": "Read",
 			"needed": len(msg), "got": len(b), "buffered": len(h.pendingMessage),
 		}).Debug("Buffer too small; buffering message remainder")
-		return n, oops.Errorf("buffer too small: need %d bytes, got %d", len(msg), len(b))
+		// The remainder is preserved in h.pendingMessage and will be returned on
+		// the next Read, so this is a successful partial read, not an error.
+		// Returning a non-nil error here would violate the io.Reader/net.Conn
+		// contract and cause io.Copy/bufio.Reader/io.ReadFull to abort despite
+		// no data loss. Mirrors conn.Conn.Read. See MED-1 audit finding.
+		return n, nil
 	}
 
 	return n, nil
