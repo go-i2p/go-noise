@@ -579,6 +579,73 @@ func TestDataHandler_FragmentReassembly_MultiFragment(t *testing.T) {
 	assert.Equal(t, uint64(1), stats.MessagesReassembled)
 }
 
+// TestDataHandler_FragmentReassembly_OversizedMessage verifies that reassembled
+// messages exceeding the maximum I2NP message size (64 KB) are dropped rather
+// than queued. This is a regression test for AUDIT.md MED-2: oversized message
+// detection and rejection.
+func TestDataHandler_FragmentReassembly_OversizedMessage(t *testing.T) {
+	handler := NewDataHandler(10)
+
+	messageID := uint32(99999)
+
+	// Build a message that will exceed 64 KB when reassembled (with 9-byte I2NP header)
+	// We need: 9 (header) + first fragment size + follow-on fragment sizes > 65536
+	// We'll create multiple fragments that together exceed the limit.
+
+	// First fragment: 40KB of data
+	firstData := make([]byte, 40*1024)
+	firstBlockData := make([]byte, 9+len(firstData))
+	firstBlockData[0] = 42 // I2NP type
+	binary.BigEndian.PutUint32(firstBlockData[1:5], messageID)
+	binary.BigEndian.PutUint32(firstBlockData[5:9], uint32(time.Now().Unix()))
+	copy(firstBlockData[9:], firstData)
+
+	firstBlock := NewSSU2Block(BlockTypeFirstFragment, firstBlockData)
+	payload1, err := SerializeBlocks([]*SSU2Block{firstBlock})
+	require.NoError(t, err)
+
+	packet1 := &SSU2Packet{
+		MessageType: MessageTypeData,
+		Payload:     payload1,
+	}
+
+	_, err = handler.ProcessDataPacket(packet1)
+	require.NoError(t, err)
+
+	// Second fragment: 26KB of data (total: 9 + 40K + 26K = 66,073 > 65,536)
+	secondData := make([]byte, 26*1024)
+	followOnBlockData := make([]byte, 5+len(secondData))
+	followOnBlockData[0] = (1 << 1) | 0x01 // fragNum=1, isLast=true
+	binary.BigEndian.PutUint32(followOnBlockData[1:5], messageID)
+	copy(followOnBlockData[5:], secondData)
+
+	followOnBlock := NewSSU2Block(BlockTypeFollowOnFragment, followOnBlockData)
+	payload2, err := SerializeBlocks([]*SSU2Block{followOnBlock})
+	require.NoError(t, err)
+
+	packet2 := &SSU2Packet{
+		MessageType: MessageTypeData,
+		Payload:     payload2,
+	}
+
+	// Process - should attempt reassembly, detect oversized message, and drop it
+	_, err = handler.ProcessDataPacket(packet2)
+	require.NoError(t, err) // No error returned; message silently dropped
+
+	// Fragment set should be cleaned up (deleted after size check)
+	assert.Equal(t, 0, handler.GetFragmentCount())
+
+	// No message should be queued
+	assert.False(t, handler.HasMessages())
+	msg := handler.GetMessage()
+	assert.Nil(t, msg)
+
+	// Verify stats: message should be counted as dropped
+	stats := handler.GetStats()
+	assert.Equal(t, uint64(0), stats.MessagesReassembled, "oversized message should not be reassembled")
+	assert.Equal(t, uint64(1), stats.MessagesDropped, "oversized message should be counted as dropped")
+}
+
 func TestDataHandler_GetMessage_NonBlocking(t *testing.T) {
 	handler := NewDataHandler(10)
 

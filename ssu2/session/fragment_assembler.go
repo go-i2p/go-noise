@@ -13,6 +13,11 @@ import (
 // send unique MessageIDs to force unbounded growth of the fragments map.
 const maxFragmentsPerConn = 512
 
+// maxI2NPMessageSize is the maximum size of a reassembled I2NP message (64 KB).
+// Per the I2NP protocol specification, messages must not exceed this size.
+// Reassembled messages exceeding this limit are dropped to enforce spec compliance.
+const maxI2NPMessageSize = 65536
+
 // FragmentSet represents a message being reassembled from fragments.
 type FragmentSet struct {
 	MessageID       uint32           // I2NP message identifier
@@ -251,6 +256,20 @@ func (h *DataHandler) reassembleMessage(messageID uint32) error {
 	message = append(message, header...)
 	for i := uint8(0); i <= fragmentSet.LastFragNum; i++ {
 		message = append(message, fragmentSet.Fragments[i]...)
+	}
+
+	// Validate reassembled message size against I2NP maximum
+	if len(message) > maxI2NPMessageSize {
+		h.incrementStat(&h.stats.MessagesDropped)
+		delete(h.fragments, messageID)
+		log.WithFields(logger.Fields{
+			"pkg":        "ssu2",
+			"func":       "reassembleMessage",
+			"message_id": messageID,
+			"size":       len(message),
+			"max_size":   maxI2NPMessageSize,
+		}).Warn("dropping oversized reassembled message")
+		return nil // Silent drop, not an error
 	}
 
 	log.WithFields(logger.Fields{

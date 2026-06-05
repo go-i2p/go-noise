@@ -63,11 +63,15 @@ func (h *SSU2Conn) Write(b []byte) (int, error) {
 //
 // FirstFragment (type 4): I2NPType(1) + MessageID(4) + ShortExpiry(4) + data
 // FollowOnFragment (type 5): FragInfo(1) + MessageID(4) + data
+//
+// The follow-on fragment number is a 7-bit field, allowing at most 127 follow-on
+// fragments. Combined with the first fragment (number 0), the maximum total is 128.
 func (h *SSU2Conn) buildI2NPFragmentBlocks(data []byte, maxBlockData int) ([]*SSU2Block, error) {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "buildI2NPFragmentBlocks", "dataLen": len(data), "maxBlockData": maxBlockData}).Debug("fragmenting I2NP message")
 	const (
-		firstFragHeaderSize    = 9 // type(1) + msgID(4) + shortExpiry(4)
-		followOnFragHeaderSize = 5 // fragInfo(1) + msgID(4)
+		firstFragHeaderSize       = 9   // type(1) + msgID(4) + shortExpiry(4)
+		followOnFragHeaderSize    = 5   // fragInfo(1) + msgID(4)
+		maxFollowOnFragmentNumber = 127 // 7-bit field: 0-127, but first fragment is 0, so max follow-on is 127
 	)
 
 	// Generate a random message ID for fragment correlation.
@@ -104,9 +108,17 @@ func (h *SSU2Conn) buildI2NPFragmentBlocks(data []byte, maxBlockData int) ([]*SS
 
 	blocks := []*SSU2Block{{Type: BlockTypeFirstFragment, Data: firstData}}
 	offset := end
-	fragNum := uint8(1)
 
 	maxFollowData := maxBlockData - followOnFragHeaderSize
+
+	// Validate fragment count: calculate total fragments needed and check against maximum
+	remainingData := len(data) - offset
+	followOnFragmentsNeeded := (remainingData + maxFollowData - 1) / maxFollowData // ceiling division
+	if followOnFragmentsNeeded > int(maxFollowOnFragmentNumber) {
+		return nil, oops.Errorf("message requires %d follow-on fragments, exceeds maximum of %d; use a smaller MTU or smaller message", followOnFragmentsNeeded, maxFollowOnFragmentNumber)
+	}
+
+	fragNum := uint8(1)
 	for offset < len(data) {
 		fEnd := offset + maxFollowData
 		if fEnd > len(data) {

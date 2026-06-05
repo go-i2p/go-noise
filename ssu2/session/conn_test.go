@@ -812,6 +812,53 @@ func TestBuildI2NPFragmentBlocks_MessageIDConsistent(t *testing.T) {
 	}
 }
 
+// TestBuildI2NPFragmentBlocks_FragmentCountLimit verifies that oversized writes
+// that would exceed the maximum follow-on fragment count (127) return an error
+// rather than silently overflowing the fragment number field. This is a regression
+// test for AUDIT.md MED-1: SSU2 fragment number wrap protection.
+func TestBuildI2NPFragmentBlocks_FragmentCountLimit(t *testing.T) {
+	config := createTestConfig(t)
+	dh, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	dh2, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	config.StaticKey = dh.Private
+	var rh4 data.Hash
+	copy(rh4[:], dh2.Public)
+	config.RemoteRouterHash = &rh4
+	config.RemoteStaticKey = dh2.Public
+
+	mockConn := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234})
+	remoteAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678}
+
+	conn, err := NewSSU2Conn(mockConn, remoteAddr, config, true, dh.Private, dh2.Public)
+	require.NoError(t, err)
+
+	maxBlockData := config.MTU - 80 - 3
+	maxFollowData := maxBlockData - 5 // followOnFragHeaderSize = 5
+	maxFirstData := maxBlockData - 9  // firstFragHeaderSize = 9
+
+	// Calculate payload that needs exactly 127 follow-on fragments (valid, should succeed)
+	// totalData = maxFirstData + (127 * maxFollowData)
+	payloadAt127FollowOn := make([]byte, maxFirstData+(127*maxFollowData))
+
+	// This should succeed
+	blocks, err := conn.buildI2NPFragmentBlocks(payloadAt127FollowOn, maxBlockData)
+	require.NoError(t, err, "payload with 127 follow-on fragments should succeed")
+	// Should have 1 + 127 = 128 blocks (1 first + 127 follow-ons)
+	assert.Equal(t, 128, len(blocks), "should have exactly 128 fragments (1 first + 127 follow-on)")
+
+	// Calculate payload that needs 128 follow-on fragments (invalid, should fail)
+	// totalData = maxFirstData + (128 * maxFollowData) + 1 (to trigger 128th follow-on)
+	payloadAt128FollowOn := make([]byte, maxFirstData+(128*maxFollowData)+1)
+
+	// This should fail with an error
+	blocks, err = conn.buildI2NPFragmentBlocks(payloadAt128FollowOn, maxBlockData)
+	require.Error(t, err, "payload with 128 follow-on fragments should fail")
+	assert.Nil(t, blocks, "should not return blocks on fragment count error")
+	assert.Contains(t, err.Error(), "exceeds maximum", "error should mention exceeding maximum fragments")
+}
+
 // TestDataPhaseNonce_PacketNumberAsNonce verifies the SSU2 data-phase AEAD
 // nonce convention: the 4-byte packet number is zero-extended to uint64 and
 // used as the nonce via CipherState.SetNonce(). Encrypt with nonce N must
