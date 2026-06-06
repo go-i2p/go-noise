@@ -269,6 +269,17 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 			// Record for ACK only after window acceptance
 			if readyPacket.PacketNumber > 0 {
 				h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+
+				// H-2: Check if a delayed ACK should be sent immediately.
+				// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
+				// Otherwise, rely on timer or next batch of packets (see H-2 TODO).
+				rtt := h.rttEstimator.GetSmoothedRTT()
+				if rtt == 0 {
+					rtt = 50 * time.Millisecond // Default if not yet measured
+				}
+				if h.ackHandler.ShouldSendACK(rtt) {
+					h.sendImmediateACK()
+				}
 			}
 
 			// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
