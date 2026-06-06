@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 390 commits
+        📝 394 commits
          • 📜 License
       </div>
     </div>
@@ -48,9 +48,9 @@
         
           <li><a href="docs/DOC.html">noise</a></li>
         
-          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
-        
           <li><a href="docs/ntcp2/DOC.html">ntcp2</a></li>
+        
+          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
         
           <li><a href="docs/examples/ntcp2-config/DOC.html">ntcp2-config</a></li>
         
@@ -84,12 +84,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>390 commits</span>
+          <span>📝</span> <span>394 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: June 4, 2026</span>
+          <span>📅</span> <span>Last updated: June 5, 2026</span>
         </div>
         
         
@@ -385,6 +385,10 @@ go test ./...
 DEBUG_I2P=debug go test ./...
 
 # With warn-fail mode (warnings become fatal)
+# Note: WARNFAIL_I2P=true exercises warn-level paths in production code,
+# but many intentional warn-path tests will fail (see AUDIT.md L-2).
+# For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
+# For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 </code></pre>
 
@@ -445,7 +449,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                390 commits
+                394 commits
               </div>
             </div>
           </div>
@@ -457,7 +461,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-06-06 00:11:13 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-06-06 02:02:01 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
