@@ -233,7 +233,10 @@ func (h *SSU2Conn) keepaliveLoop() {
 				h.closeMutex.Lock()
 				h.closeErr = oops.Errorf("idle timeout")
 				h.closeMutex.Unlock()
-				_ = h.Close()
+				// H-3: Run close in a separate goroutine to avoid deadlock.
+				// keepaliveLoop is counted in h.wg, so if we call h.Close() directly,
+				// it will call h.wg.Wait() and deadlock waiting for this goroutine to finish.
+				go h.Close()
 				return
 			}
 		case <-h.closeChan:
@@ -247,25 +250,35 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 	switch packet.MessageType {
 	case MessageTypeData:
 		// Enforce receive window: reject duplicate, old, and out-of-window packets
+		var readyPackets []*SSU2Packet
 		if h.recvWindow != nil {
-			if _, err := h.recvWindow.Insert(packet); err != nil {
+			var err error
+			readyPackets, err = h.recvWindow.Insert(packet)
+			if err != nil {
 				return // silently drop
 			}
+		} else {
+			// No receive window; treat this packet as immediately ready
+			readyPackets = []*SSU2Packet{packet}
 		}
 
-		// Record for ACK only after window acceptance
-		if packet.PacketNumber > 0 {
-			h.ackHandler.RecordReceived(packet.PacketNumber)
-		}
+		// Process all ready packets (including the current one and any that were buffered)
+		for _, readyPacket := range readyPackets {
+			h.validDataPacketsReceived.Add(1)
 
-		h.validDataPacketsReceived.Add(1)
-		// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
-		// checked via CongestionFlagRequestACK in the Congestion block handler,
-		// providing redundant but harmless ACK triggering)
-		if len(packet.Header) > 13 && packet.Header[13]&0x01 != 0 {
-			h.sendImmediateACK()
+			// Record for ACK only after window acceptance
+			if readyPacket.PacketNumber > 0 {
+				h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+			}
+
+			// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
+			// checked via CongestionFlagRequestACK in the Congestion block handler,
+			// providing redundant but harmless ACK triggering)
+			if len(readyPacket.Header) > 13 && readyPacket.Header[13]&0x01 != 0 {
+				h.sendImmediateACK()
+			}
+			h.processDataPacket(readyPacket)
 		}
-		h.processDataPacket(packet)
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
 		// Handshake packets bypass receive window
 		if packet.PacketNumber > 0 {

@@ -1242,3 +1242,116 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 	conn.sendSeqMutex.Unlock()
 	assert.Equal(t, rekeyThreshold+1, currentSeq, "send sequence should be threshold+1 after two calls")
 }
+
+// TestProcessInboundPacket_ReorderedDataDelivery tests that out-of-order data
+// packets are all delivered when gaps are filled (H-1 regression test).
+// This test verifies the fix for the bug where processInboundPacket ignored the
+// ready packet list returned by recvWindow.Insert(), causing reordered packets to
+// be silently dropped.
+func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow test")
+	}
+
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9002}
+	config := createTestConfig(t)
+	config.DestroyTimeout = 0
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Manually initialize the receive window to simulate an established connection
+	conn.recvWindow = NewReceiveWindow(1, DefaultMaxWindowSize)
+
+	// Create two data packets with consecutive sequence numbers
+	packet1 := &SSU2Packet{
+		MessageType:  MessageTypeData,
+		PacketNumber: 1,
+		Header:       make([]byte, 16),
+		Payload:      []byte{0x01, 0x02},
+	}
+
+	packet2 := &SSU2Packet{
+		MessageType:  MessageTypeData,
+		PacketNumber: 2,
+		Header:       make([]byte, 16),
+		Payload:      []byte{0x03, 0x04},
+	}
+
+	// Process packet 2 first (out of order).
+	// It should be buffered by the receive window.
+	conn.processInboundPacket(packet2)
+	received1 := conn.validDataPacketsReceived.Load()
+
+	// Now process packet 1 (fills the gap).
+	// This should trigger processing of both packet 1 and the buffered packet 2.
+	conn.processInboundPacket(packet1)
+	received2 := conn.validDataPacketsReceived.Load()
+
+	// Verify both packets were processed and counted.
+	// Expected: packet 2 was buffered (received1=0), then both packets released (received2=2)
+	assert.Equal(t, uint64(0), received1, "packet 2 should be buffered, not counted yet")
+	assert.Equal(t, uint64(2), received2, "both packets should be counted after gap is filled")
+}
+
+// TestIdleTimeoutKeepaliveLoopDeadlock verifies that idle timeout on keepaliveLoop
+// does not deadlock on Close() (H-3). The old code called h.Close() directly which
+// called h.wg.Wait(), creating a self-deadlock when keepaliveLoop is counted in h.wg.
+// The fix spawns Close in a separate goroutine instead.
+func TestIdleTimeoutKeepaliveLoopDeadlock(t *testing.T) {
+	initConn, _, _, _, initPriv, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+	config.KeepaliveInterval = 10 * time.Millisecond // Very short to trigger quickly
+	config.IdleTimeout = 50 * time.Millisecond       // Idle timeout shortly after
+	config.ConnectionID = 12345
+	config.MTU = 1500
+	config.DestroyTimeout = 0
+	config.RemoteStaticKey = respPub
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+
+	// Set a very old last activity so idle timeout triggers immediately
+	conn.lastActivityLock.Lock()
+	conn.lastActivity = time.Now().Add(-1 * time.Minute)
+	conn.lastActivityLock.Unlock()
+
+	// Add to wg manually since we're starting the loop ourselves
+	// (normally this is done in startDataLoops during handshake finalization)
+	conn.wg.Add(1)
+
+	// Start the keepalive loop
+	go conn.keepaliveLoop()
+
+	// Wait with a timeout to detect deadlock
+	// If deadlock occurs, the test will hang and timeout
+	done := make(chan bool, 1)
+	go func() {
+		// Give keepalive loop time to detect idle and trigger close
+		time.Sleep(150 * time.Millisecond)
+		// The connection should be in Closing/Closed state by now
+		// If we can read the state without deadlock, the fix worked
+		conn.stateMutex.RLock()
+		state := conn.state
+		conn.stateMutex.RUnlock()
+		done <- state == StateClosing || state == StateClosed
+	}()
+
+	// Wait for either success or timeout (3 seconds)
+	select {
+	case success := <-done:
+		if !success {
+			t.Error("Connection did not reach expected close state (H-3 regression test)")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Test timed out: likely deadlock on idle timeout Close() (H-3 not fixed)")
+	}
+}
