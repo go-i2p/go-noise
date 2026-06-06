@@ -21,7 +21,7 @@ This package provides handshake modifiers and utilities for implementing the SSU
 
 > **Note:** SessionConfirmed (3rd XK message) processing routes through the Noise state machine but has not been tested against a live I2P router.
 
-> **Limitation:** NextNonce (block type 11) key rotation is disabled by default (`EnableNextNonce: false`) because the SSU2 spec marks this area as "TODO" with size "TBD". Long-lived sessions will not rotate cipher keys unless `EnableNextNonce` is explicitly set to `true` in `SSU2Config`.
+> **Security Limitation (M-2):** NextNonce (block type 11) key rotation is disabled by default (`EnableNextNonce: false`) because the SSU2 spec marks this area as "TODO" with size "TBD". **Forward-secrecy implications for operators:** Without mid-session key rotation, long-lived sessions (held for hours or days) retain the same send/receive cipher keys for their entire lifetime. An adversary who later compromises the static key can retroactively decrypt the entire session. Nonce-exhaustion guards prevent nonce reuse, but forward secrecy is not refreshed until the session closes and a new one is established. Operators running routers with sustained SSU2 sessions should be aware of this trade-off. Enabling `EnableNextNonce` before the spec is finalized risks breaking interoperability with peers.
 
 ## Protocol Compliance
 

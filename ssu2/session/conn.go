@@ -156,6 +156,10 @@ type SSU2Conn struct {
 	// Used to enforce mutual exclusivity with Read(). See MEDIUM-1.
 	messageChanModeCalled atomic.Bool
 
+	// closedMessageChan is a closed channel returned as a sentinel by MessageChan()
+	// when Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
+	closedMessageChan chan []byte
+
 	// Keepalive
 	lastActivity     time.Time
 	lastActivityLock sync.RWMutex
@@ -342,6 +346,12 @@ func assembleSSU2Conn(
 ) *SSU2Conn {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "assembleSSU2Conn", "remote_addr": remoteAddr, "initiator": initiator, "mtu": config.MTU}).Debug("Assembling connection struct")
 	rttEst := NewRTTEstimator()
+
+	// Create a closed channel sentinel for MessageChan() to return when Read() has been called,
+	// enforcing mutual exclusivity per MEDIUM-1 audit finding.
+	closedChan := make(chan []byte)
+	close(closedChan)
+
 	conn := &SSU2Conn{
 		underlying:           underlying,
 		remoteAddr:           remoteAddr,
@@ -356,6 +366,7 @@ func assembleSSU2Conn(
 		recvWindow:           NewReceiveWindow(0, config.ReceiveWindowSize),
 		state:                StateInit,
 		closeChan:            make(chan struct{}),
+		closedMessageChan:    closedChan,
 		sendQueue:            make(chan *SSU2Packet, 64),
 		recvQueue:            make(chan *SSU2Packet, 64),
 		pendingPackets:       make(map[uint32]*PendingPacket),
@@ -407,10 +418,13 @@ func messageTypeToHeaderType(msgType uint8) HeaderType {
 }
 
 func NewMockSSU2Conn(connID uint64) *SSU2Conn {
+	closedChan := make(chan []byte)
+	close(closedChan)
 	return &SSU2Conn{
-		ssu2Addr:  NewMockSSU2Addr(connID),
-		state:     StateEstablished,
-		closeChan: make(chan struct{}),
+		ssu2Addr:          NewMockSSU2Addr(connID),
+		state:             StateEstablished,
+		closeChan:         make(chan struct{}),
+		closedMessageChan: closedChan,
 	}
 }
 

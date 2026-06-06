@@ -2,13 +2,17 @@ package ntcp2
 
 import (
 	"context"
+	"encoding/binary"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	i2pbase64 "github.com/go-i2p/common/base64"
+	"github.com/go-i2p/common/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/curve25519"
 )
 
 // ── Close() tests for all three modifiers ────────────────────────────
@@ -403,4 +407,257 @@ func TestMessage3Part2Validation_RejectsExcessiveM3P2Len(t *testing.T) {
 	require.NoError(t, responderErr, "handshake with normal m3p2Len should succeed")
 	require.NotNil(t, responderConn)
 	responderConn.Close()
+}
+
+// ── StrictRouterInfoVerification tests (M-4) ─────────────────────────
+
+// TestStrictRouterInfoVerification_DefaultWarnOnly verifies that when
+// StrictRouterInfoVerification is false (default), a mismatch between
+// the static key and LocalRouterInfo produces only a warning and the
+// handshake completes successfully.
+//
+// NOTE (M-4): The handshake warning-path cannot be trivially tested via
+// an end-to-end handshake because crafting a valid RouterInfo with a
+// *wrong* NTCP2 `s=` option requires producing a signed RouterInfo
+// structure (not just raw bytes). The real-world trigger is a config bug
+// in the router (go-i2p/go-i2p) where the LocalRouterInfo diverges from
+// the live static key. This test instead validates the unit-level behavior
+// of verifyLocalRouterInfoMatchesStaticKey.
+func TestStrictRouterInfoVerification_DefaultWarnOnly(t *testing.T) {
+	// Generate a fresh key pair for testing
+	staticPriv := make([]byte, StaticKeySize)
+	for i := range staticPriv {
+		staticPriv[i] = byte(i)
+	}
+
+	// Create RouterInfo bytes that do NOT contain the derived public key
+	// (in a real RouterInfo, the NTCP2 address would have `s=<base64pubkey>`)
+	riBytes := []byte("fake-router-info-without-matching-s-option")
+
+	// Verify that verifyLocalRouterInfoMatchesStaticKey returns an error
+	// when the key does not appear in the RouterInfo bytes
+	err := verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes)
+	assert.Error(t, err, "verifyLocalRouterInfoMatchesStaticKey should return error when key mismatches")
+	assert.Contains(t, err.Error(), "derived public key from live NTCP2 static private key does not appear",
+		"error message should indicate key mismatch")
+
+	// In the actual handshake code (performInitiatorHandshake), this error
+	// is logged as a warning but the handshake continues when
+	// StrictRouterInfoVerification = false (the default).
+}
+
+// TestStrictRouterInfoVerification_MatchingKey verifies that when the
+// static key's derived public key appears in the LocalRouterInfo,
+// verifyLocalRouterInfoMatchesStaticKey returns nil (success).
+func TestStrictRouterInfoVerification_MatchingKey(t *testing.T) {
+	// Generate a keypair using the same method as the code under test
+	staticPriv := make([]byte, StaticKeySize)
+	for i := range staticPriv {
+		staticPriv[i] = byte(i + 42)
+	}
+
+	// Derive the public key exactly as verifyLocalRouterInfoMatchesStaticKey does
+	// (golang.org/x/crypto/curve25519)
+	pub, err := curve25519.X25519(staticPriv, curve25519.Basepoint)
+	require.NoError(t, err)
+
+	// Encode to base64 exactly as the code does (github.com/go-i2p/common/base64)
+	pubB64 := i2pbase64.EncodeToString(pub)
+
+	// Embed the base64 public key in fake RouterInfo bytes
+	riBytes := []byte("fake-router-info-ntcp2-address-s=" + pubB64 + "-end")
+
+	// Verify that verifyLocalRouterInfoMatchesStaticKey returns nil (success)
+	err = verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes)
+	assert.NoError(t, err, "verifyLocalRouterInfoMatchesStaticKey should succeed when key matches")
+}
+
+// TestStrictRouterInfoVerification_StrictModeEnabled verifies that when
+// StrictRouterInfoVerification is explicitly enabled, the Config builder
+// correctly sets the field and the handshake logic can access it.
+//
+// NOTE: This test validates the Config builder method WithStrictRouterInfoVerification
+// and the field StrictRouterInfoVerification. The actual enforcement happens in
+// performInitiatorHandshake (ntcp2/handshake.go line ~169), where the error
+// returned by verifyLocalRouterInfoMatchesStaticKey causes the handshake to fail
+// when StrictRouterInfoVerification = true.
+func TestStrictRouterInfoVerification_StrictModeEnabled(t *testing.T) {
+	staticKey := make([]byte, StaticKeySize)
+	var bobHash data.Hash // zero-value hash is fine for this test
+
+	cfg, err := NewNTCP2Config(bobHash, true) // initiator
+	require.NoError(t, err)
+
+	cfg.WithStaticKey(staticKey).
+		WithStrictRouterInfoVerification(true)
+
+	assert.True(t, cfg.StrictRouterInfoVerification,
+		"WithStrictRouterInfoVerification(true) should set the field to true")
+
+	// Also verify the field can be set to false
+	cfg.WithStrictRouterInfoVerification(false)
+	assert.False(t, cfg.StrictRouterInfoVerification,
+		"WithStrictRouterInfoVerification(false) should set the field to false")
+}
+
+// TestStrictRouterInfoVerification_EdgeCases verifies that
+// verifyLocalRouterInfoMatchesStaticKey handles edge cases correctly:
+//   - Empty RouterInfo bytes (no check performed, returns nil)
+//   - Wrong-length static key (no check performed, returns nil)
+func TestStrictRouterInfoVerification_EdgeCases(t *testing.T) {
+	// Case 1: Empty RouterInfo (common in test scenarios with synthetic RI)
+	staticPriv := make([]byte, StaticKeySize)
+	err := verifyLocalRouterInfoMatchesStaticKey(staticPriv, nil)
+	assert.NoError(t, err, "empty RouterInfo should return nil (no check performed)")
+
+	err = verifyLocalRouterInfoMatchesStaticKey(staticPriv, []byte{})
+	assert.NoError(t, err, "zero-length RouterInfo should return nil (no check performed)")
+
+	// Case 2: Wrong-length static key (defensive path)
+	shortKey := make([]byte, 16)
+	riBytes := []byte("fake-router-info")
+	err = verifyLocalRouterInfoMatchesStaticKey(shortKey, riBytes)
+	assert.NoError(t, err, "wrong-length static key should return nil (no check performed)")
+}
+
+// ============================================================================
+// M-5: NTCP2 handshake padding randomization
+// ============================================================================
+// Per AUDIT.md line 98 (MEDIUM priority): "NTCP2 wire fingerprint: default
+// zero-length msg1 padding vs i2pd's randomized 0–223 byte padding".
+// Remediation: "enable spec-conformant randomized handshake padding by default
+// (sourced from crypto/rand), matching the Java/i2pd distribution. Validate:
+// a statistical test asserting padding length is randomized across many handshakes."
+//
+// These tests validate that:
+// 1. The randomPaddingLength helper produces uniform distribution [0, maxPadLen]
+// 2. Message 1 and Message 2 use randomized padding (not always 0)
+// 3. The padding distribution matches statistical expectations (chi-squared test)
+
+// TestRandomPaddingLength_Distribution validates that randomPaddingLength
+// produces a uniform distribution over the range [0, maxPadLen] using a
+// chi-squared goodness-of-fit test. This is a statistical test that may
+// occasionally fail due to randomness (p < 0.01 false-positive rate).
+func TestRandomPaddingLength_Distribution(t *testing.T) {
+	const maxPadLen = 223   // per NTCP2 spec §4.3
+	const numSamples = 5000 // enough samples for chi-squared test
+	const numBuckets = 10   // group [0, 223] into 10 buckets for chi-squared
+
+	// Collect samples
+	counts := make([]int, numBuckets)
+	for i := 0; i < numSamples; i++ {
+		padLen, err := randomPaddingLength(maxPadLen)
+		require.NoError(t, err, "randomPaddingLength should not fail")
+		require.GreaterOrEqual(t, padLen, 0, "padLen should be >= 0")
+		require.LessOrEqual(t, padLen, maxPadLen, "padLen should be <= maxPadLen")
+
+		// Map [0, 223] → bucket [0, 9]
+		bucket := (padLen * numBuckets) / (maxPadLen + 1)
+		counts[bucket]++
+	}
+
+	// Chi-squared goodness-of-fit test
+	// H0: samples are uniformly distributed across buckets
+	// Expected count per bucket = numSamples / numBuckets
+	expectedPerBucket := float64(numSamples) / float64(numBuckets)
+	chiSquared := 0.0
+	for _, observed := range counts {
+		diff := float64(observed) - expectedPerBucket
+		chiSquared += (diff * diff) / expectedPerBucket
+	}
+
+	// Critical value for chi-squared with 9 degrees of freedom at p=0.01 is ~21.67
+	// (we reject H0 only if chi-squared > 21.67, i.e. <1% false-positive rate)
+	// This is a loose threshold to avoid flaky test failures.
+	const criticalValue = 21.67
+	assert.Less(t, chiSquared, criticalValue,
+		"chi-squared statistic %.2f exceeds critical value %.2f (p=0.01), "+
+			"indicating non-uniform distribution. Bucket counts: %v",
+		chiSquared, criticalValue, counts)
+}
+
+// TestRandomPaddingLength_EdgeCases validates edge cases for randomPaddingLength.
+func TestRandomPaddingLength_EdgeCases(t *testing.T) {
+	// max=0 should always return 0
+	for i := 0; i < 10; i++ {
+		padLen, err := randomPaddingLength(0)
+		require.NoError(t, err)
+		assert.Equal(t, 0, padLen, "randomPaddingLength(0) should always return 0")
+	}
+
+	// Negative max should return error
+	_, err := randomPaddingLength(-1)
+	assert.Error(t, err, "randomPaddingLength with negative max should error")
+
+	// max > 255 should return error (function constraint)
+	_, err = randomPaddingLength(256)
+	assert.Error(t, err, "randomPaddingLength with max > 255 should error")
+}
+
+// TestNTCP2HandshakePadding_Message1_Randomized validates that buildMessage1Options
+// generates randomized padding lengths across multiple calls (not always 0).
+func TestNTCP2HandshakePadding_Message1_Randomized(t *testing.T) {
+	const numTrials = 100
+	const m3p2Len = 512 // arbitrary
+	seenNonZero := false
+	lengths := make(map[int]bool)
+
+	for i := 0; i < numTrials; i++ {
+		opts, padLen, err := buildMessage1Options(m3p2Len)
+		require.NoError(t, err, "buildMessage1Options should not fail")
+		require.NotNil(t, opts, "opts should not be nil")
+		require.Len(t, opts, ntcp2OptionsSize, "opts should be 16 bytes")
+
+		// Verify padLen in opts matches returned padLen
+		optsPadLen := int(binary.BigEndian.Uint16(opts[2:4]))
+		assert.Equal(t, padLen, optsPadLen, "padLen in opts should match returned padLen")
+
+		// Track distribution
+		lengths[padLen] = true
+		if padLen > 0 {
+			seenNonZero = true
+		}
+	}
+
+	// Statistical assertion: with 100 trials and uniform [0, 223] distribution,
+	// the probability of seeing only zeros is (1/224)^100 ≈ 0 (vanishingly small).
+	// We assert that we see non-zero values and at least 10 distinct values
+	// (loose threshold to avoid flakiness). We do NOT assert that we must see
+	// padLen=0 because P(no zeros in 100 trials) = (223/224)^100 ≈ 0.643,
+	// which would cause flaky test failures.
+	assert.True(t, seenNonZero, "should see padLen>0 in %d trials", numTrials)
+	assert.GreaterOrEqual(t, len(lengths), 10,
+		"should see at least 10 distinct padding lengths in %d trials (saw %d)",
+		numTrials, len(lengths))
+}
+
+// TestNTCP2HandshakePadding_Message2_Randomized validates that buildMessage2Options
+// generates randomized padding lengths across multiple calls (not always 0).
+func TestNTCP2HandshakePadding_Message2_Randomized(t *testing.T) {
+	const numTrials = 100
+	seenNonZero := false
+	lengths := make(map[int]bool)
+
+	for i := 0; i < numTrials; i++ {
+		opts, padLen, err := buildMessage2Options()
+		require.NoError(t, err, "buildMessage2Options should not fail")
+		require.NotNil(t, opts, "opts should not be nil")
+		require.Len(t, opts, ntcp2OptionsSize, "opts should be 16 bytes")
+
+		// Verify padLen in opts matches returned padLen
+		optsPadLen := int(binary.BigEndian.Uint16(opts[2:4]))
+		assert.Equal(t, padLen, optsPadLen, "padLen in opts should match returned padLen")
+
+		// Track distribution
+		lengths[padLen] = true
+		if padLen > 0 {
+			seenNonZero = true
+		}
+	}
+
+	// Statistical assertion: same as Message1 test above
+	assert.True(t, seenNonZero, "should see padLen>0 in %d trials", numTrials)
+	assert.GreaterOrEqual(t, len(lengths), 10,
+		"should see at least 10 distinct padding lengths in %d trials (saw %d)",
+		numTrials, len(lengths))
 }

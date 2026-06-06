@@ -41,13 +41,12 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 
 	// Enforce mutual exclusivity of Read and MessageChan delivery paths (MEDIUM-1).
 	// The first call to Read sets readModeCalled; if MessageChan was already called,
-	// we log a Warn to alert the caller to the API contract violation.
+	// we return an error to prevent message splitting across both paths.
 	if !h.readModeCalled.CompareAndSwap(false, true) {
 		// readModeCalled was already true; this is OK, just another Read call
 	} else if h.messageChanModeCalled.Load() {
-		// MessageChan was called first; warn the caller that messages are racing
-		log.WithFields(logger.Fields{"pkg": "session", "func": "Read"}).Warn(
-			"Read called after MessageChan; messages may be split between paths")
+		// MessageChan was called first; return a hard error to enforce the contract
+		return 0, oops.Errorf("Read() called after MessageChan(); these delivery paths are mutually exclusive")
 	}
 
 	// Check if we have a pending message from a previous truncated Read.
@@ -348,17 +347,19 @@ func (h *SSU2Conn) getReadDeadline() <-chan time.Time {
 // resulting in silent message loss.
 //
 // IMPORTANT: Do not use MessageChan() and Read() concurrently on the same
-// connection. This method will log a Warn if Read() has already been called.
-// See MEDIUM-1 audit finding.
+// connection. This method returns a closed channel (panic-free sentinel) if
+// Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
 func (h *SSU2Conn) MessageChan() <-chan []byte {
 	// Enforce mutual exclusivity of MessageChan and Read delivery paths (MEDIUM-1).
-	// If MessageChan is called after Read, we warn to alert the caller.
+	// If MessageChan is called after Read, we return a closed channel instead of
+	// allowing message splitting.
 	if !h.messageChanModeCalled.CompareAndSwap(false, true) {
 		// messageChanModeCalled was already true; this is OK, just another call
 	} else if h.readModeCalled.Load() {
-		// Read was called first; warn the caller that messages are racing
-		log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Warn(
-			"MessageChan called after Read; messages may be split between paths")
+		// Read was called first; return a closed channel as a panic-free sentinel
+		log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Error(
+			"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive")
+		return h.closedMessageChan
 	}
 	return h.dataHandler.MessageChan()
 }

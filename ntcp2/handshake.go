@@ -11,6 +11,7 @@ import (
 
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/cryptorand"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 	"golang.org/x/crypto/curve25519"
@@ -193,11 +194,18 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 	return sendInitiatorMsg3(cfg, nc, riBytes, m3p2Len)
 }
 
-// sendInitiatorMsg1 builds and sends the NTCP2 message 1 (AES-obfuscation step).
-// opts construction, Noise WriteHandshakeMsg, size check, dump, and wire write
-// are kept together so this step can be unit-tested with a mock NoiseConn.
+// sendInitiatorMsg1 builds and sends the NTCP2 message 1 (AES-obfuscation step),
+// followed by the randomly-generated cleartext padding bytes. The padding length
+// is randomized in the range [0, 223] per the NTCP2 spec §4.3, matching the
+// i2pd/Java I2P padding distribution to prevent passive wire fingerprinting.
+//
+// opts construction, Noise WriteHandshakeMsg, size check, dump, wire write, and
+// padding send are kept together so this step can be unit-tested with a mock NoiseConn.
 func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
-	opts1 := buildMessage1Options(m3p2Len)
+	opts1, padLen, err := buildMessage1Options(m3p2Len)
+	if err != nil {
+		return err // already wrapped by buildMessage1Options
+	}
 	msg1, err := nc.WriteHandshakeMsgToBytes(handshake.PhaseInitial, opts1)
 	if err != nil {
 		return oops.Code("MSG1_WRITE_FAILED").In("ntcp2").
@@ -213,7 +221,22 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 		return oops.Code("MSG1_SEND_FAILED").In("ntcp2").
 			Wrapf(err, "failed to send NTCP2 message 1")
 	}
-	// padLen = 0: no cleartext padding appended after message 1.
+
+	// Send the cleartext padding bytes (if padLen > 0) and MixHash them into
+	// the handshake state. The padding content is random per the spec to prevent
+	// plaintext fingerprinting. This matches i2pd's CreateSessionRequestMessage.
+	if padLen > 0 {
+		pad, err := cryptorand.RandomBytes(padLen)
+		if err != nil {
+			return oops.Code("MSG1_PAD_GEN_FAILED").In("ntcp2").
+				Wrapf(err, "failed to generate %d padding bytes for message 1", padLen)
+		}
+		if _, err := raw.Write(pad); err != nil {
+			return oops.Code("MSG1_PAD_SEND_FAILED").In("ntcp2").
+				Wrapf(err, "failed to send %d padding bytes after message 1", padLen)
+		}
+		nc.MixHashData(pad)
+	}
 	return nil
 }
 
@@ -412,7 +435,10 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	}
 
 	// === Message 2 (Bob -> Alice) ============================================
-	opts2 := buildMessage2Options()
+	opts2, bobPadLen, err := buildMessage2Options()
+	if err != nil {
+		return nil, err // already wrapped by buildMessage2Options
+	}
 	msg2, err := nc.WriteHandshakeMsgToBytes(handshake.PhaseExchange, opts2)
 	if err != nil {
 		return nil, oops.Code("MSG2_WRITE_FAILED").In("ntcp2").
@@ -426,7 +452,22 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 		return nil, oops.Code("MSG2_SEND_FAILED").In("ntcp2").
 			Wrapf(err, "failed to send NTCP2 message 2")
 	}
-	// padLen = 0: no cleartext padding appended after message 2 for now.
+
+	// Send the cleartext padding bytes (if bobPadLen > 0) and MixHash them into
+	// the handshake state. The padding content is random per the spec to prevent
+	// plaintext fingerprinting. This matches i2pd's CreateSessionCreatedMessage.
+	if bobPadLen > 0 {
+		pad, err := cryptorand.RandomBytes(bobPadLen)
+		if err != nil {
+			return nil, oops.Code("MSG2_PAD_GEN_FAILED").In("ntcp2").
+				Wrapf(err, "failed to generate %d padding bytes for message 2", bobPadLen)
+		}
+		if _, err := raw.Write(pad); err != nil {
+			return nil, oops.Code("MSG2_PAD_SEND_FAILED").In("ntcp2").
+				Wrapf(err, "failed to send %d padding bytes after message 2", bobPadLen)
+		}
+		nc.MixHashData(pad)
+	}
 
 	// === Message 3 (Alice -> Bob) ============================================
 	msg3Len := msg3Part1Size + int(m3p2Len)
@@ -450,47 +491,78 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 }
 
 // buildMessage2Options constructs the 16-byte options block sent as the
-// AEAD payload in NTCP2 message 2 (Bob -> Alice).
+// AEAD payload in NTCP2 message 2 (Bob -> Alice), and returns the options
+// and a randomly-generated padding length in the range [0, 223].
 //
 // Wire layout (all fields big-endian) — spec: https://spec.i2p.net/ntcp2#options:
 //
 //	bytes 0-1  : Reserved = 0   (NOT id/ver — those fields are message 1 only)
-//	bytes 2-3  : padLen = 0     (no cleartext padding for MVP)
+//	bytes 2-3  : padLen         (cleartext padding length, randomized 0-223)
 //	bytes 4-7  : Reserved = 0
 //	bytes 8-11 : tsB            (Bob's Unix timestamp, big-endian uint32)
 //	bytes 12-15: Reserved = 0
-func buildMessage2Options() []byte {
+//
+// The padLen value is randomized to match the i2pd/Java I2P padding distribution
+// (0-223 bytes) per the NTCP2 spec §4.3, preventing passive wire fingerprinting.
+// The actual padding bytes are generated separately by the caller and sent
+// after the 64-byte AEAD frame.
+func buildMessage2Options() ([]byte, int, error) {
+	// Generate random padding length [0, 223] per i2pd distribution.
+	// i2pd's CreateSessionCreatedMessage uses rand()%(287-64) which is 0-222,
+	// but the spec says 0-223, so we use 223 as the max.
+	const maxPadLen = 223 // per NTCP2 spec §4.3
+	padLen, err := randomPaddingLength(maxPadLen)
+	if err != nil {
+		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
+			Wrapf(err, "failed to generate random padding length for message 2")
+	}
+
 	opts := make([]byte, ntcp2OptionsSize)
 	// opts[0:2] = Reserved = 0 (Message 2 has no id/ver)
-	// opts[2:4] = padLen   = 0 (zero by make)
+	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
 	// opts[4:8] = Reserved = 0
 	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
 	// opts[12:16] = Reserved = 0
-	return opts
+	return opts, padLen, nil
 }
 
 // buildMessage1Options constructs the 16-byte options block sent as the
-// AEAD payload in NTCP2 message 1 (Alice -> Bob).
+// AEAD payload in NTCP2 message 1 (Alice -> Bob), and returns the options
+// and a randomly-generated padding length in the range [0, 223].
 //
 // Wire layout (all fields big-endian):
 //
 //	byte 0     : id     = 0x02  (network ID)
 //	byte 1     : ver    = 0x02  (NTCP2 protocol version)
-//	bytes 2-3  : padLen = 0     (no cleartext padding for MVP)
+//	bytes 2-3  : padLen         (cleartext padding length, randomized 0-223)
 //	bytes 4-5  : m3p2Len        (message-3 part-2 size, including AEAD tag)
 //	bytes 6-7  : Rsvd   = 0
 //	bytes 8-11 : tsA            (Alice's Unix timestamp, big-endian uint32)
 //	bytes 12-15: Reserved = 0
-func buildMessage1Options(m3p2Len uint16) []byte {
+//
+// The padLen value is randomized to match the i2pd/Java I2P padding distribution
+// (0-223 bytes) per the NTCP2 spec §4.3, preventing passive wire fingerprinting.
+// The actual padding bytes are generated separately by the caller and sent
+// after the 64-byte AEAD frame.
+func buildMessage1Options(m3p2Len uint16) ([]byte, int, error) {
+	// Generate random padding length [0, 223] per i2pd distribution.
+	// Use rejection sampling from a single random byte to ensure uniform distribution.
+	const maxPadLen = 223 // per NTCP2 spec §4.3 and i2pd CreateSessionRequestMessage
+	padLen, err := randomPaddingLength(maxPadLen)
+	if err != nil {
+		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
+			Wrapf(err, "failed to generate random padding length for message 1")
+	}
+
 	opts := make([]byte, ntcp2OptionsSize)
 	opts[0] = ntcp2NetID
 	opts[1] = ntcp2Ver
-	// opts[2:4] = padLen  = 0 (zero by make)
+	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
 	binary.BigEndian.PutUint16(opts[4:6], m3p2Len)
 	// opts[6:8] = Rsvd = 0
 	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
 	// opts[12:16] = Reserved = 0
-	return opts
+	return opts, padLen, nil
 }
 
 // buildMsg3Part2Payload wraps raw RouterInfo bytes in the NTCP2 block frame
@@ -561,4 +633,38 @@ func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
 		Errorf("derived public key from live NTCP2 static private key does not " +
 			"appear in serialized LocalRouterInfo (no NTCP2 address publishes " +
 			"this key as its `s=` option)")
+}
+
+// randomPaddingLength generates a cryptographically secure random integer in the
+// range [0, max] inclusive using rejection sampling to avoid modulo bias.
+// This function is used to generate randomized handshake padding lengths that
+// match the i2pd/Java I2P distribution per NTCP2 spec §4.3.
+//
+// Returns an error only if the underlying CSPRNG fails (extremely rare). If max
+// is 0, always returns 0 without error.
+func randomPaddingLength(max int) (int, error) {
+	if max == 0 {
+		return 0, nil
+	}
+	if max < 0 || max > 255 {
+		return 0, oops.Code("INVALID_PAD_MAX").In("ntcp2").
+			Errorf("randomPaddingLength: max must be in range [0, 255], got %d", max)
+	}
+
+	// Use rejection sampling with a single byte to ensure uniform distribution.
+	// Find the largest multiple of (max+1) that fits in a byte.
+	limit := 256 - (256 % (max + 1))
+
+	for {
+		buf, err := cryptorand.RandomBytes(1)
+		if err != nil {
+			return 0, oops.Code("RAND_FAILED").In("ntcp2").
+				Wrapf(err, "cryptorand.RandomBytes failed during padding length generation")
+		}
+		val := int(buf[0])
+		if val < limit {
+			return val % (max + 1), nil
+		}
+		// val >= limit: reject and retry to avoid modulo bias
+	}
 }
