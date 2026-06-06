@@ -247,6 +247,18 @@ DEBUG_I2P=debug go test ./...
 # For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
 # For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
+
+# Production-path test subset for CI (WARNFAIL_I2P compatible):
+# These packages contain only production-path tests that should not trigger warnings:
+WARNFAIL_I2P=true go test -count=1 \
+  ./conn \
+  ./internal/securemem \
+  ./mod/... \
+  ./ssu2/config \
+  ./ssu2/handshake \
+  ./ssu2/reliability \
+  ./ssu2/server \
+  ./tests/...
 ```
 
 ## Testing
