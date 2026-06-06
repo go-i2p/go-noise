@@ -242,6 +242,10 @@ go test ./...
 DEBUG_I2P=debug go test ./...
 
 # With warn-fail mode (warnings become fatal)
+# Note: WARNFAIL_I2P=true exercises warn-level paths in production code,
+# but many intentional warn-path tests will fail (see AUDIT.md L-2).
+# For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
+# For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 ```
 
