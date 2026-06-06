@@ -1713,3 +1713,70 @@ func TestDataHandler_FragmentMapCapacity(t *testing.T) {
 	assert.Equal(t, maxFragmentsPerConn, handler.GetFragmentCount(),
 		"fragment map should stabilize at maxFragmentsPerConn")
 }
+
+// Test for MEDIUM-3 (M-3): Per-set fragment memory bound.
+// Verify that fragments exceeding maxI2NPMessageSize (64 KB) are dropped immediately,
+// preventing memory exhaustion attacks.
+func TestDataHandler_FragmentMemoryBoundEnforced(t *testing.T) {
+	handler := NewDataHandler(100)
+
+	// Test 1: Send first fragment with huge size (shouldn't happen in practice,
+	// but defense-in-depth). The first fragment's data size should be validated.
+	// In this test, we construct a valid but very large first fragment.
+	// Since maxI2NPMessageSize is 64 KB, a 65 KB first fragment should be rejected.
+	oversizedData := make([]byte, maxI2NPMessageSize+1)
+
+	// Construct a valid FirstFragment header but with oversized payload
+	// Format: I2NP type(1) + messageID(4) + shortExpiration(4) + data
+	messageID := uint32(100)
+	firstFragData := make([]byte, 9+len(oversizedData))
+	firstFragData[0] = 42 // I2NP type
+	copy(firstFragData[1:5], []byte{0, 0, 0, byte(messageID)})
+	copy(firstFragData[5:9], []byte{0, 0, 0, 0}) // shortExpiration
+	copy(firstFragData[9:], oversizedData)
+
+	err := handler.handleFirstFragment(firstFragData)
+	// Error might be nil since we only validate after setting ReceivedSize.
+	// Check that the fragment was dropped.
+	assert.Equal(t, 0, handler.GetFragmentCount(),
+		"oversized first fragment should be rejected (fragment set not created)")
+
+	// Test 2: Send FollowOnFragments that accumulate beyond the limit.
+	// Create a sequence of fragments that cumulatively exceed 64 KB.
+	messageID2 := uint32(200)
+
+	// First, send a valid first fragment with reasonable size (~40 KB)
+	firstFragPayload := make([]byte, 40000)
+	firstFragData2 := make([]byte, 9+len(firstFragPayload))
+	firstFragData2[0] = 42 // I2NP type
+	copy(firstFragData2[1:5], []byte{0, 0, 0, byte(messageID2)})
+	copy(firstFragData2[5:9], []byte{0, 0, 0, 0}) // shortExpiration
+	copy(firstFragData2[9:], firstFragPayload)
+
+	err = handler.handleFirstFragment(firstFragData2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, handler.GetFragmentCount(),
+		"first fragment should be accepted")
+
+	// Now send a FollowOnFragment that would push total over 64 KB.
+	// FollowOnFragment format: FragInfo(1) + MessageID(4) + data
+	// FragInfo: (fragNum << 1) | isLast
+	followOnPayload := make([]byte, 30000) // This will push total to 70 KB
+	followOnData := make([]byte, 5+len(followOnPayload))
+	fragInfo := uint8((1 << 1) | 1) // fragNum=1, isLast=1
+	followOnData[0] = fragInfo
+	copy(followOnData[1:5], []byte{0, 0, 0, byte(messageID2)})
+	copy(followOnData[5:], followOnPayload)
+
+	err = handler.handleFollowOnFragment(followOnData)
+	require.NoError(t, err)
+
+	// After the oversized follow-on fragment, the fragment set should be dropped.
+	assert.Equal(t, 0, handler.GetFragmentCount(),
+		"fragment set should be dropped when ReceivedSize exceeds maxI2NPMessageSize")
+
+	// Verify that MessagesDropped was incremented
+	stats := handler.GetStats()
+	assert.Greater(t, stats.MessagesDropped, uint64(0),
+		"MessagesDropped should be incremented when dropping oversized messages")
+}

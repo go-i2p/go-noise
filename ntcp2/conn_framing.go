@@ -490,13 +490,15 @@ func (nc *Conn) buildWireFrame(encrypted []byte, slm *SipHashLengthModifier) []b
 // buildWireFrameWithMask is identical to buildWireFrame but also returns the
 // SipHash mask used for the obfuscated length field, for diagnostic logging.
 func (nc *Conn) buildWireFrameWithMask(encrypted []byte, slm *SipHashLengthModifier) ([]byte, uint16) {
-	// Defensive check: upstream should guarantee this, but verify at cast site
+	// Defensive check: upstream encryptFrame() guarantees len(encrypted) <= SpecMaxFrameSize (0xFFFF).
+	// This guard is unreachable in production, but retained as defense-in-depth
+	// to prevent integer overflow during uint16 cast.
 	if len(encrypted) > 0xFFFF {
-		// This should never happen due to upstream guard, but fail defensively
-		panic(oops.Code("FRAME_TOO_LARGE_AT_CAST").
+		// Unreachable: guarded by encryptFrame() return error for FRAME_TOO_LARGE
+		panic(oops.Code("FRAME_TOO_LARGE_AT_CAST_UNREACHABLE").
 			In("ntcp2").
 			With("encrypted_len", len(encrypted)).
-			Errorf("encrypted frame length %d exceeds uint16 max at cast site", len(encrypted)))
+			Errorf("BUG: encrypted frame length %d exceeds uint16 max; should have been caught by encryptFrame", len(encrypted)))
 	}
 	frameLen := uint16(len(encrypted))
 	mask := slm.NextOutboundMask()

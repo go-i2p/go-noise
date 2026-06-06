@@ -210,7 +210,17 @@ type SSU2Config struct {
 	// semantics (marked "TODO" with size "TBD"). Enabling this risks
 	// breaking interoperability with peers that implement a different
 	// (or no) rekey protocol.
-	// Default: false (disabled until spec is finalized) (G-1).
+	//
+	// SECURITY TRADE-OFF: When disabled (default), long-lived sessions hold
+	// the same send/receive cipher keys for their entire lifetime. Without
+	// mid-session key rotation, forward secrecy is not refreshed — an attacker
+	// who later compromises the static key can decrypt the entire session
+	// retroactively. For a router holding sessions for weeks, this is a real
+	// forward-secrecy gap. Nonce exhaustion guards (elsewhere) mitigate the
+	// risk of nonce reuse, but forward secrecy is not recovered until the
+	// session closes and a new one is established.
+	//
+	// Default: false (disabled until spec is finalized) (M-2).
 	EnableNextNonce bool
 
 	// ReplayCacheTTL is the time-to-live for entries in the handshake replay

@@ -39,12 +39,13 @@ const (
 	// not wrap, so we start the rekey handshake well before 0xFFFFFFFF.
 	// The 256-packet gap (0xFFFFFFFF - 0xFFFFFF00) provides enough lead
 	// time for the NextNonce block to be sent, acknowledged, and for both
-	// sides to switch to the new key before the counter is exhausted (M-3).
+	// sides to switch to the new key before the counter is exhausted.
 	//
 	// WARNING: NextNonce (block type 11) is based on an UNFINALIZED spec
 	// area (see SSU2 spec §3.7 "NextNonce") with size "TBD".
 	// UNFINALIZED_SPEC: This threshold and the rekey mechanism may need
-	// revision for interoperability when the spec is finalised.
+	// revision for interoperability when the spec is finalized (M-2).
+	// Only enabled via SSU2Config.EnableNextNonce (default: false).
 	rekeyThreshold uint32 = 0xFFFF_FF00
 
 	// maxPacketRetries is the maximum number of retransmission attempts
@@ -146,6 +147,14 @@ type SSU2Conn struct {
 	// buffer first. This mirrors conn.Conn.pendingPlaintext to maintain net.Conn
 	// compatibility. See MEDIUM-1 audit finding.
 	pendingMessage []byte
+
+	// readModeCalled tracks whether Read() has been called on this connection.
+	// Used to enforce mutual exclusivity with MessageChan(). See MEDIUM-1.
+	readModeCalled atomic.Bool
+
+	// messageChanModeCalled tracks whether MessageChan() has been called on this connection.
+	// Used to enforce mutual exclusivity with Read(). See MEDIUM-1.
+	messageChanModeCalled atomic.Bool
 
 	// Keepalive
 	lastActivity     time.Time

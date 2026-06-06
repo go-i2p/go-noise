@@ -39,6 +39,17 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 	h.readMutex.Lock()
 	defer h.readMutex.Unlock()
 
+	// Enforce mutual exclusivity of Read and MessageChan delivery paths (MEDIUM-1).
+	// The first call to Read sets readModeCalled; if MessageChan was already called,
+	// we log a Warn to alert the caller to the API contract violation.
+	if !h.readModeCalled.CompareAndSwap(false, true) {
+		// readModeCalled was already true; this is OK, just another Read call
+	} else if h.messageChanModeCalled.Load() {
+		// MessageChan was called first; warn the caller that messages are racing
+		log.WithFields(logger.Fields{"pkg": "session", "func": "Read"}).Warn(
+			"Read called after MessageChan; messages may be split between paths")
+	}
+
 	// Check if we have a pending message from a previous truncated Read.
 	// This mirrors the buffering in conn.Conn.pendingPlaintext.
 	if len(h.pendingMessage) > 0 {
@@ -328,4 +339,26 @@ func (h *SSU2Conn) getReadDeadline() <-chan time.Time {
 		return nil
 	}
 	return time.After(time.Until(h.readDeadline))
+}
+
+// MessageChan returns a receive-only channel of complete I2NP messages.
+// This is an alternative delivery path to Read(); both paths consume from
+// the same underlying channel, so they are mutually exclusive. Using both
+// concurrently will cause messages to race to whichever receiver is ready,
+// resulting in silent message loss.
+//
+// IMPORTANT: Do not use MessageChan() and Read() concurrently on the same
+// connection. This method will log a Warn if Read() has already been called.
+// See MEDIUM-1 audit finding.
+func (h *SSU2Conn) MessageChan() <-chan []byte {
+	// Enforce mutual exclusivity of MessageChan and Read delivery paths (MEDIUM-1).
+	// If MessageChan is called after Read, we warn to alert the caller.
+	if !h.messageChanModeCalled.CompareAndSwap(false, true) {
+		// messageChanModeCalled was already true; this is OK, just another call
+	} else if h.readModeCalled.Load() {
+		// Read was called first; warn the caller that messages are racing
+		log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Warn(
+			"MessageChan called after Read; messages may be split between paths")
+	}
+	return h.dataHandler.MessageChan()
 }

@@ -154,6 +154,13 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 	fragmentSet.Fragments[0] = make([]byte, len(fragmentData))
 	copy(fragmentSet.Fragments[0], fragmentData)
 
+	// Check per-set size bound immediately (M-3): if a single first fragment
+	// is already oversized, reject it. Though rare, this provides defense-in-depth.
+	if fragmentSet.ReceivedSize > maxI2NPMessageSize {
+		h.incrementStat(&h.stats.MessagesDropped)
+		return nil
+	}
+
 	h.fragments[messageID] = fragmentSet
 	h.incrementStat(&h.stats.FragmentsReceived)
 
@@ -210,6 +217,23 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	fragmentSet.ReceivedSize += uint32(len(fragmentData))
 	fragmentSet.LastUpdate = time.Now()
 	h.incrementStat(&h.stats.FragmentsReceived)
+
+	// Tighten per-set memory bound: drop immediately if exceeded (M-3).
+	// Per-set bound is now the reassembled message limit (64 KB) rather than
+	// only checked at reassembly time. This prevents an attacker from flooding
+	// a single MessageID with large fragments to exhaust per-connection memory.
+	if fragmentSet.ReceivedSize > maxI2NPMessageSize {
+		log.WithFields(logger.Fields{
+			"pkg":           "session",
+			"func":          "handleFollowOnFragment",
+			"message_id":    messageID,
+			"received_size": fragmentSet.ReceivedSize,
+			"max_size":      maxI2NPMessageSize,
+		}).Warn("dropping oversized reassembled message (exceeds 64 KB limit)")
+		delete(h.fragments, messageID)
+		h.incrementStat(&h.stats.MessagesDropped)
+		return nil
+	}
 
 	if isLast {
 		fragmentSet.HasLast = true

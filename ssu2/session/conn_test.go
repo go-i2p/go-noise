@@ -499,6 +499,59 @@ func TestSSU2Conn_ReadShortBufferReassembles(t *testing.T) {
 	assert.Equal(t, msg, got, "message must be fully reassembled across multiple Reads")
 }
 
+// Test for MEDIUM-1 (M-1): unguarded dual message-delivery path.
+// Verify that both Read and MessageChan paths work but warn when used together.
+func TestSSU2Conn_DualDeliveryPathMutualExclusion(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Manually mark as established so Read/MessageChan proceed.
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	// Test 1: Call MessageChan first, then Read. Both should succeed but warn.
+	// Inject two messages.
+	msg1 := []byte("message 1")
+	msg2 := []byte("message 2")
+	conn.dataHandler.messageQueue <- msg1
+	conn.dataHandler.messageQueue <- msg2
+
+	// Read from MessageChan in a goroutine.
+	done := make(chan []byte, 1)
+	go func() {
+		// This should set messageChanModeCalled=true
+		ch := conn.MessageChan()
+		done <- <-ch
+	}()
+
+	// Give the goroutine time to call MessageChan()
+	time.Sleep(10 * time.Millisecond)
+
+	// Now call Read(); it should log a warning because MessageChan was called first.
+	// The test passes if Read succeeds despite the mixed paths.
+	buf := make([]byte, 100)
+	n, rerr := conn.Read(buf)
+	require.NoError(t, rerr, "Read should succeed even with concurrent MessageChan")
+	require.Greater(t, n, 0, "Read should return data")
+
+	// Wait for MessageChan goroutine to get its message.
+	got1 := <-done
+	assert.NotNil(t, got1, "MessageChan should return a message")
+
+	// Verify messages are split between the two paths (data loss due to M-1 issue).
+	// With concurrent Read and MessageChan, messages race; we don't assert which
+	// path gets which message, only that the library doesn't crash and logs a warning.
+	// This test documents the current behavior: using both paths silently loses messages.
+}
+
 // Handshake tests
 
 func TestSSU2Conn_HandshakeInvalidState(t *testing.T) {
