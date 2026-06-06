@@ -400,7 +400,7 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 	// allocation pressure on short-lived connections during DHT churn.
 	if nc.writeNonce < 3 && slm != nil && msg1WireDumpRemaining.Load() > 0 {
 		ivAfter := slm.PeekOutboundIV()
-		nc.logger.Warn(
+		nc.logger.Trace(
 			"NTCP2 outbound frame diagnostic",
 			"frame_index", nc.writeNonce,
 			"plaintext_len", len(b),
@@ -412,17 +412,11 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 			"siphash_mask_hex", fmt.Sprintf("%04x", mask),
 			"siphash_iv_before_hex", fmt.Sprintf("%016x", ivBefore),
 			"siphash_iv_after_hex", fmt.Sprintf("%016x", ivAfter),
-			"local_addr", nc.localAddr.String(),
-			"remote_addr", nc.remoteAddr.String(),
 		)
 
-		// One-shot plaintext block layout dump for frame 0 only. The first
-		// outbound frame is what i2pd's ProcessNextFrame walks immediately
-		// after Established(); a malformed [type:1][size:BE16][payload]
-		// block layout here triggers the silent-Terminate paths we cannot
-		// observe from our side. Cap the dump to 64 bytes (128 hex chars)
-		// — enough to see the I2NP block header, payload prefix, and the
-		// start of any padding block.
+		// One-shot plaintext block layout dump for frame 0 only. Plaintext
+		// hex dumps are moved to Trace level for anonymity and should never
+		// be logged in production (DEBUG_I2P should be kept off).
 		if nc.writeNonce == 0 {
 			rawCap := len(b)
 			if rawCap > 64 {
@@ -432,13 +426,12 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 			if padCap > 96 {
 				padCap = 96
 			}
-			nc.logger.Warn(
+			nc.logger.Trace(
 				"NTCP2 outbound frame#0 plaintext dump",
 				"raw_plaintext_len", len(b),
 				"padded_plaintext_len", len(toEncrypt),
 				"raw_plaintext_head_hex", hex.EncodeToString(b[:rawCap]),
 				"padded_plaintext_head_hex", hex.EncodeToString(toEncrypt[:padCap]),
-				"remote_addr", nc.remoteAddr.String(),
 			)
 		}
 	}

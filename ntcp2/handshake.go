@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"time"
 
@@ -275,10 +274,9 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 	// MixHashes them into h before decrypting m3p1. We MUST mirror that or
 	// m3p1 AEAD verification on i2pd's side fails, causing silent terminate.
 	var bobPadLen int
-	var bobOptsHex string
 	if len(bobOpts) >= ntcp2OptionsSize {
 		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
-		bobOptsHex = hex.EncodeToString(bobOpts[:ntcp2OptionsSize])
+		_ = hex.EncodeToString(bobOpts[:ntcp2OptionsSize]) // bobOpts available for debug
 		if bobPadLen > 0 {
 			pad := make([]byte, bobPadLen)
 			if _, err := io.ReadFull(raw, pad); err != nil {
@@ -288,20 +286,14 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 			nc.MixHashData(pad)
 		}
 	}
-	// Warn-level breadcrumb so we can correlate msg2 padding handling with the
-	// downstream "frame #0 EOF" warning. If bob_padlen is consistently 0 in
-	// production logs against i2pd peers, the padding is not being parsed
-	// correctly (i2pd's CreateSessionCreatedMessage uses rand()%(287-64) so
-	// a 0 value should be rare).
+	// Debug-level breadcrumb for interop diagnostics. Redacted for anonymity.
 	log.WithFields(logger.Fields{
 		"pkg":          "ntcp2",
 		"func":         "receiveResponderMsg2",
 		"event":        "msg2_processed",
 		"bob_padlen":   bobPadLen,
 		"bob_opts_len": len(bobOpts),
-		"bob_opts_hex": bobOptsHex,
-		"remote":       raw.RemoteAddr().String(),
-	}).Warn("NTCP2 msg2 processed; bob padlen extracted")
+	}).Debug("NTCP2 msg2 processed; bob padlen extracted")
 	return nil
 }
 
@@ -340,9 +332,7 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 		"m3p1_len": msg3Part1Size,
 		"m3p2_len": int(m3p2Len),
 		"ri_len":   len(riBytes),
-		"remote":   fmt.Sprintf("%v", raw.RemoteAddr()),
-		"sent_ns":  time.Now().UnixNano(),
-	}).Warn("NTCP2 msg3 written to wire; awaiting first data-phase frame")
+	}).Debug("NTCP2 msg3 written to wire; awaiting first data-phase frame")
 	return nil
 }
 
