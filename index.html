@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 394 commits
+        📝 399 commits
          • 📜 License
       </div>
     </div>
@@ -84,12 +84,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>394 commits</span>
+          <span>📝</span> <span>399 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: June 5, 2026</span>
+          <span>📅</span> <span>Last updated: June 6, 2026</span>
         </div>
         
         
@@ -390,6 +390,18 @@ DEBUG_I2P=debug go test ./...
 # For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
 # For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
+
+# Production-path test subset for CI (WARNFAIL_I2P compatible):
+# These packages contain only production-path tests that should not trigger warnings:
+WARNFAIL_I2P=true go test -count=1 \
+  ./conn \
+  ./internal/securemem \
+  ./mod/... \
+  ./ssu2/config \
+  ./ssu2/handshake \
+  ./ssu2/reliability \
+  ./ssu2/server \
+  ./tests/...
 </code></pre>
 
 <h2 id="testing">Testing</h2>
@@ -449,7 +461,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                394 commits
+                399 commits
               </div>
             </div>
           </div>
@@ -461,7 +473,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-06-07 00:07:57 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-06-07 00:38:58 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
