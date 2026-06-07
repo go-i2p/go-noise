@@ -14,8 +14,8 @@ github.com/go-i2p/elgamal v0.1.5999 h1:J9j7hiucVzHP8Xd65KGLld9N7pyKQHzqxo1Z4G0TK
 github.com/go-i2p/elgamal v0.1.5999/go.mod h1:doBqsiGCnCL7TzgKr+mJnfodAD7i5wEWMpap0qgKsAw=
 github.com/go-i2p/logger v0.1.5999 h1:BJy1/QU8iCRf4+sxHkALF7+uoT8tmYu9FQxWd8M0C2Y=
 github.com/go-i2p/logger v0.1.5999/go.mod h1:WbyfWMndgFGJZ4xIA4oXlIfwgr3iQF/cb0HqMn/YZxk=
-github.com/go-i2p/noise v1.1.1-0.20260327201800-8e41bb3d9f1e h1:RUdNl2UXCZAGYaEHlthIpyvnjgq4kTI5adRxGpXV7FM=
-github.com/go-i2p/noise v1.1.1-0.20260327201800-8e41bb3d9f1e/go.mod h1:/tnXnzZXdjSLxU5lKMCKDDFKi9WUcsd7llNBSvyynJo=
+github.com/go-i2p/noise v0.1.5999 h1:P7mnc4R+mZjsUto9YOTjBPiEpWc6n0Sfv0Y3nvKCUvs=
+github.com/go-i2p/noise v0.1.5999/go.mod h1:b0MmPD1c0y2mIKF4Lx1zb5KLaAUHPCI9NYL3yZpCA2s=
 github.com/go-i2p/path v0.1.5999 h1:IMGZtgRxbhOj5Lo/Q0zOwJc/be7PSh0Rim3sMg8zZF0=
 github.com/go-i2p/path v0.1.5999/go.mod h1:leu1S+RExGMeob5qkP6FvKvf5fsL2yc54mSVwyVY474=
 github.com/go-i2p/pool v0.1.599 h1:hn541Mxi5ZmyBq1q0PLWucNL+igAwuCTuWnpU1ZVNJM=
