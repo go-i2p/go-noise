@@ -1,4 +1,4 @@
-Release notes for: `go-noise` Version `0.1.599`
+Release notes for: `go-noise` Version `0.1.5999`
 ==============================================
 
 This release is recommended only for developers at this time.
