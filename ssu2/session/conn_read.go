@@ -382,7 +382,8 @@ func (h *SSU2Conn) MessageChan() <-chan []byte {
 	} else if h.readModeCalled.Load() {
 		// Read was called first; return a closed channel as a panic-free sentinel
 		log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Error(
-			"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive")
+			"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive",
+		)
 		return h.closedMessageChan
 	}
 	return h.dataHandler.MessageChan()
