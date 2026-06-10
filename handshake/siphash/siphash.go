@@ -184,6 +184,24 @@ func (slm *LengthModifier) Name() string {
 	return slm.name
 }
 
+// Clone returns an independent copy of the modifier with the same keys and IV
+// state. It implements handshake.ModifierCloner so that callers which need a
+// per-connection instance (e.g. listeners accepting concurrent connections) can
+// obtain a private copy rather than sharing the stateful IV chain. Because the
+// IVs advance with use, callers should Clone from an unused template modifier so
+// each copy starts from the same initial IV.
+func (slm *LengthModifier) Clone() handshake.HandshakeModifier {
+	slm.mu.Lock()
+	defer slm.mu.Unlock()
+	return &LengthModifier{
+		name:         slm.name,
+		outboundKeys: slm.outboundKeys,
+		inboundKeys:  slm.inboundKeys,
+		outboundIV:   slm.outboundIV,
+		inboundIV:    slm.inboundIV,
+	}
+}
+
 // Close zeroes all SipHash key material and IVs.
 func (slm *LengthModifier) Close() error {
 	log.WithField("name", slm.name).Debug("Closing SipHash length modifier")

@@ -291,6 +291,16 @@ func (nc *Conn) Close() error {
 		securemem.SecureZero(nc.privateStaticKey)
 	}
 
+	// Zero any undelivered decrypted plaintext so it does not linger on the
+	// heap after close. Guarded by readMutex to avoid racing a concurrent Read.
+	// See L-1 audit finding.
+	nc.readMutex.Lock()
+	if len(nc.pendingPlaintext) > 0 {
+		securemem.SecureZero(nc.pendingPlaintext)
+		nc.pendingPlaintext = nil
+	}
+	nc.readMutex.Unlock()
+
 	// Unregister from shutdown manager if set
 	if nc.shutdownManager != nil {
 		nc.shutdownManager.UnregisterConnection(nc)

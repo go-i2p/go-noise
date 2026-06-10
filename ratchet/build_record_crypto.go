@@ -86,7 +86,7 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 
 	encrypted, err := c.encryptChaCha20Poly1305(cleartext, replyKey, replyIV)
 	if err != nil {
-		return nil, oops.Errorf("ChaCha20-Poly1305 encryption failed: %w", err)
+		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 encryption failed")
 	}
 
 	log.WithFields(logger.Fields{
@@ -115,7 +115,7 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 
 	cleartext, err := c.decryptChaCha20Poly1305(encryptedData, replyKey, replyIV)
 	if err != nil {
-		return nil, oops.Errorf("ChaCha20-Poly1305 decryption failed: %w", err)
+		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 decryption failed")
 	}
 
 	if len(cleartext) != 528 {
@@ -180,7 +180,7 @@ func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
 func newChaCha20Poly1305(key [32]byte, iv [16]byte) (*chacha20poly1305.AEAD, []byte, error) {
 	aead, err := chacha20poly1305.NewAEAD(key)
 	if err != nil {
-		return nil, nil, oops.Errorf("failed to create ChaCha20-Poly1305 cipher: %w", err)
+		return nil, nil, oops.Wrapf(err, "failed to create ChaCha20-Poly1305 cipher")
 	}
 	return aead, iv[:12], nil
 }
@@ -203,7 +203,7 @@ func (c *BuildReplyCrypto) encryptChaCha20Poly1305(
 
 	ct, tag, err := aead.Encrypt(plaintext, nil, nonce)
 	if err != nil {
-		return nil, oops.Errorf("failed to encrypt: %w", err)
+		return nil, oops.Wrapf(err, "failed to encrypt")
 	}
 
 	// Concatenate ciphertext + tag (528 + 16 = 544 bytes)
@@ -240,7 +240,7 @@ func (c *BuildReplyCrypto) decryptChaCha20Poly1305(
 
 	plaintext, err := aead.Decrypt(ct, tag, nil, nonce)
 	if err != nil {
-		return nil, oops.Errorf("decryption failed (authentication error): %w", err)
+		return nil, oops.Wrapf(err, "decryption failed (authentication error)")
 	}
 
 	if len(plaintext) != 528 {

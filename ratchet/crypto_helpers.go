@@ -147,6 +147,11 @@ func generateAndTrackSessionTag(session *Session) ([8]byte, error) {
 //	keydata = HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64)
 //	sessTag_ck = keydata[0:31], symmKey_ck = keydata[32:63]
 //
+// Note: the byte ranges above use the I2P spec's inclusive notation, so each
+// key is a full 32 bytes: sessTag_ck = keydata bytes 0..31, symmKey_ck =
+// keydata bytes 32..63. The implementation derives the two 32-byte keys via the
+// KDF library (DeriveKeys(..., 2)).
+//
 // Spec ref: ratchet.md §"DH INITIALIZATION KDF".
 func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte, err error) {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "deriveTagAndSymKeysFromChainKey"}).Debug("deriving tag and symmetric keys via TagAndKeyGenKeys")

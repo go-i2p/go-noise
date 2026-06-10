@@ -317,7 +317,7 @@ func (nl *Listener) createAcceptConnConfig() *conn.ConnConfig {
 									WithWriteTimeout(nl.config.WriteTimeout)
 
 	if len(nl.config.Modifiers) > 0 {
-		connConfig = connConfig.WithModifiers(nl.config.Modifiers...)
+		connConfig = connConfig.WithModifiers(nl.cloneModifiers()...)
 	}
 	if nl.config.PostHandshakeHook != nil {
 		connConfig.PostHandshakeHook = nl.config.PostHandshakeHook
@@ -333,6 +333,30 @@ func (nl *Listener) createAcceptConnConfig() *conn.ConnConfig {
 	}
 
 	return connConfig
+}
+
+// cloneModifiers returns a per-connection copy of the listener's configured
+// modifiers. Stateful modifiers (e.g. NTCP2 AES-CBC ephemeral obfuscation, which
+// carries chaining state from message 1 into message 2, or SipHash length
+// obfuscation, which advances an IV chain) MUST NOT be shared across concurrently
+// accepted connections: sharing one instance lets connection B overwrite
+// connection A's per-handshake state, silently corrupting A's handshake.
+//
+// Modifiers implementing handshake.ModifierCloner are deep-copied so each
+// connection gets an independent instance. Modifiers that do not implement
+// ModifierCloner are assumed to be stateless (or internally immutable) and are
+// shared by reference, matching Config.Clone() semantics in the ntcp2 package.
+// See M-1 audit finding.
+func (nl *Listener) cloneModifiers() []handshake.HandshakeModifier {
+	out := make([]handshake.HandshakeModifier, len(nl.config.Modifiers))
+	for i, m := range nl.config.Modifiers {
+		if cloner, ok := m.(handshake.ModifierCloner); ok {
+			out[i] = cloner.Clone()
+		} else {
+			out[i] = m
+		}
+	}
+	return out
 }
 
 // Close closes the listener and prevents new connections from being accepted.

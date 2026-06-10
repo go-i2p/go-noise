@@ -114,7 +114,13 @@ func (nc *Conn) ZeroKeys() {
 // derived during the handshake Split(), per Noise spec §10.3.
 // Returns nil if no labels were configured or the handshake hasn't completed.
 // The returned keys correspond 1:1 to the configured AdditionalSymmetricKeyLabels.
+//
+// Thread Safety: This method is safe for concurrent use. Takes stateMutex.RLock()
+// to protect access to handshakeState (see M-2 audit finding).
 func (nc *Conn) AdditionalSymmetricKeys() [][]byte {
+	nc.stateMutex.RLock()
+	defer nc.stateMutex.RUnlock()
+
 	if nc.handshakeState == nil {
 		log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.AdditionalSymmetricKeys"}).Debug("handshake state is nil")
 		return nil

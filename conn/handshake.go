@@ -142,11 +142,18 @@ func (nc *Conn) receiveNoiseHandshakeMsg(phase handshake.HandshakePhase, label s
 //
 // Both cipher states must be non-nil for the handshake to be considered complete.
 // During intermediate handshake messages, one or both may still be nil.
+//
+// Thread Safety: the cipher-state pointer writes are guarded by stateMutex so
+// that they are mutually exclusive with the public accessor methods
+// (SendCipherState/RecvCipherState/etc.), which read the same fields under
+// stateMutex.RLock(). This is invoked while holding handshakeMutex, so the
+// lock-acquisition order is always handshakeMutex -> stateMutex.
 func (nc *Conn) updateCipherStates(cs1, cs2 *noise.CipherState) {
 	if cs1 == nil && cs2 == nil {
 		return
 	}
 
+	nc.stateMutex.Lock()
 	if nc.config.Initiator {
 		// Initiator: cs1 = send, cs2 = receive
 		if cs1 != nil {
@@ -164,15 +171,18 @@ func (nc *Conn) updateCipherStates(cs1, cs2 *noise.CipherState) {
 			nc.sendCipherState = cs2
 		}
 	}
+	hasSend := nc.sendCipherState != nil
+	hasRecv := nc.recvCipherState != nil
+	nc.stateMutex.Unlock()
 
 	nc.logger.WithFields(i2plogger.Fields{
 		"pkg":             "noise",
 		"func":            "NoiseConn.updateCipherStates",
 		"pattern":         nc.config.Pattern,
 		"role":            map[bool]string{true: "initiator", false: "responder"}[nc.config.Initiator],
-		"has_send_cs":     nc.sendCipherState != nil,
-		"has_recv_cs":     nc.recvCipherState != nil,
-		"handshake_ready": nc.sendCipherState != nil && nc.recvCipherState != nil,
+		"has_send_cs":     hasSend,
+		"has_recv_cs":     hasRecv,
+		"handshake_ready": hasSend && hasRecv,
 	}).Debug("cipher states updated during handshake")
 }
 
@@ -352,6 +362,11 @@ func (nc *Conn) markHandshakeComplete() {
 // resetHandshakeState recreates the HandshakeState from the original config
 // so that retry attempts begin with fresh nonce counters and chaining key.
 // Any partial cipher states from a failed handshake are also cleared.
+//
+// Thread Safety: the handshakeState and cipher-state pointer writes are guarded
+// by stateMutex so they are mutually exclusive with the public accessors that
+// read those fields under stateMutex.RLock(). Invoked while holding
+// handshakeMutex (order: handshakeMutex -> stateMutex).
 func (nc *Conn) resetHandshakeState() {
 	hs, err := createHandshakeState(nc.config, nc.privateStaticKey)
 	if err != nil {
@@ -361,9 +376,11 @@ func (nc *Conn) resetHandshakeState() {
 		}).Error("failed to recreate handshake state for retry")
 		return
 	}
+	nc.stateMutex.Lock()
 	nc.handshakeState = hs
 	nc.sendCipherState = nil
 	nc.recvCipherState = nil
+	nc.stateMutex.Unlock()
 }
 
 // WriteHandshakeMsgToBytes executes one Noise handshake outbound step with the
