@@ -104,9 +104,6 @@ type SSU2Conn struct {
 	// Header protection (nil = disabled)
 	headerProtector *HeaderProtectorManager
 
-	// SipHash length obfuscation (nil = disabled)
-	sipHashModifier atomic.Pointer[SipHashLengthModifier]
-
 	// Path validation for connection migration (G-7)
 	pathValidator *PathValidator
 

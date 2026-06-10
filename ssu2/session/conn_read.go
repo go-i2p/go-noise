@@ -159,13 +159,11 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		}
 	}
 
-	// SipHash length deobfuscation: recover the data length from header
-	// bytes 14-15 per spec §Data Phase Length Obfuscation (G-2).
-	if mod := h.sipHashModifier.Load(); mod != nil && len(data) >= ShortHeaderSize {
-		mask := mod.NextInboundMask()
-		obfuscated := binary.BigEndian.Uint16(data[14:16])
-		binary.BigEndian.PutUint16(data[14:16], obfuscated^mask)
-	}
+	// H-1 fix: SSU2 has no data-phase length-obfuscation field. Header bytes
+	// 14-15 are the spec's "moreflags" (unused, set to 0), already covered by
+	// ChaCha20 header protection above. The datagram length is the message
+	// length (parsed by Deserialize from the UDP payload size), so there is
+	// nothing to deobfuscate here. The bytes are zeroed before AEAD below.
 
 	packet := &SSU2Packet{}
 	if err := packet.Deserialize(data); err != nil {

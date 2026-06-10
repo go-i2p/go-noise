@@ -2,7 +2,6 @@ package session
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 
 	"github.com/go-i2p/common/data"
 	i2phkdf "github.com/go-i2p/crypto/hkdf"
@@ -125,52 +124,6 @@ func (h *SSU2Conn) validatePeerRouterInfo() error {
 		return oops.Wrapf(err, "RouterInfo validation failed against authenticated static key")
 	}
 	return nil
-}
-
-// deriveSipHashModifier derives per-direction SipHash-2-4 keys and IVs for
-// data-phase length obfuscation from the header protection keys using HKDF.
-// Per SSU2 spec:
-//
-//	sipk_ab = HKDF(k_header_2_ab, ZEROLEN, "SipHashKey", 16) → two 8-byte keys
-//	sipiv_ab = HKDF(k_header_2_ab, ZEROLEN, "SipHashIV", 8)  → one 8-byte IV
-//	sipk_ba = HKDF(k_header_2_ba, ZEROLEN, "SipHashKey", 16)
-//	sipiv_ba = HKDF(k_header_2_ba, ZEROLEN, "SipHashIV", 8)
-func deriveSipHashModifier(sendKHeader2, recvKHeader2 []byte) (*SipHashLengthModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "deriveSipHashModifier", "send_key_len": len(sendKHeader2), "recv_key_len": len(recvKHeader2)}).Debug("Deriving SipHash keys for length obfuscation")
-	deriver := i2phkdf.NewHKDF()
-	infoKey := []byte("SipHashKey")
-	infoIV := []byte("SipHashIV")
-
-	sendKeys, err := deriver.Derive(nil, sendKHeader2, infoKey, 16)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive send SipHash keys")
-	}
-	sendIVData, err := deriver.Derive(nil, sendKHeader2, infoIV, 8)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive send SipHash IV")
-	}
-	recvKeys, err := deriver.Derive(nil, recvKHeader2, infoKey, 16)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive recv SipHash keys")
-	}
-	recvIVData, err := deriver.Derive(nil, recvKHeader2, infoIV, 8)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive recv SipHash IV")
-	}
-
-	outKeys := [2]uint64{
-		binary.LittleEndian.Uint64(sendKeys[0:8]),
-		binary.LittleEndian.Uint64(sendKeys[8:16]),
-	}
-	outIV := binary.LittleEndian.Uint64(sendIVData[0:8])
-
-	inKeys := [2]uint64{
-		binary.LittleEndian.Uint64(recvKeys[0:8]),
-		binary.LittleEndian.Uint64(recvKeys[8:16]),
-	}
-	inIV := binary.LittleEndian.Uint64(recvIVData[0:8])
-
-	return NewSipHashLengthModifierDirectional("ssu2-data-siphash", outKeys, inKeys, outIV, inIV), nil
 }
 
 // deriveRekeyKey derives a new cipher key from the current cipher state

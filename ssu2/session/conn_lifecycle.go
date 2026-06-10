@@ -90,11 +90,6 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			h.handshakeHandler.Close()
 		}
 
-		// Zero SipHash key material
-		if mod := h.sipHashModifier.Load(); mod != nil {
-			mod.ZeroKeys()
-		}
-
 		// Zero pending message buffer to avoid lingering data in memory.
 		// See MEDIUM-1 audit finding.
 		if len(h.pendingMessage) > 0 {

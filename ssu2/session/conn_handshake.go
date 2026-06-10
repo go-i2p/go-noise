@@ -425,16 +425,12 @@ func (h *SSU2Conn) finalizeHandshake() error {
 		return oops.Wrapf(err, "failed to install cipher states")
 	}
 
-	sendKHeader2, recvKHeader2, err := h.deriveDataPhaseKeys()
-	if err != nil {
+	// deriveDataPhaseKeys installs the ChaCha20 header-protection key schedule.
+	// H-1: SSU2 has no data-phase length obfuscation, so the returned kHeader2
+	// values are not fed into any SipHash chain.
+	if _, _, err := h.deriveDataPhaseKeys(); err != nil {
 		return err
 	}
-
-	sipMod, sipErr := deriveSipHashModifier(sendKHeader2, recvKHeader2)
-	if sipErr != nil {
-		return oops.Wrapf(sipErr, "failed to derive SipHash keys")
-	}
-	h.sipHashModifier.Store(sipMod)
 
 	h.stateMutex.Lock()
 	h.state = StateEstablished

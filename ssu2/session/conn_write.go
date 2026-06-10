@@ -287,7 +287,7 @@ func (h *SSU2Conn) sendPacketDirect(packet *SSU2Packet) error {
 		return err
 	}
 
-	h.applySipHashObfuscation(packet)
+	h.applyDataHeaderMoreFlags(packet)
 
 	data, err := packet.Serialize()
 	if err != nil {
@@ -341,13 +341,24 @@ func (h *SSU2Conn) encryptDataPayload(packet *SSU2Packet) ([]byte, error) {
 	return plaintextPayload, nil
 }
 
-// applySipHashObfuscation applies SipHash length obfuscation to header bytes 14-15.
-func (h *SSU2Conn) applySipHashObfuscation(packet *SSU2Packet) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "applySipHashObfuscation", "msgType": packet.MessageType}).Debug("applying length obfuscation")
-	if mod := h.sipHashModifier.Load(); mod != nil && packet.MessageType == MessageTypeData {
-		dataLen := uint16(len(packet.Payload))
-		mask := mod.NextOutboundMask()
-		binary.BigEndian.PutUint16(packet.Header[14:16], dataLen^mask)
+// applyDataHeaderMoreFlags sets the data-phase short-header "moreflags" field
+// (bytes 14-15) to zero, as mandated by the SSU2 spec (§Messages, Data Message
+// Type 6: "moreflags :: 2 bytes, unused, set to 0 for future compatibility").
+//
+// H-1 fix: SSU2 has NO data-phase length-obfuscation field. Each UDP datagram
+// contains exactly one message and "the length of the datagram ... is the length
+// of the message"; header confidentiality is provided solely by ChaCha20 header
+// protection over bytes 0-15. The prior implementation XOR-ed an obfuscated length
+// (via a stateful per-direction SipHash chain) into bytes 14-15. That construct is
+// not part of SSU2: it placed non-spec bytes in the moreflags field on the wire
+// (wire-incompatible with Java I2P / i2pd) and the recovered value was discarded
+// before AEAD on the receive side, so it was functionally inert for our own
+// decryption while still risking a desync on UDP loss/reorder. We now keep the
+// field at the spec-mandated zero.
+func (h *SSU2Conn) applyDataHeaderMoreFlags(packet *SSU2Packet) {
+	log.WithFields(logger.Fields{"pkg": "session", "func": "applyDataHeaderMoreFlags", "msgType": packet.MessageType}).Debug("zeroing data header moreflags per SSU2 spec")
+	if packet.MessageType == MessageTypeData && len(packet.Header) >= ShortHeaderSize {
+		binary.BigEndian.PutUint16(packet.Header[14:16], 0)
 	}
 }
 
@@ -583,12 +594,9 @@ func (h *SSU2Conn) sendNextNonceInline() error {
 		MAC:          make([]byte, MACSize),
 	}
 
-	// SipHash length obfuscation.
-	if mod := h.sipHashModifier.Load(); mod != nil {
-		dataLen := uint16(len(encrypted))
-		mask := mod.NextOutboundMask()
-		binary.BigEndian.PutUint16(packet.Header[14:16], dataLen^mask)
-	}
+	// Data-phase moreflags (header bytes 14-15) are set to 0 per SSU2 spec.
+	// SSU2 has no length-obfuscation field; see applyDataHeaderMoreFlags (H-1).
+	binary.BigEndian.PutUint16(packet.Header[14:16], 0)
 
 	data, err := packet.Serialize()
 	if err != nil {
