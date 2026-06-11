@@ -465,8 +465,7 @@ func createValidInitiatorConfig(t *testing.T) *SSU2Config {
 	config.DestroyTimeout = 0 // Skip destroy wait in tests
 	config.WithStaticKey(staticKey).WithRemoteRouterHash(remoteRouterHash).WithRemoteStaticKey(remoteStaticKey)
 	return config
-} // Helper function to create a valid responder configuration.
-
+}
 func createValidResponderConfig(t *testing.T) *SSU2Config {
 	staticKey := make([]byte, 32)
 	routerHash := generateRandomHash()
@@ -477,4 +476,147 @@ func createValidResponderConfig(t *testing.T) *SSU2Config {
 	config.RouterInfoValidator = DefaultRouterInfoValidator
 	config.WithStaticKey(staticKey)
 	return config
+}
+
+// TestAddressValidation_BoundaryConditions tests edge cases in address validation.
+// AUDIT 7.2 — Address validation for dial/listen.
+func TestAddressValidation_BoundaryConditions(t *testing.T) {
+	remoteRouterHash := generateRandomHash()
+
+	tests := []struct {
+		name            string
+		localAddr       *net.UDPAddr
+		remoteAddr      *net.UDPAddr
+		allowLoopback   bool
+		expectDialErr   bool
+		expectListenErr bool
+		description     string
+	}{
+		// Port 0 — ephemeral port semantics
+		{
+			name:          "dial_remote_port_0_rejected",
+			localAddr:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			remoteAddr:    &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			allowLoopback: true,
+			expectDialErr: true,
+			description:   "dial remote with port 0 must be rejected (not an ephemeral source)",
+		},
+		{
+			name:            "listen_port_0_allowed",
+			localAddr:       &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			remoteAddr:      nil,
+			allowLoopback:   true,
+			expectListenErr: false,
+			description:     "listen with port 0 allowed (OS-selected ephemeral port)",
+		},
+
+		// Reserved ports 1-1023
+		{
+			name:          "dial_reserved_port_rejected",
+			localAddr:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			remoteAddr:    &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 22}, // SSH port
+			allowLoopback: true,
+			expectDialErr: true,
+			description:   "dial remote with reserved port 22 must be rejected",
+		},
+		{
+			name:            "listen_reserved_port_rejected",
+			localAddr:       &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 25}, // SMTP port
+			remoteAddr:      nil,
+			allowLoopback:   true,
+			expectListenErr: true,
+			description:     "listen on reserved port 25 must be rejected",
+		},
+
+		// Loopback with AllowLoopback=false
+		{
+			name:          "dial_loopback_without_allowloopback",
+			localAddr:     &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			remoteAddr:    &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345},
+			allowLoopback: false,
+			expectDialErr: true,
+			description:   "dial to loopback without AllowLoopback must be rejected",
+		},
+		{
+			name:            "listen_loopback_without_allowloopback",
+			localAddr:       &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0},
+			remoteAddr:      nil,
+			allowLoopback:   false,
+			expectListenErr: true,
+			description:     "listen on loopback without AllowLoopback must be rejected",
+		},
+
+		// IPv6 loopback
+		{
+			name:          "dial_ipv6_loopback_without_allowloopback",
+			localAddr:     &net.UDPAddr{IP: net.IPv6loopback, Port: 0},
+			remoteAddr:    &net.UDPAddr{IP: net.IPv6loopback, Port: 12345},
+			allowLoopback: false,
+			expectDialErr: true,
+			description:   "dial to IPv6 loopback without AllowLoopback must be rejected",
+		},
+		{
+			name:            "listen_ipv6_loopback_without_allowloopback",
+			localAddr:       &net.UDPAddr{IP: net.IPv6loopback, Port: 0},
+			remoteAddr:      nil,
+			allowLoopback:   false,
+			expectListenErr: true,
+			description:     "listen on IPv6 loopback without AllowLoopback must be rejected",
+		},
+
+		// Valid non-loopback addresses
+		{
+			name:          "dial_valid_nonloopback",
+			localAddr:     &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0},
+			remoteAddr:    &net.UDPAddr{IP: net.ParseIP("192.0.2.1"), Port: 12345}, // TEST-NET-1
+			allowLoopback: false,
+			expectDialErr: false,
+			description:   "dial to valid non-loopback address should succeed",
+		},
+		{
+			name:            "listen_valid_nonloopback",
+			localAddr:       &net.UDPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 0},
+			remoteAddr:      nil,
+			allowLoopback:   false,
+			expectListenErr: false,
+			description:     "listen on valid non-loopback address should succeed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a config with the appropriate AllowLoopback setting
+			testConfig := createValidInitiatorConfig(t)
+			testConfig.AllowLoopback = tt.allowLoopback
+			testConfig.WithRemoteRouterHash(remoteRouterHash)
+
+			if tt.expectDialErr {
+				// Test dial validation
+				err := validateDialParams(tt.localAddr, tt.remoteAddr, testConfig)
+				assert.Error(t, err, "Expected dial validation to fail: %s", tt.description)
+				t.Logf("✓ %s: %v", tt.description, err)
+			} else if tt.remoteAddr != nil {
+				// Test dial validation succeeds
+				err := validateDialParams(tt.localAddr, tt.remoteAddr, testConfig)
+				assert.NoError(t, err, "Expected dial validation to succeed: %s", tt.description)
+				t.Logf("✓ %s: dial validation passed", tt.description)
+			}
+
+			if tt.expectListenErr {
+				// Test listen validation
+				responderConfig := createValidResponderConfig(t)
+				responderConfig.AllowLoopback = tt.allowLoopback
+				err := validateListenParams(tt.localAddr, responderConfig)
+				assert.Error(t, err, "Expected listen validation to fail: %s", tt.description)
+				t.Logf("✓ %s: %v", tt.description, err)
+			} else if tt.remoteAddr == nil {
+				// Test listen validation succeeds
+				responderConfig := createValidResponderConfig(t)
+				responderConfig.AllowLoopback = tt.allowLoopback
+				err := validateListenParams(tt.localAddr, responderConfig)
+				assert.NoError(t, err, "Expected listen validation to succeed: %s", tt.description)
+				t.Logf("✓ %s: listen validation passed", tt.description)
+			}
+		})
+	}
 }

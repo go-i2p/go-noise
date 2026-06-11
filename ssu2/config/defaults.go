@@ -77,6 +77,7 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 	return &SSU2Config{
 		Pattern:                  "XK",
 		Initiator:                initiator,
+		AllowLoopback:            true, // Default true for testing; adjust in production as needed
 		RouterHash:               routerHash,
 		HandshakeTimeout:         DefaultHandshakeTimeout,
 		ReadTimeout:              0, // No timeout by default

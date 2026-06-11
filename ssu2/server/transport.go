@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/go-i2p/logger"
+	path "github.com/go-i2p/path"
 	"github.com/samber/oops"
 )
 
@@ -17,8 +18,24 @@ import (
 // - Creates minimal viable connection wrapper
 // - Handshake is separate for flexibility (manual control)
 //
+// BINDING TRADE-OFFS vs. DialSSU2WithConn:
+// This function creates a NEW UDP socket with an ephemeral source port. Trade-offs:
+//   - PROS:
+//   - Each dial gets a unique source port (connection multiplexing on initiator side)
+//   - No risk of packet cross-talk or demux errors
+//   - CONS:
+//   - Firewall/netfilter may reject ephemeral source ports (EPERM errors)
+//   - NAT bindings will differ from advertised listening port (routing failures)
+//   - File descriptor exhaustion under sustained dial load
+//   - No shared state with listener socket (cannot coordinate keep-alives)
+//
+// IMPORTANT: Do NOT co-locate DialSSU2 on the same port as a ListenSSU2 in the
+// same process. Both trying to bind the same port will fail (kernel won't allow).
+// Use DialSSU2WithConn to multiplex outbound connections over the listener socket.
+// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
+//
 // Parameters:
-//   - localAddr: Local UDP address to bind to (use nil for automatic)
+//   - localAddr: Local UDP address to bind to (use nil for automatic, or specify port 0 for OS-selected ephemeral)
 //   - remoteAddr: Remote UDP address to connect to
 //   - config: SSU2 configuration for the connection
 //
@@ -46,24 +63,41 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 	// so CloseWithReason will close it.
 	conn.SetOwnsUnderlying(true)
 
+	// Runtime guard: log ephemeral binding behavior. If a listener is also running
+	// on this interface, recommend using DialSSU2WithConn for multiplexing.
+	// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
+	if conn.LocalAddr() != nil {
+		log.WithFields(logger.Fields{
+			"pkg":              "server",
+			"func":             "DialSSU2",
+			"ephemeral_bind":   true,
+			"local_addr":       conn.LocalAddr().String(),
+			"ephemeral_source": "new UDP socket",
+		}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
+	}
+
 	return conn, nil
 }
 
 // DialSSU2WithConn creates an SSU2 connection using an existing net.PacketConn
 // (typically the listener socket) instead of creating a new UDP socket.
 //
-// This is the recommended approach for SSU2 session multiplexing: all outbound
-// connections share the listener's UDP socket so that handshake and data packets
-// originate from the published listening port. This avoids:
+// This is the RECOMMENDED approach when outbound connections are co-located
+// with a listener: all outbound connections share the listener's UDP socket so
+// that handshake and data packets originate from the published listening port.
+// This avoids:
 //   - Firewall/netfilter EPERM errors from ephemeral source ports
 //   - NAT binding mismatches (source port != advertised port)
 //   - File descriptor exhaustion under sustained load
+//   - Accidental binding conflicts with the listener socket (co-location errors)
 //
 // The caller is responsible for demultiplexing responses by ConnectionID.
 // The provided PacketConn is NOT closed when the returned SSU2Conn is closed.
 //
+// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
+//
 // Parameters:
-//   - packetConn: Existing UDP PacketConn to send/receive through
+//   - packetConn: Existing UDP PacketConn to send/receive through (e.g., from ListenSSU2)
 //   - remoteAddr: Remote UDP address to connect to
 //   - config: SSU2 configuration for the connection
 //
@@ -289,6 +323,27 @@ func validateDialParams(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) 
 			Errorf("dial operations require initiator=true in config")
 	}
 
+	// AUDIT 7.2 — Validate remote address (target peer)
+	if err := validateSourceAddress(remoteAddr, config); err != nil {
+		return oops.
+			Code("INVALID_REMOTE_ADDRESS").
+			In("ssu2_transport").
+			With("remote_address", remoteAddr.String()).
+			Wrapf(err, "remote address validation failed")
+	}
+
+	// AUDIT 7.2 — Validate local address if specified
+	// NOTE: Port 0 is allowed for local addresses (means "bind to any available port")
+	if localAddr != nil {
+		if err := validateDialLocalAddress(localAddr, config); err != nil {
+			return oops.
+				Code("INVALID_LOCAL_ADDRESS").
+				In("ssu2_transport").
+				With("local_address", localAddr.String()).
+				Wrapf(err, "local address validation failed")
+		}
+	}
+
 	return nil
 }
 
@@ -322,6 +377,15 @@ func validateListenParams(addr *net.UDPAddr, config *SSU2Config) error {
 			Code("INVALID_INITIATOR_FLAG").
 			In("ssu2_transport").
 			Errorf("listen operations require initiator=false in config")
+	}
+
+	// AUDIT 7.2 — Validate listen address (allows port 0)
+	if err := validateListenAddress(addr, config); err != nil {
+		return oops.
+			Code("INVALID_LISTEN_ADDRESS").
+			In("ssu2_transport").
+			With("listen_address", addr.String()).
+			Wrapf(err, "listen address validation failed")
 	}
 
 	return nil
@@ -383,6 +447,131 @@ func validateWrapListenerParams(underlying net.PacketConn, config *SSU2Config) e
 			Code("CONFIG_VALIDATION_FAILED").
 			In("ssu2_transport").
 			Wrapf(err, "SSU2 config validation failed")
+	}
+
+	return nil
+}
+
+// validateSourceAddress validates a UDP address for dial operations.
+// AUDIT 7.2 — Address validation.
+// Rejects:
+//   - nil address
+//   - port 0 (requires explicit source port for dial)
+//   - reserved ports (1-1023)
+//   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true
+func validateSourceAddress(addr *net.UDPAddr, config *SSU2Config) error {
+	if addr == nil {
+		return oops.
+			Code("INVALID_ADDRESS").
+			In("ssu2_transport").
+			Errorf("address cannot be nil")
+	}
+
+	// Check port using IsValidSourcePort (rejects nil and port 0)
+	if !path.IsValidSourcePort(addr) {
+		return oops.
+			Code("INVALID_PORT").
+			In("ssu2_transport").
+			With("port", addr.Port).
+			Errorf("port cannot be zero or invalid")
+	}
+
+	// Reject reserved ports (1-1023) except when explicitly allowed for tests
+	if addr.Port > 0 && addr.Port < 1024 {
+		return oops.
+			Code("RESERVED_PORT").
+			In("ssu2_transport").
+			With("port", addr.Port).
+			Errorf("reserved port %d is not permitted", addr.Port)
+	}
+
+	// Check for loopback address unless explicitly allowed
+	if !config.AllowLoopback {
+		if addr.IP.IsLoopback() {
+			return oops.
+				Code("LOOPBACK_ADDRESS").
+				In("ssu2_transport").
+				With("address", addr.IP.String()).
+				Errorf("loopback address %s is not permitted (set config.AllowLoopback=true for tests)", addr.IP.String())
+		}
+	}
+
+	return nil
+}
+
+// validateDialLocalAddress validates a UDP address for dial's local address.
+// AUDIT 7.2 — Address validation for dial local binding.
+// Rejects:
+//   - reserved ports (1-1023) when explicitly bound (port > 0 and < 1024)
+//   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true
+//
+// NOTE: Port 0 is allowed for local addresses (means "bind to any available port").
+// This is standard Go networking practice and is used when the caller doesn't
+// care which ephemeral port is used.
+func validateDialLocalAddress(addr *net.UDPAddr, config *SSU2Config) error {
+	if addr == nil {
+		return nil // nil local address is OK (means use default)
+	}
+
+	// For dial local address, port 0 is allowed (means "any available ephemeral port")
+	// Just reject reserved ports if explicitly specified (port > 0 and < 1024)
+	if addr.Port > 0 && addr.Port < 1024 {
+		return oops.
+			Code("RESERVED_PORT").
+			In("ssu2_transport").
+			With("port", addr.Port).
+			Errorf("reserved port %d is not permitted", addr.Port)
+	}
+
+	// Check for loopback address unless explicitly allowed
+	if !config.AllowLoopback {
+		if addr.IP.IsLoopback() {
+			return oops.
+				Code("LOOPBACK_ADDRESS").
+				In("ssu2_transport").
+				With("address", addr.IP.String()).
+				Errorf("loopback address %s is not permitted (set config.AllowLoopback=true for tests)", addr.IP.String())
+		}
+	}
+
+	return nil
+}
+
+// AUDIT 7.2 — Address validation for listen.
+// Rejects:
+//   - nil address
+//   - reserved ports (1-1023) when explicitly bound (port > 0)
+//   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true
+//
+// NOTE: Port 0 is allowed for listen operations (means "bind to any available port").
+// This is standard Go networking practice and is used in tests.
+func validateListenAddress(addr *net.UDPAddr, config *SSU2Config) error {
+	if addr == nil {
+		return oops.
+			Code("INVALID_ADDRESS").
+			In("ssu2_transport").
+			Errorf("address cannot be nil")
+	}
+
+	// For listen, port 0 is allowed (means "any available port")
+	// Just reject reserved ports if explicitly specified (port > 0 and < 1024)
+	if addr.Port > 0 && addr.Port < 1024 {
+		return oops.
+			Code("RESERVED_PORT").
+			In("ssu2_transport").
+			With("port", addr.Port).
+			Errorf("reserved port %d is not permitted", addr.Port)
+	}
+
+	// Check for loopback address unless explicitly allowed
+	if !config.AllowLoopback {
+		if addr.IP.IsLoopback() {
+			return oops.
+				Code("LOOPBACK_ADDRESS").
+				In("ssu2_transport").
+				With("address", addr.IP.String()).
+				Errorf("loopback address %s is not permitted (set config.AllowLoopback=true for tests)", addr.IP.String())
+		}
 	}
 
 	return nil

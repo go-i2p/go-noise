@@ -19,6 +19,13 @@ type SSU2Config struct {
 	// For listeners, this is always false
 	Initiator bool
 
+	// AllowLoopback, when true, permits loopback addresses (127.0.0.0/8, ::1)
+	// for dial and listen operations. By default (true), loopback addresses
+	// are permitted for testing and development. In production, explicitly
+	// validate addresses before creating configs.
+	// AUDIT 7.2 — Address validation.
+	AllowLoopback bool
+
 	// RouterHash is the local router identity hash
 	// Required for SSU2 addressing and session establishment
 	RouterHash data.Hash

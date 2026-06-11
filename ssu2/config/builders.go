@@ -14,6 +14,15 @@ func (sc *SSU2Config) WithPattern(pattern string) *SSU2Config {
 	return sc
 }
 
+// WithAllowLoopback controls whether loopback addresses (127.0.0.0/8, ::1)
+// are permitted for dial and listen operations. By default, AllowLoopback
+// is true (allowing tests and local development). In production, set to
+// false or validate addresses before creating configs.
+func (sc *SSU2Config) WithAllowLoopback(allow bool) *SSU2Config {
+	sc.AllowLoopback = allow
+	return sc
+}
+
 // WithStaticKey sets the static key for this connection.
 // key must be 32 bytes for Curve25519.
 func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {

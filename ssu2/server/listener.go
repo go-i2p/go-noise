@@ -313,6 +313,16 @@ func makeDedupKey(initiatorConnID uint64, remoteAddr *net.UDPAddr) string {
 // SessionRequest including the token from the Retry.
 func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Packet) (*SSU2Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "handleNewSession", "remote_addr": remoteAddr.String()}).Debug("handleNewSession: creating new session for incoming handshake")
+
+	// AUDIT 7.2 — Validate source address (reject reserved ports, loopback unless allowed, etc.)
+	if err := validateListenAddress(remoteAddr, l.config); err != nil {
+		return nil, oops.
+			Code("INVALID_SOURCE_ADDRESS").
+			In("ssu2_listener").
+			With("remote_address", remoteAddr.String()).
+			Wrapf(err, "rejecting SessionRequest from invalid source address")
+	}
+
 	if err := l.enforceRateLimit(remoteAddr); err != nil {
 		return nil, err
 	}
@@ -457,6 +467,12 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 
 // buildConnConfig creates a connection-specific config from the listener config
 // and the incoming SessionRequest packet.
+// AUDIT 3.4 — Placeholder RouterHash:
+// The RouterHash is initially set to SHA256(ephemeralKey) as a placeholder because
+// the responder cannot yet verify the peer's identity from the SessionRequest alone.
+// This placeholder is sufficient for pre-establishment dedup (which keys on
+// initiatorConnID + remoteAddr) and is replaced by the router layer via
+// SSU2Addr.UpdateRouterHash(realHash) after handshake completion.
 func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2Config {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "buildConnConfig", "conn_id": connID}).Debug("buildConnConfig: building connection config from session request")
 	var routerHash data.Hash
