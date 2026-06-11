@@ -281,6 +281,11 @@ func (nl *Listener) Close() error {
 		return nil // Already closed
 	}
 
+	// AUDIT 2.4: Close the replay detector to stop any background cleanup goroutines
+	if nl.config != nil && nl.config.ReplayDetector != nil {
+		nl.config.ReplayDetector.Close()
+	}
+
 	err := nl.underlying.Close()
 	if err != nil {
 		nl.logger.Error("error closing underlying listener",

@@ -117,13 +117,15 @@ func randomAEADTimeout() time.Duration {
 // second close of the same socket, avoiding an fd-reuse double-close race.
 func (nc *Conn) sendTCPRST(conn net.Conn) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.sendTCPRST"}).Debug("Sending TCP RST (abnormal close) per NTCP2 spec")
+	// AUDIT 3.3: Set underlyingClosed BEFORE closing to prevent concurrent Close()
+	// from checking the flag after we close but before we set it. This closes the
+	// TOCTOU race where Close() could call noiseConn.Close() after we close the
+	// underlying socket but before we set the flag.
+	nc.underlyingClosed.Store(true)
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetLinger(0) //nolint:errcheck
 		tcpConn.Close()      //nolint:errcheck
 	} else {
 		conn.Close() //nolint:errcheck
 	}
-	// Mark the underlying socket as already closed so Close() does not attempt
-	// a second close on the same fd (see underlyingClosed field).
-	nc.underlyingClosed.Store(true)
 }

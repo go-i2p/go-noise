@@ -34,7 +34,17 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	h.stateMutex.Lock()
 	if h.state != StateInit {
 		h.stateMutex.Unlock()
-		return oops.Errorf("invalid state for handshake: %s", h.state)
+		// AUDIT 3.1: Return a specific error code for concurrent Handshake calls
+		// to distinguish from other state errors. StateHandshaking means another
+		// goroutine is already in the handshake; this should not be retried.
+		if h.state == StateHandshaking {
+			return oops.
+				Code("HANDSHAKE_ALREADY_IN_PROGRESS").
+				Errorf("handshake already in progress")
+		}
+		return oops.
+			Code("INVALID_HANDSHAKE_STATE").
+			Errorf("invalid state for handshake: %s", h.state)
 	}
 	h.state = StateHandshaking
 	h.stateMutex.Unlock()
@@ -401,8 +411,27 @@ func (h *SSU2Conn) collectConfirmedFragments(ctx context.Context, first *SSU2Pac
 	firstIdx := int((first.Header[13] >> 4) & 0x0F)
 	seen[firstIdx] = true
 
+	// AUDIT 4.2: Use a single deadline for all fragments to prevent a peer from
+	// multiplying the timeout by stalling. Each fragment gets a proportional share
+	// of the handshake timeout, rather than a fresh full timeout per fragment.
+	// Calculate deadline once at the start of fragment collection.
+	var deadline time.Time
+	if d, ok := ctx.Deadline(); ok {
+		// Use existing context deadline (set by handshakeInitiator/handshakeResponder)
+		deadline = d
+	} else {
+		// Fallback: use HandshakeTimeout if ctx has no deadline
+		deadline = time.Now().Add(h.config.HandshakeTimeout)
+	}
+
 	for len(seen) < totalFrags {
-		frag, err := h.receivePacketWithTimeout(ctx, h.config.HandshakeTimeout)
+		// Calculate remaining time and use smaller of ctx remaining or a safety margin
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, oops.Errorf("fragment collection timeout: context deadline reached (%d of %d received)", len(seen), totalFrags)
+		}
+
+		frag, err := h.receivePacketWithTimeout(ctx, remaining)
 		if err != nil {
 			return nil, oops.Wrapf(err, "failed to receive SessionConfirmed fragment (%d of %d received)", len(seen), totalFrags)
 		}
@@ -567,8 +596,16 @@ func (h *SSU2Conn) extractRetryToken(retry *SSU2Packet) ([]byte, error) {
 }
 
 // receivePacketWithTimeout waits for a packet with timeout.
-// receivePacketWithTimeout waits for a packet with timeout.
+// AUDIT 4.4: Check context cancellation immediately before waiting on timer,
+// so context cancellation is detected promptly even if the timeout is large.
 func (h *SSU2Conn) receivePacketWithTimeout(ctx context.Context, timeout time.Duration) (*SSU2Packet, error) {
+	// Check if context is already canceled before entering the wait
+	select {
+	case <-ctx.Done():
+		return nil, oops.Wrapf(ctx.Err(), "context cancelled")
+	default:
+	}
+
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 

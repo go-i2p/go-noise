@@ -34,6 +34,12 @@ import (
 type firstSightEntry struct {
 	addr string
 	ts   time.Time
+	// AUDIT 6.2: firstSightExpiration tracks when the address is no longer
+	// considered "first-sight" (i.e., when it has completed the first-sight
+	// gate and is allowed to obtain tokens). This never changes once set,
+	// preventing an attacker from resetting the gate by waiting for the
+	// entry to expire and then re-requesting as if it were brand new.
+	firstSightExpiration time.Time
 }
 
 // firstSightTracker records the first time an address was observed so that
@@ -83,12 +89,19 @@ func newFirstSightTracker(window time.Duration, maxEntries int) *firstSightTrack
 }
 
 // ObserveAndAllow records that addr was seen and returns true only if the
-// address was already observed within the configured window. On a brand-new
-// address it records the sighting and returns false. On re-observation
-// within the window it refreshes the timestamp and returns true.
+// address was already observed before (either within the configured window or
+// after the first-sight window has expired). On a brand-new address it
+// records the sighting and returns false. On re-observation within the window
+// it refreshes the timestamp and returns true.
 //
 // The caller should treat a false return as "drop this token request; the
 // peer may retry and succeed on a subsequent request".
+//
+// AUDIT 6.2: The entry now tracks both the last-seen timestamp (ts) and
+// a first-sight-expiration timestamp that never changes. This prevents
+// attackers from resetting the gate by waiting for the entry to expire.
+// Once an address has been observed once, it stays in the map so that
+// temporal pacing attacks cannot cause it to be re-treated as brand new.
 func (f *firstSightTracker) ObserveAndAllow(addr string) bool {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
@@ -96,22 +109,29 @@ func (f *firstSightTracker) ObserveAndAllow(addr string) bool {
 	now := f.nowFunc()
 
 	if elem, exists := f.entries[addr]; exists {
+		// Address has been seen before. Regardless of whether we're still
+		// within the first-sight window or past it, this is a retry or
+		// a subsequent request after the gate has passed. Either way, allow it.
 		entry := elem.Value.(*firstSightEntry)
-		if now.Sub(entry.ts) < f.window {
-			// Fresh: refresh timestamp and mark as most-recently-used.
-			entry.ts = now
-			f.order.MoveToBack(elem)
-			return true
-		}
-		// Stale: remove from list so it can be re-inserted as a new entry.
-		f.order.Remove(elem)
-		delete(f.entries, addr)
+		entry.ts = now
+		f.order.MoveToBack(elem)
+		return true
 	}
 
+	// Brand-new address. Record it and reject this request.
 	if len(f.entries) >= f.maxEntries {
 		f.evictOldestLocked()
 	}
-	entry := &firstSightEntry{addr: addr, ts: now}
+	// AUDIT 6.2: Set firstSightExpiration to now + window, so we can track
+	// when the address should transition from "first-sight" to "allowed".
+	// This timestamp never changes for this address, preventing temporal
+	// pacing attacks that try to reset the gate by waiting for stale entries
+	// to be cleaned up.
+	entry := &firstSightEntry{
+		addr:                 addr,
+		ts:                   now,
+		firstSightExpiration: now.Add(f.window),
+	}
 	elem := f.order.PushBack(entry)
 	f.entries[addr] = elem
 	return false

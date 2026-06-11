@@ -2,6 +2,7 @@ package server
 
 import (
 	"container/list"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -37,6 +38,13 @@ type SSU2Listener struct {
 
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
+
+	// AUDIT 5.4: Stable source connection ID for Retry messages.
+	// Per SSU2 spec, the responder's source ConnID in a Retry should be
+	// stable across multiple Retries for the same peer, so the initiator
+	// can use it as the destination ConnID in subsequent SessionRequests.
+	// This is generated once at listener creation and reused for all Retries.
+	retrySourceConnID [8]byte
 
 	// AUDIT 8.3: Removed listener.sessions — router is now single session owner.
 	// All session queries go through router via GetSession/SessionCount/RemoveSession.
@@ -157,6 +165,12 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		acceptQueue:        make(chan *SSU2Conn, 100), // Buffer 100 pending connections
 		packetQueue:        make(chan incomingPacket, packetQueueSize),
 		shutdownChan:       make(chan struct{}),
+	}
+
+	// AUDIT 5.4: Initialize stable retry source connection ID
+	// This ensures that all Retry messages from this listener use the same source ConnID
+	if _, err := rand.Read(l.retrySourceConnID[:]); err != nil {
+		return nil, oops.Wrapf(err, "failed to generate retry source connection ID")
 	}
 
 	// Create packet router with session creation callback
@@ -627,12 +641,19 @@ func (l *SSU2Listener) validateSessionRequestToken(packet *SSU2Packet, remoteAdd
 		return oops.Wrapf(err, "failed to parse NewToken block")
 	}
 
-	// Check token expiration
-	if time.Now().Unix() > int64(newToken.Expiration) {
+	// Check token expiration with clock skew tolerance
+	// AUDIT 6.1: Account for client-server clock skew in token expiration check.
+	// If the client's clock is ahead of the server's, the server should allow
+	// the token to be valid for up to MaxClockSkew seconds past the expiration
+	// timestamp. This prevents legitimate tokens from being rejected due to clock drift.
+	now := time.Now().Unix()
+	expirationWithSkew := int64(newToken.Expiration) + int64(l.config.MaxClockSkew.Seconds())
+	if now > expirationWithSkew {
 		return oops.
 			Code("TOKEN_EXPIRED").
 			In("ssu2_listener").
 			With("expiration", newToken.Expiration).
+			With("max_clock_skew", l.config.MaxClockSkew.Seconds()).
 			Errorf("token has expired")
 	}
 

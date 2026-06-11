@@ -139,15 +139,22 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// Close channels to signal goroutines to exit
 		close(h.closeChan)
 
-		// Wait for background goroutines to complete
-		h.wg.Wait()
-
-		// Close the underlying PacketConn if this connection owns it
-		// (created via DialSSU2). Shared sockets (DialSSU2WithConn,
-		// listener-accepted) are not closed here.
+		// AUDIT 4.3: Close the underlying socket immediately to unblock ReadFrom
+		// in recvLoop, rather than waiting up to 100ms for the polling deadline.
+		// This must happen BEFORE waiting for recvLoop to exit so that ReadFrom
+		// returns with an error promptly. We only close if this connection owns
+		// the socket (created via DialSSU2). Shared sockets are closed by the
+		// listener/router, not the connection.
 		if h.ownsUnderlying && h.underlying != nil {
 			h.closeErr = h.underlying.Close()
 		}
+
+		// Wait for background goroutines to complete
+		h.wg.Wait()
+
+		// If socket was not owned by this connection, it may still be open.
+		// Do not close it again to avoid double-close or fd-reuse bugs.
+		// The listener or router is responsible for closing shared sockets.
 
 		// Update final state
 		h.stateMutex.Lock()

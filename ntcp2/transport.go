@@ -3,7 +3,6 @@ package ntcp2
 import (
 	"context"
 	"net"
-	"syscall"
 
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
@@ -93,15 +92,17 @@ func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 	var listener net.Listener
 	var err error
 
-	// AUDIT 7.3: Use ListenConfig with SO_REUSEADDR if enabled in config
+	// AUDIT 5.2: Capture SO_REUSEADDR errors instead of silently discarding them.
+	// If the caller set AllowReuseAddress: true, they expect fast restart semantics.
+	// If SO_REUSEADDR fails (e.g., permission error, unsupported platform), fail fast.
 	if config.AllowReuseAddress && (network == "tcp" || network == "tcp4" || network == "tcp6") {
+		// AUDIT 7.1: SO_REUSEADDR is applied only on supported platforms.
+		// The semantics and availability of SO_REUSEADDR varies between operating systems.
+		// On Linux, it allows immediate reuse after Close() (TIME_WAIT bypass).
+		// On macOS and Windows, it has different semantics and may not be advisable for all use cases.
+		// This code path is guarded to ensure correct behavior on all platforms.
 		lc := &net.ListenConfig{
-			Control: func(network, address string, c syscall.RawConn) error {
-				// AUDIT 7.3: Enable SO_REUSEADDR for fast restart
-				return c.Control(func(fd uintptr) {
-					_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-				})
-			},
+			Control: reuseAddrControl,
 		}
 		listener, err = lc.Listen(context.Background(), network, addr)
 	} else {
