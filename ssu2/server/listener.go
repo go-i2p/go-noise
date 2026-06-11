@@ -572,43 +572,40 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 			Errorf("pending session capacity exceeded, connection refused")
 	}
 
-	// AUDIT 1.3: Install close hook BEFORE registering with router to prevent
-	// race window where concurrent Close() is called before the hook is set.
-	// The hook must be in place so that any concurrent close will properly
-	// deregister the session from all tracking maps.
+	// BUG-RC-3 / BUG-SA-2: Both the dedup check and the router registration must
+	// happen under a single l.sessionMutex.Lock() so no two concurrent packetWorker
+	// goroutines can both pass AddSessionIfBelowCap before either inserts into
+	// pendingByInitiator — which would briefly leave two sessions for the same
+	// initiator simultaneously registered in the router.
+	// BUG-SA-2: use registered flag so the close hook only calls RemoveSession
+	// when the session was actually inserted into the router.
+	var registered atomic.Bool
 	conn.SetCloseHook(func() {
-		l.router.RemoveSession(connID)
-		// AUDIT 8.1: Remove from pending dedup index
+		if registered.Load() {
+			l.router.RemoveSession(connID)
+		}
+		// AUDIT 8.1: Remove from pending dedup index (safe even if never inserted).
 		l.sessionMutex.Lock()
 		delete(l.pendingByInitiator, dedupKey)
 		l.sessionMutex.Unlock()
 	})
 
-	// AUDIT 8.3: Use AddSessionIfBelowCap to atomically check MaxSessions and add
-	// the session under a single write lock, preventing concurrent workers from
-	// observing stale SessionCount() and exceeding the cap.
-	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
-		_ = conn.CloseImmediate()
-		return nil, oops.Wrapf(err, "failed to register session in router")
-	}
-
-	// AUDIT 8.1: Add session to pending dedup index.
-	// AUDIT 1.1: Re-check under write lock to close the TOCTOU window that
-	// exists between the read-only dedup lookup in handleNewSession and this
-	// write.  Two concurrent packetWorker goroutines can both observe a nil
-	// entry, both create a new SSU2Conn, and both reach here.  The first
-	// worker to acquire the lock inserts its conn; the second must detect the
-	// collision, undo its router registration, and return the already-inserted
-	// session so the triggering packet is routed to it instead.
+	// AUDIT 8.3 / BUG-RC-3: Perform dedup check, router registration, and
+	// pendingByInitiator insert as a single atomic operation under sessionMutex.
 	l.sessionMutex.Lock()
 	if existing, ok := l.pendingByInitiator[dedupKey]; ok {
 		// Race lost: another worker registered for this initiator first.
 		// Tear down our newly created connection and return the winner.
 		l.sessionMutex.Unlock()
-		l.router.RemoveSession(connID)
 		_ = conn.CloseImmediate()
 		return existing, nil
 	}
+	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
+		l.sessionMutex.Unlock()
+		_ = conn.CloseImmediate()
+		return nil, oops.Wrapf(err, "failed to register session in router")
+	}
+	registered.Store(true)
 	l.pendingByInitiator[dedupKey] = conn
 	l.sessionMutex.Unlock()
 
@@ -824,6 +821,10 @@ func (l *SSU2Listener) tokenCleanupLoop() {
 			return
 		case <-ticker.C:
 			l.tokenCache.Cleanup()
+			// BUG-RL-2: firstSight.Cleanup() was never called, causing the tracker
+			// to grow to maxEntries and never shrink, permanently bypassing the
+			// first-sight gate for any addresses in the full map.
+			l.firstSight.Cleanup()
 		}
 	}
 }

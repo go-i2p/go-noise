@@ -106,6 +106,12 @@ type Conn struct {
 
 	// logger for connection events (pointer so runtime log-level changes are visible)
 	logger *logger.Logger
+
+	// handshakeDeadline is the absolute deadline set by Accept() for the full
+	// handshake window. When non-zero, Handshake() will not extend the deadline
+	// beyond this value, ensuring the total window (accept→handshake) is bounded
+	// to a single HandshakeTimeout. BUG-RC-2 / BUG-SM-2.
+	handshakeDeadline time.Time
 }
 
 // NewNTCP2Conn creates a new NTCP2Conn wrapping the provided NoiseConn.

@@ -228,15 +228,25 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			Wrapf(err, "failed to create noise connection")
 	}
 
-	// AUDIT 2.3: Apply handshake deadline to underlying TCP connection to prevent
-	// slow or stalled peers from holding the connection open indefinitely.
-	// Use the configured HandshakeTimeout or DefaultHandshakeTimeoutSeconds as fallback.
+	// BUG-RC-2 / BUG-SM-2: Compute the single authoritative handshake deadline
+	// from the moment Accept() returns. Store it on the conn so Handshake() can
+	// use min(derived, acceptDeadline) rather than resetting to time.Now()+timeout
+	// (which would grant the peer an extra window if the caller delays).
 	handshakeTimeout := connConfig.HandshakeTimeout
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = DefaultHandshakeTimeoutSeconds * time.Second
 	}
+	acceptDeadline := time.Now().Add(handshakeTimeout)
+	// Set the deadline immediately so the TCP stack enforces it even before
+	// Handshake() is called (BUG-EH-2 fix: check and log the error).
 	if tcpConn, ok := underlying.(*net.TCPConn); ok {
-		_ = tcpConn.SetDeadline(time.Now().Add(handshakeTimeout))
+		if err := tcpConn.SetDeadline(acceptDeadline); err != nil {
+			log.WithFields(logger.Fields{
+				"pkg":   "ntcp2",
+				"func":  "Accept",
+				"error": err,
+			}).Warn("failed to set initial handshake deadline on accepted TCP conn")
+		}
 	}
 
 	remoteAddr, err := nl.createRemoteNTCP2Addr(noiseConn)
@@ -250,6 +260,8 @@ func (nl *Listener) Accept() (net.Conn, error) {
 		noiseConn.Close()
 		return nil, err
 	}
+	// Record the accept-time deadline so Handshake() cannot extend it.
+	ntcp2Conn.handshakeDeadline = acceptDeadline
 
 	nl.logAcceptedConnection(ntcp2Conn)
 	return ntcp2Conn, nil

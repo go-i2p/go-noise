@@ -101,13 +101,12 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			select {
 			case <-timer.C:
 				// Timeout expired, proceed with teardown
-			case <-h.closeChan:
-				// Connection already closing via normal path
-				timer.Stop()
 			case <-h.forceDestroy:
 				// AUDIT 3.2: Listener is shutting down, cancel wait
 				timer.Stop()
 			}
+			// BUG-RC-1: removed dead `case <-h.closeChan` arm — closeChan is
+			// closed after this select, so it could never fire here.
 		}
 
 		// Stop keepalive timer
@@ -290,6 +289,15 @@ func (h *SSU2Conn) RecvStats() map[string]uint64 {
 		"read_errors":    h.readErrors.Load(),
 		"parse_errors":   h.parseErrors.Load(),
 		"decrypt_errors": h.decryptErrors.Load(),
+	}
+}
+
+// SendStats returns error counters from the send loop for observability.
+// Keys: "write_errors".
+// BUG-RL-1 / BUG-EH-1: exposes the previously-invisible sendLoop write failure counter.
+func (h *SSU2Conn) SendStats() map[string]uint64 {
+	return map[string]uint64{
+		"write_errors": h.writeErrors.Load(),
 	}
 }
 

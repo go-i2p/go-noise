@@ -222,7 +222,13 @@ func (h *SSU2Conn) sendLoop() {
 		select {
 		case packet := <-h.sendQueue:
 			if err := h.sendPacketDirect(packet); err != nil {
-				// Log error but continue
+				h.writeErrors.Add(1)
+				log.WithFields(logger.Fields{
+					"pkg":    "session",
+					"func":   "sendLoop",
+					"pktNum": packet.PacketNumber,
+					"error":  err,
+				}).Error("UDP write failed")
 				continue
 			}
 		case <-h.closeChan:

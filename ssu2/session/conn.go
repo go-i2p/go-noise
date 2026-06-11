@@ -225,6 +225,9 @@ type SSU2Conn struct {
 	parseErrors   atomic.Uint64
 	decryptErrors atomic.Uint64
 
+	// writeErrors counts UDP write failures in sendLoop (BUG-RL-1 / BUG-EH-1).
+	writeErrors atomic.Uint64
+
 	// validDataPacketsReceived counts successfully received data-phase packets.
 	// Included in the Termination block per spec §Termination.
 	validDataPacketsReceived atomic.Uint64

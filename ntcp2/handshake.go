@@ -95,6 +95,12 @@ func (c *Conn) Handshake(ctx context.Context) error {
 		defer cancel()
 	}
 	if deadline, ok := hsCtx.Deadline(); ok {
+		// BUG-RC-2 / BUG-SM-2: if Accept() already set an authoritative deadline,
+		// use the EARLIER of the two so a caller delay between Accept and Handshake
+		// cannot extend the total window beyond one HandshakeTimeout.
+		if !c.handshakeDeadline.IsZero() && c.handshakeDeadline.Before(deadline) {
+			deadline = c.handshakeDeadline
+		}
 		if err := raw.SetDeadline(deadline); err != nil {
 			nc.FailHandshake()
 			return oops.
@@ -104,6 +110,18 @@ func (c *Conn) Handshake(ctx context.Context) error {
 		}
 		// Clear the deadline once the handshake finishes (or fails) so
 		// subsequent data-phase I/O is not accidentally time-limited.
+		defer func() {
+			_ = raw.SetDeadline(time.Time{})
+		}()
+	} else if !c.handshakeDeadline.IsZero() {
+		// No ctx deadline but Accept set one — honour it (BUG-RC-2 / BUG-SM-2).
+		if err := raw.SetDeadline(c.handshakeDeadline); err != nil {
+			nc.FailHandshake()
+			return oops.
+				Code("SET_DEADLINE_FAILED").
+				In("ntcp2").
+				Wrapf(err, "failed to set handshake deadline on underlying connection")
+		}
 		defer func() {
 			_ = raw.SetDeadline(time.Time{})
 		}()
