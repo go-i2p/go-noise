@@ -152,18 +152,25 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 			_ = l.processTokenRequest(packet, remoteAddr)
 			return
 		}
-		// AUDIT 5.1: previously all other routing failures were silently
-		// discarded, making session-creation failures and stray-packet
-		// floods invisible. Count them and log at debug so operators can
-		// surface the counter without log spam from late/duplicate packets.
 		atomic.AddUint64(&l.routingErrors, 1)
-		log.WithFields(logger.Fields{
+		// AUDIT 5.1: Handshake-type packets (SessionRequest) that fail to
+		// route indicate a session-creation error — these must be visible
+		// even without debug logging so operators can detect when 100 % of
+		// inbound sessions are failing.  Data packets that fail routing are
+		// typically late arrivals for a closed session and are expected; log
+		// those at Debug to avoid production noise.
+		logEntry := log.WithFields(logger.Fields{
 			"pkg":            "server",
 			"func":           "handleIncomingPacket",
 			"remote_addr":    remoteAddr.String(),
 			"message_type":   packet.MessageType,
 			"routing_errors": atomic.LoadUint64(&l.routingErrors),
-		}).WithError(err).Debug("packet routing failed")
+		}).WithError(err)
+		if l.router.IsHandshakePacket(packet.MessageType) {
+			logEntry.Warn("handshake packet routing failed")
+		} else {
+			logEntry.Debug("data packet routing failed (likely late arrival)")
+		}
 	}
 }
 

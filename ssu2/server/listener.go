@@ -544,8 +544,23 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 		return nil, oops.Wrapf(err, "failed to register session in router")
 	}
 
-	// AUDIT 8.1: Add session to pending dedup index
+	// AUDIT 8.1: Add session to pending dedup index.
+	// AUDIT 1.1: Re-check under write lock to close the TOCTOU window that
+	// exists between the read-only dedup lookup in handleNewSession and this
+	// write.  Two concurrent packetWorker goroutines can both observe a nil
+	// entry, both create a new SSU2Conn, and both reach here.  The first
+	// worker to acquire the lock inserts its conn; the second must detect the
+	// collision, undo its router registration, and return the already-inserted
+	// session so the triggering packet is routed to it instead.
 	l.sessionMutex.Lock()
+	if existing, ok := l.pendingByInitiator[dedupKey]; ok {
+		// Race lost: another worker registered for this initiator first.
+		// Tear down our newly created connection and return the winner.
+		l.sessionMutex.Unlock()
+		l.router.RemoveSession(connID)
+		_ = conn.CloseImmediate()
+		return existing, nil
+	}
 	l.pendingByInitiator[dedupKey] = conn
 	l.sessionMutex.Unlock()
 

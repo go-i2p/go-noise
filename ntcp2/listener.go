@@ -129,23 +129,22 @@ func (nl *Listener) createResponderConnConfig() (*noise.ConnConfig, *Config, err
 }
 
 // createRemoteNTCP2Addr creates the remote NTCP2 address for the accepted connection.
-// Note: PeerStatic() returns the remote peer's Noise static public key (32 bytes),
-// which is used here as a placeholder router hash. The NTCP2 spec defines the
-// router hash as SHA-256(RouterIdentity), where the static key is only part of
-// the full RouterIdentity. The router transport layer
-// (github.com/go-i2p/go-i2p/lib/transport/ntcp) should use PeerStaticKey() and
-// HandshakeHash() from NTCP2Conn, parse the full RouterIdentity from message 3
-// part 2 via github.com/go-i2p/common/router_identity, and compute the proper
-// hash via github.com/go-i2p/common/data.HashData().
+// Note: PeerStatic() returns the remote peer's Noise static public key (32 bytes).
+// The NTCP2 spec defines the router hash as SHA-256(RouterIdentity), where the
+// static key is only part of the full RouterIdentity.  As a placeholder we use
+// SHA-256(static_key), which is a deterministic 32-byte value derived from the
+// peer's long-term identity material rather than the raw key bytes (AUDIT 5.3).
+// The router transport layer should call PropagatePeerStaticKey() after handshake
+// completion and ultimately replace this placeholder with the proper
+// SHA-256(RouterIdentity) once the full RouterIdentity is available from msg3.
 func (nl *Listener) createRemoteNTCP2Addr(noiseConn *noise.NoiseConn) (*Addr, error) {
 	var remoteHash data.Hash
 	remoteRouterHash := noiseConn.PeerStatic()
 	if len(remoteRouterHash) >= 32 {
-		var err error
-		remoteHash, err = data.NewHashFromSlice(remoteRouterHash)
-		if err != nil {
-			remoteHash = data.Hash{} // fall back to zero hash
-		}
+		// AUDIT 5.3: Hash the static key with SHA-256 rather than copying the
+		// raw bytes directly into the Hash field.  data.NewHashFromSlice stores
+		// the 32-byte key verbatim which is not SHA-256(RouterIdentity).
+		remoteHash = data.HashData(remoteRouterHash[:32])
 	} else if nl.config.RemoteRouterHash != nil {
 		remoteHash = *nl.config.RemoteRouterHash
 	}

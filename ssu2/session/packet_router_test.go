@@ -326,14 +326,23 @@ func TestPacketRouter_RoutePacket(t *testing.T) {
 		var receivedAddr *net.UDPAddr
 		var receivedPacket *SSU2Packet
 
+		var router *PacketRouter
+		// Production newSessionHandler is responsible for registering the
+		// session in the router (via registerAndQueueConn → AddSession).
+		// RoutePacket no longer calls AddSession itself (AUDIT 1.2 / 3.2).
 		handler := func(addr *net.UDPAddr, pkt *SSU2Packet) (*SSU2Conn, error) {
 			handlerCalled = true
 			receivedAddr = addr
 			receivedPacket = pkt
-			return createMockSSU2Conn(t, 12345), nil
+			conn := createMockSSU2Conn(t, 12345)
+			// Mimic production: handler registers the session.
+			if err := router.AddSession(conn); err != nil {
+				return nil, err
+			}
+			return conn, nil
 		}
 
-		router := NewPacketRouter(handler)
+		router = NewPacketRouter(handler)
 
 		packet := createMockPacket(t, MessageTypeSessionRequest, 12345)
 		addr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5555}

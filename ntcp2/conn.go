@@ -369,18 +369,13 @@ func (nc *Conn) PropagatePeerStaticKey() {
 		return
 	}
 
-	// Use the peer's static key as the router hash.
-	// Note: the NTCP2 spec defines the router hash as SHA-256(RouterIdentity),
-	// where the static key is only part of the full RouterIdentity. The router
-	// transport layer can later compute the proper hash via PeerStaticKey() and
-	// HandshakeHash(). Using the static key directly is a better placeholder
-	// than all-zeros for session deduplication.
-	hash, err := data.NewHashFromSlice(peerKey)
-	if err != nil {
-		nc.logger.Warn("failed to create hash from peer static key",
-			"error", err.Error())
-		return
-	}
+	// AUDIT 5.3: Hash the peer static key with SHA-256 rather than copying
+	// the raw bytes into the Hash field.  data.NewHashFromSlice stores the
+	// 32-byte key verbatim, which is not SHA-256(RouterIdentity).  Using
+	// SHA-256(static_key) as the placeholder is consistent with how the
+	// SSU2 listener builds its placeholder hash and is a closer analogue
+	// to the I2P router-hash definition.
+	hash := data.HashData(peerKey)
 	nc.remoteAddr.SetRouterHash(hash)
 }
 

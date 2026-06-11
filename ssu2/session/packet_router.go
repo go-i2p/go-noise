@@ -161,31 +161,22 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 					Errorf("no handler registered for new sessions")
 			}
 
-			// Create new session via callback
+			// Create new session via callback.
+			// The handler (e.g. SSU2Listener.handleNewSession) is responsible for
+			// registering the session in the router AND queueing it for Accept.
+			// Do NOT call AddSession here: the handler already called it inside
+			// registerAndQueueConn, and a second AddSession would return
+			// "connection ID already registered", causing the error branch to call
+			// CloseImmediate on the freshly-queued session — breaking every inbound
+			// connection (AUDIT 1.2 / 3.2).
 			newConn, err := pr.newSessionHandler(remoteAddr, packet)
 			if err != nil {
 				return oops.Wrapf(err, "failed to create new session")
 			}
 
-			// Register the new session
-			if err := pr.AddSession(newConn); err != nil {
-				// AUDIT 2.3: the newSessionHandler (listener) already
-				// registered and queued newConn before we got here. If we
-				// cannot add it to the router table we must tear it down so
-				// its map entry and per-session goroutines do not leak. The
-				// connection's close hook deregisters it from the listener
-				// and router maps. CloseImmediate avoids blocking this packet
-				// worker for the Termination wait.
-				_ = newConn.CloseImmediate()
-				return oops.Wrapf(err, "failed to register new session")
-			}
-
-			// AUDIT 1.2: Feed the triggering handshake packet to the newly created session.
-			// For listener-accepted responders, this is the entry point for the handshake
-			// reader. The listener's receiveLoop has captured this packet; after registration,
-			// the listener must feed it to the session via processInboundPacket so that
-			// receivePacketWithTimeout in the handshake can retrieve it from recvQueue.
-			// For initiators (unlikely path), this ensures the first msg-1 is not lost.
+			// Feed the triggering handshake packet to the newly created session so
+			// that receivePacketWithTimeout inside the handshake can retrieve it
+			// from recvQueue without waiting for the next retransmit.
 			newConn.processInboundPacket(packet)
 
 			return nil

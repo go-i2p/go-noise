@@ -76,6 +76,15 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 // handshakeInitiator performs the initiator side of XK handshake.
 func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "handshakeInitiator"}).Debug("Starting SSU2 handshake as initiator")
+	// AUDIT 4.1: Establish a single deadline for the entire initiator handshake.
+	// Without this, each call to receiveHandshakeWithRetransmit starts a fresh
+	// HandshakeTimeout window, allowing a malicious responder to keep the
+	// initiator pinned for N × HandshakeTimeout instead of 1 × HandshakeTimeout.
+	if h.config.HandshakeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.config.HandshakeTimeout)
+		defer cancel()
+	}
 	sessionRequest, err := h.sendSessionRequest()
 	if err != nil {
 		return err
@@ -264,6 +273,15 @@ func (h *SSU2Conn) sendSessionConfirmed() error {
 // handshakeResponder performs the responder side of XK handshake.
 func (h *SSU2Conn) handshakeResponder(ctx context.Context) error {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "handshakeResponder"}).Debug("Starting SSU2 handshake as responder")
+	// AUDIT 4.1: Establish a single deadline for the entire responder handshake.
+	// Each receiveHandshakeWithRetransmit call would otherwise start a fresh
+	// HandshakeTimeout window; a stalling initiator can extend the total window
+	// to N × HandshakeTimeout without this guard.
+	if h.config.HandshakeTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.config.HandshakeTimeout)
+		defer cancel()
+	}
 	initiatorConnID, err := h.receiveSessionRequest(ctx)
 	if err != nil {
 		return err
@@ -610,7 +628,18 @@ func retransmitWait(attempt int, intervals []time.Duration, remaining time.Durat
 //   - Session Created: 1s, 2s, 4s
 func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent *SSU2Packet, totalTimeout time.Duration) (*SSU2Packet, error) {
 	intervals := retransmitSchedule(lastSent.MessageType)
-	deadline := time.Now().Add(totalTimeout)
+	// AUDIT 4.1: Use the context deadline when available so that the total
+	// handshake budget is shared across all phases rather than each phase
+	// starting a fresh totalTimeout window.  If the caller (handshakeInitiator /
+	// handshakeResponder) has wrapped ctx with context.WithTimeout, the deadline
+	// is already set and we inherit it here.  Fall back to a per-call deadline
+	// only when no context deadline is present (e.g., standalone callers).
+	var deadline time.Time
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	} else {
+		deadline = time.Now().Add(totalTimeout)
+	}
 
 	for attempt := 0; attempt <= len(intervals); attempt++ {
 		remaining := time.Until(deadline)
