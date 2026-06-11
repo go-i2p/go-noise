@@ -2,7 +2,9 @@ package session
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/go-i2p/logger"
@@ -64,9 +66,21 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			MAC:          make([]byte, MACSize),
 		}
 		payload, err := SerializeBlocks([]*SSU2Block{termBlock})
+		socketDead := false // AUDIT 5.4: Track if socket is dead
 		if err == nil {
 			packet.Payload = payload
-			_ = h.sendPacketDirect(packet) // Best effort, ignore errors
+			// AUDIT 5.4: Capture send error into debug log instead of discarding.
+			// If socket is dead, short-circuit the destroy wait.
+			if err := h.sendPacketDirect(packet); err != nil {
+				log.WithFields(logger.Fields{
+					"pkg":   "session",
+					"func":  "CloseWithReason",
+					"error": err.Error(),
+				}).Debug("failed to send Termination block (best effort)")
+				// Check if error indicates socket is already dead (e.g., broken pipe, connection refused)
+				// This lets us skip the destroy wait since there's no peer to respond anyway.
+				socketDead = isSocketDeadError(err)
+			}
 		}
 
 		// Per spec §Termination: wait briefly for the peer's Termination
@@ -76,7 +90,8 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// additional signal channel.
 		// AUDIT 3.2: Also listen on forceDestroy channel so listener.Close()
 		// can cancel all pending destroys in parallel rather than serially.
-		if h.config.DestroyTimeout > 0 && !h.destroySkip.Load() {
+		// AUDIT 5.4: Skip destroy wait if socket is already dead.
+		if h.config.DestroyTimeout > 0 && !h.destroySkip.Load() && !socketDead {
 			timeout := h.config.DestroyTimeout
 			const maxDestroyTimeout = 30 * time.Second
 			if timeout > maxDestroyTimeout {
@@ -322,6 +337,54 @@ func (h *SSU2Conn) GetSSU2Addr() *SSU2Addr {
 // of the SSU2 handshake.
 func (h *SSU2Conn) IsInitiator() bool {
 	return h.initiator
+}
+
+// isSocketDeadError checks whether an error indicates the underlying socket
+// is dead or unreachable (e.g., broken pipe, connection refused, no such host).
+// AUDIT 5.4: Used to short-circuit the destroy wait when sending Termination
+// fails because the socket is already dead.
+func isSocketDeadError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for common socket-dead error conditions
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		// Broken pipe, connection refused, no such host, etc.
+		switch opErr.Op {
+		case "write", "WriteTo", "sendto":
+			// These operations indicate socket-level failures
+			return true
+		}
+		// Also check the underlying error
+		if opErr.Err != nil {
+			errStr := opErr.Err.Error()
+			switch errStr {
+			case "connection refused", "broken pipe", "connection reset by peer",
+				"no such host", "connection timed out":
+				return true
+			}
+		}
+	}
+
+	// Check for simple string patterns in error message (fallback)
+	errStr := err.Error()
+	deadPatterns := []string{
+		"broken pipe",
+		"connection refused",
+		"connection reset",
+		"no such host",
+		"connection timed out",
+		"use of closed network connection",
+	}
+	for _, pattern := range deadPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // NewMockSSU2Conn creates a minimal SSU2Conn with the given connectionID in

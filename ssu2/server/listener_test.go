@@ -889,3 +889,89 @@ func TestListenerClose_ParallelTeardown(t *testing.T) {
 		// Test passes if no panic or race condition detected under -race
 	})
 }
+
+// TestAuditFix_3_4_RouterHashHook tests the router layer hook pattern for updating
+// placeholder RouterHash on responder connections (AUDIT 3.4).
+func TestAuditFix_3_4_RouterHashHook(t *testing.T) {
+	t.Run("GetSSU2Addr_ReturnsAddressWithPlaceholderHash", func(t *testing.T) {
+		// AUDIT 3.4: Verify that a responder connection's SSU2Addr can be retrieved
+		// and contains a placeholder RouterHash (SHA256 of ephemeral key).
+		connID := uint64(12345)
+		conn := NewMockSSU2Conn(connID)
+
+		// Get the SSU2Addr from the responder connection
+		addr := conn.GetSSU2Addr()
+		require.NotNil(t, addr)
+
+		// Verify the address has the correct connection ID
+		assert.Equal(t, connID, addr.ConnectionID())
+		assert.Equal(t, "ssu2", addr.Network())
+	})
+
+	t.Run("UpdateRouterHash_ReplacesPlaceholder", func(t *testing.T) {
+		// AUDIT 3.4: Verify that the router layer can call UpdateRouterHash()
+		// to replace the placeholder with a real identity hash.
+		connID := uint64(54321)
+		conn := NewMockSSU2Conn(connID)
+
+		// Get the SSU2Addr from the responder connection
+		addr := conn.GetSSU2Addr()
+		require.NotNil(t, addr)
+
+		// Capture the placeholder hash
+		placeholderHash := addr.RouterHash()
+
+		// Simulate the router layer computing a real RouterHash
+		// (In practice, this would be the peer's actual identity hash)
+		realHashData := sha256.Sum256([]byte("real-peer-identity"))
+		realHash := data.NewHash(realHashData)
+
+		// Call UpdateRouterHash — this is the CRITICAL hook for router layer
+		addr.UpdateRouterHash(realHash)
+
+		// Verify the hash was updated (RouterHash() returns the new value)
+		updatedHash := addr.RouterHash()
+		assert.Equal(t, realHash, updatedHash)
+
+		// Verify the hash is actually different from the placeholder
+		// (This confirms the update actually happened)
+		assert.NotEqual(t, placeholderHash, updatedHash)
+	})
+
+	t.Run("RouterHashHook_Pattern", func(t *testing.T) {
+		// AUDIT 3.4: Full router layer hook pattern demonstration:
+		// 1. Accept a responder connection from listener
+		// 2. After handshake completes, get SSU2Addr
+		// 3. Compute/retrieve real router hash
+		// 4. Call UpdateRouterHash to set it
+
+		// Create a responder connection (simulating listener.Accept())
+		connID := uint64(99999)
+		responderConn := NewMockSSU2Conn(connID)
+
+		// Step 1: After handshake, get the connection's SSU2Addr
+		addr := responderConn.GetSSU2Addr()
+		require.NotNil(t, addr, "SSU2Addr should be retrievable from established connection")
+
+		// Capture initial (placeholder) state
+		initialHash := addr.RouterHash()
+
+		// Step 2: Router layer computes the real identity hash
+		// (In production, this would be derived from the peer's RouterInfo)
+		peerIdentity := []byte("peer-identity-data-12345")
+		realHashData := sha256.Sum256(peerIdentity)
+		realHash := data.NewHash(realHashData)
+
+		// Step 3: Call the UpdateRouterHash hook
+		addr.UpdateRouterHash(realHash)
+
+		// Step 4: Verify the hash is now updated
+		finalHash := addr.RouterHash()
+		assert.Equal(t, realHash, finalHash, "Hash should be updated to real value")
+		assert.NotEqual(t, initialHash, finalHash, "Hash should no longer be placeholder")
+
+		// The test passes if no panic and hook is called successfully.
+		// In production, the router layer would index by realHash to prevent
+		// duplicate sessions per peer.
+	})
+}

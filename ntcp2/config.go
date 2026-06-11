@@ -134,6 +134,14 @@ type Config struct {
 	// Shared across all responder connections using this config (typically
 	// instantiated once per listener). Initiator connections ignore this field.
 	ReplayDetector ReplayDetector
+
+	// AllowReuseAddress, when true, enables SO_REUSEADDR socket option for
+	// ListenNTCP2. This reduces restart-race delay by allowing quick rebinding
+	// to the same address after shutdown. Use with caution in production as it
+	// can allow stale packets from previous incarnations to be delivered.
+	// Default: false (conservative, matches net.Listen behavior).
+	// AUDIT 7.3: Documented restart-race behavior.
+	AllowReuseAddress bool
 }
 
 // NewNTCP2Config creates a new NTCP2Config with sensible defaults.
@@ -293,6 +301,16 @@ func (nc *Config) WithStrictRouterInfoVerification(strict bool) *Config {
 // this field.
 func (nc *Config) WithReplayDetector(detector ReplayDetector) *Config {
 	nc.ReplayDetector = detector
+	return nc
+}
+
+// WithReuseAddress enables SO_REUSEADDR for ListenNTCP2 listener binding.
+// When enabled, the listener can quickly rebind to the same port after shutdown,
+// reducing restart-race delay. Default is false (conservative).
+// Use with caution: stale packets from previous socket instances may arrive.
+// AUDIT 7.3: Opt-in SO_REUSEADDR support for fast restart scenarios.
+func (nc *Config) WithReuseAddress(allow bool) *Config {
+	nc.AllowReuseAddress = allow
 	return nc
 }
 

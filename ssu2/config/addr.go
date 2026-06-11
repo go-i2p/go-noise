@@ -17,16 +17,25 @@ import (
 // It provides I2P-specific addressing information including router identity,
 // connection ID, and optional introducer support for NAT traversal.
 //
-// AUDIT 3.4 — Placeholder RouterHash Hook:
+// AUDIT 3.4 — Placeholder RouterHash for Responder Connections:
 // For responder connections (listener-accepted), the initial routerHash is a
 // placeholder derived from the peer's ephemeral key (SHA256 of ephemeral).
 // This is because at SessionRequest time, the responder cannot yet authenticate
 // the peer's static identity. The placeholder is sufficient for pre-establishment
 // routing/dedup (which keys on initiatorConnID + remoteAddr, not RouterHash).
-// After the handshake completes and the peer is authenticated, the router layer
-// MUST call UpdateRouterHash(realHash) to replace the placeholder with the
-// true identity hash. For initiator connections (dial path), the RouterHash is
-// supplied upfront via SSU2Config and is not a placeholder.
+//
+// **CRITICAL: After the handshake completes and the peer is authenticated, the
+// router layer MUST call UpdateRouterHash(realHash) to replace the placeholder
+// with the true identity hash.** This is accessed via SSU2Conn.GetSSU2Addr()
+// after the connection enters StateEstablished.
+//
+// Failure to update the hash may cause:
+// - Duplicate inbound sessions per peer if other dedup mechanisms key on RouterHash
+// - Incorrect peer identification in higher layers that cache or index sessions by RouterHash
+// - Stale session entries that never expire if keying on the placeholder hash
+//
+// For initiator connections (dial path), the RouterHash is supplied upfront via
+// SSU2Config and does not require updating; UpdateRouterHash should not be called.
 type SSU2Addr struct {
 	// underlying is the UDP network address
 	underlying net.Addr
@@ -134,19 +143,31 @@ func (sa *SSU2Addr) copyWithModifications(modify func(*SSU2Addr)) *SSU2Addr {
 }
 
 // UpdateRouterHash replaces the router hash with the given value.
-// This is the hook for the router layer to supply the real RouterHash for
-// responder connections (listener-accepted). For responders, the SSU2Addr is
-// created with a placeholder routerHash (SHA256 of ephemeral key). After the
-// handshake completes and the peer is authenticated, the router layer MUST call
-// UpdateRouterHash(realHash) to replace the placeholder with the true identity hash.
-// For initiator connections (dial path), UpdateRouterHash should not be called as
-// the RouterHash is supplied upfront via SSU2Config.
+// **This is the REQUIRED hook for the router layer to supply the real RouterHash
+// for responder connections (listener-accepted).**
 //
-// AUDIT 3.4 — Placeholder RouterHash:
-// Session dedup keys on (initiatorConnID, remoteAddr), not RouterHash, so the
-// placeholder is stable across retransmits and does not affect dedup correctness.
-// However, applications consuming RemoteAddr() after handshake establishment MUST
-// call this method to ensure accurate peer identification.
+// AUDIT 3.4 — Placeholder RouterHash Hook:
+// For responder connections, the SSU2Addr is initially created with a placeholder
+// routerHash (SHA256 of ephemeral key) because the responder cannot yet authenticate
+// the peer's identity from the SessionRequest alone. After the handshake completes
+// and the peer is authenticated (at StateEstablished), the router layer MUST call
+// UpdateRouterHash(realHash) to replace the placeholder with the true peer identity hash.
+//
+// **Access pattern:** After establishing a responder connection:
+//
+//	conn := listener.Accept() // or await connection from listener
+//	addr := conn.GetSSU2Addr()
+//	realHash := computeRouterHash(conn) // Your router layer computes real hash
+//	addr.UpdateRouterHash(realHash)
+//
+// **Why this matters:** Session dedup in go-noise keys on (initiatorConnID, remoteAddr),
+// so the placeholder does not affect go-noise's dedup correctness. However:
+// - Higher-level dedup systems may key on RouterHash
+// - Peer identification/caching may use RouterHash as a stable identifier
+// - Failure to update could cause duplicate sessions in router layer accounting
+//
+// For initiator connections (DialSSU2, DialSSU2WithConn), the RouterHash is supplied
+// upfront via SSU2Config and this method should NOT be called.
 func (sa *SSU2Addr) UpdateRouterHash(hash data.Hash) {
 	sa.routerHash = hash
 }

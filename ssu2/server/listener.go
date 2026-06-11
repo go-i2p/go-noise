@@ -467,12 +467,18 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 
 // buildConnConfig creates a connection-specific config from the listener config
 // and the incoming SessionRequest packet.
-// AUDIT 3.4 — Placeholder RouterHash:
-// The RouterHash is initially set to SHA256(ephemeralKey) as a placeholder because
-// the responder cannot yet verify the peer's identity from the SessionRequest alone.
-// This placeholder is sufficient for pre-establishment dedup (which keys on
-// initiatorConnID + remoteAddr) and is replaced by the router layer via
-// SSU2Addr.UpdateRouterHash(realHash) after handshake completion.
+//
+// AUDIT 3.4 — Placeholder RouterHash Hook:
+// For responder connections (listener-accepted), the RouterHash is initially set to
+// SHA256(ephemeralKey) as a placeholder because the responder cannot yet authenticate
+// the peer's static identity from the SessionRequest alone. This placeholder is
+// sufficient for pre-establishment dedup (which keys on initiatorConnID + remoteAddr,
+// not RouterHash) and does not break pre-handshake routing. However, the router layer
+// MUST call SSU2Addr.UpdateRouterHash(realHash) after handshake completion to replace
+// the placeholder with the true peer identity hash. Failure to update the hash may
+// cause duplicate inbound sessions if other dedup mechanisms (outside go-noise) key
+// on RouterHash. The hook is accessed via SSU2Conn.GetSSU2Addr() after the connection
+// is established. See SSU2Addr.UpdateRouterHash godoc for details.
 func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2Config {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "buildConnConfig", "conn_id": connID}).Debug("buildConnConfig: building connection config from session request")
 	var routerHash data.Hash

@@ -3,6 +3,7 @@ package ntcp2
 import (
 	"context"
 	"net"
+	"syscall"
 
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
@@ -74,6 +75,14 @@ func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, co
 // ListenNTCP2 creates a listener on the given address and wraps it with NTCP2Listener.
 // This is a convenience function that combines net.Listen and NewNTCP2Listener.
 // For more control over the underlying listener, use net.Listen followed by NewNTCP2Listener.
+//
+// RESTART-RACE BEHAVIOR (AUDIT 7.3):
+// By default, after shutdown the listener port enters TIME_WAIT state for ~30-60 seconds
+// (system-dependent), during which rebinding fails with "address already in use".
+// Enable config.AllowReuseAddress via WithReuseAddress(true) to reduce this delay by
+// setting SO_REUSEADDR, allowing quick rebinding after shutdown. Use with caution in
+// production: stale packets from the previous listener instance may be delivered to the
+// new listener during the overlap window.
 func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ListenNTCP2", "address": addr}).Debug("Creating NTCP2 listener")
 	if err := validateListenParams(network, addr, config); err != nil {
@@ -81,7 +90,24 @@ func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 	}
 
 	// Create the underlying TCP listener
-	listener, err := net.Listen(network, addr)
+	var listener net.Listener
+	var err error
+
+	// AUDIT 7.3: Use ListenConfig with SO_REUSEADDR if enabled in config
+	if config.AllowReuseAddress && (network == "tcp" || network == "tcp4" || network == "tcp6") {
+		lc := &net.ListenConfig{
+			Control: func(network, address string, c syscall.RawConn) error {
+				// AUDIT 7.3: Enable SO_REUSEADDR for fast restart
+				return c.Control(func(fd uintptr) {
+					_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				})
+			},
+		}
+		listener, err = lc.Listen(context.Background(), network, addr)
+	} else {
+		listener, err = net.Listen(network, addr)
+	}
+
 	if err != nil {
 		return nil, oops.
 			Code("LISTEN_FAILED").
