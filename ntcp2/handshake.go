@@ -60,7 +60,7 @@ const (
 // MixHash'd, and discarded per the NTCP2 spec §4.4.
 //
 // Handshake must not be called concurrently on the same connection.
-func (c *Conn) Handshake(ctx context.Context) error {
+func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	cfg := c.ntcp2Config.Load()
 	if cfg == nil {
 		return oops.
@@ -94,6 +94,7 @@ func (c *Conn) Handshake(ctx context.Context) error {
 		hsCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	var deadlineSet bool
 	if deadline, ok := hsCtx.Deadline(); ok {
 		// BUG-RC-2 / BUG-SM-2: if Accept() already set an authoritative deadline,
 		// use the EARLIER of the two so a caller delay between Accept and Handshake
@@ -108,11 +109,7 @@ func (c *Conn) Handshake(ctx context.Context) error {
 				In("ntcp2").
 				Wrapf(err, "failed to set handshake deadline on underlying connection")
 		}
-		// Clear the deadline once the handshake finishes (or fails) so
-		// subsequent data-phase I/O is not accidentally time-limited.
-		defer func() {
-			_ = raw.SetDeadline(time.Time{})
-		}()
+		deadlineSet = true
 	} else if !c.handshakeDeadline.IsZero() {
 		// No ctx deadline but Accept set one — honour it (BUG-RC-2 / BUG-SM-2).
 		if err := raw.SetDeadline(c.handshakeDeadline); err != nil {
@@ -122,8 +119,18 @@ func (c *Conn) Handshake(ctx context.Context) error {
 				In("ntcp2").
 				Wrapf(err, "failed to set handshake deadline on underlying connection")
 		}
+		deadlineSet = true
+	}
+	if deadlineSet {
+		// BUG-SM-1: clear the deadline only on success. On failure the caller
+		// should close the connection immediately, so lifting the deadline would
+		// leave a brief window with no deadline before Close(). Keying off
+		// retErr (named return) ensures the defer runs the clear only when the
+		// handshake completes without error.
 		defer func() {
-			_ = raw.SetDeadline(time.Time{})
+			if retErr == nil {
+				_ = raw.SetDeadline(time.Time{})
+			}
 		}()
 	}
 

@@ -363,16 +363,28 @@ func (nc *Conn) Rekey() error {
 //
 // If the peer static key is not available (handshake not completed) or the
 // remote address already has a non-zero router hash, this is a no-op.
-func (nc *Conn) PropagatePeerStaticKey() {
+// PropagatePeerStaticKey stores the peer's Noise static public key in the
+// remote address's router-hash field so the router transport layer can use
+// it for session deduplication. Returns an error when the key is not yet
+// available (handshake not complete) or the key length is unexpected.
+//
+// BUG-EH-4: previously returned nothing, making a no-op (key not yet
+// available) indistinguishable from success.
+func (nc *Conn) PropagatePeerStaticKey() error {
 	peerKey := nc.noiseConn.PeerStatic()
 	if len(peerKey) != RouterHashSize {
-		return
+		return oops.
+			Code("PEER_STATIC_KEY_UNAVAILABLE").
+			In("ntcp2").
+			With("got_length", len(peerKey)).
+			With("want_length", RouterHashSize).
+			Errorf("peer static key not yet available or has unexpected length")
 	}
 
 	// Only update if the current hash is all zeros (placeholder).
 	currentHash := nc.remoteAddr.RouterHash()
 	if !currentHash.IsZero() {
-		return
+		return nil
 	}
 
 	// AUDIT 5.3: Hash the peer static key with SHA-256 rather than copying
@@ -383,6 +395,7 @@ func (nc *Conn) PropagatePeerStaticKey() {
 	// to the I2P router-hash definition.
 	hash := data.HashData(peerKey)
 	nc.remoteAddr.SetRouterHash(hash)
+	return nil
 }
 
 // PeerStaticKey returns the remote peer's Noise static public key (32 bytes).

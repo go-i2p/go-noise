@@ -356,6 +356,8 @@ func (nl *Listener) AcceptWithHandshake(ctx context.Context) (ConnIface, error) 
 	}
 	// Propagate the peer's static key to the remote address so the router
 	// hash is available for session deduplication on inbound connections.
-	ntcp2Conn.PropagatePeerStaticKey()
+	if err := ntcp2Conn.PropagatePeerStaticKey(); err != nil {
+		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "Accept"}).WithError(err).Warn("peer static key not propagated after accept handshake")
+	}
 	return ntcp2Conn, nil
 }
