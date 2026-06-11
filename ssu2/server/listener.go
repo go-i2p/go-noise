@@ -105,6 +105,11 @@ type SSU2Listener struct {
 	// were swallowed with no signal. Accessed atomically.
 	routingErrors uint64
 
+	// readBufferFailed is set when the OS rejected the SetReadBuffer call in
+	// ListenSSU2. BUG-PB-2: making this observable via Stats() so monitoring
+	// can detect degraded-buffer conditions without polling debug logs.
+	readBufferFailed atomic.Bool
+
 	// Lifecycle management
 	closed       bool
 	closeMutex   sync.Mutex

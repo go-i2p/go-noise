@@ -114,6 +114,20 @@ func DialSSU2WithConn(packetConn net.PacketConn, remoteAddr *net.UDPAddr, config
 		return nil, err
 	}
 
+	// BUG-PB-1: validate the provided socket's local address against the same
+	// config constraints (reserved ports, loopback policy) that DialSSU2 applies
+	// to its explicitly-passed localAddr argument. Without this check a caller
+	// can pass an already-bound socket that would have been rejected by DialSSU2.
+	if localAddr, ok := packetConn.LocalAddr().(*net.UDPAddr); ok {
+		if err := validateDialLocalAddress(localAddr, config); err != nil {
+			return nil, oops.
+				Code("INVALID_LOCAL_ADDR").
+				In("ssu2_transport").
+				With("local_address", localAddr.String()).
+				Wrapf(err, "provided PacketConn local address failed validation")
+		}
+	}
+
 	// Create SSU2 connection wrapper using the shared socket
 	conn, err := createSSU2Connection(packetConn, remoteAddr, config)
 	if err != nil {
@@ -224,6 +238,17 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 			Wrapf(err, "failed to listen on UDP address")
 	}
 
+	// Create SSU2 listener wrapper
+	listener, err := NewSSU2Listener(packetConn, config)
+	if err != nil {
+		packetConn.Close()
+		return nil, oops.
+			Code("SSU2_LISTENER_FAILED").
+			In("ssu2_transport").
+			With("address", addr).
+			Wrapf(err, "failed to create SSU2 listener")
+	}
+
 	// AUDIT 7.2: Set UDP receive buffer to accommodate high-rate traffic.
 	// The default OS kernel UDP buffer (typically 212 KB on Linux) may be too
 	// small for router workloads. Without explicit buffer configuration, the
@@ -238,18 +263,9 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 			"address": addr,
 			"error":   err,
 		}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
-		// Don't fail the listener if SetReadBuffer fails - it's not critical
-	}
-
-	// Create SSU2 listener wrapper
-	listener, err := NewSSU2Listener(packetConn, config)
-	if err != nil {
-		packetConn.Close()
-		return nil, oops.
-			Code("SSU2_LISTENER_FAILED").
-			In("ssu2_transport").
-			With("address", addr).
-			Wrapf(err, "failed to create SSU2 listener")
+		// BUG-PB-2: record the failure in the listener so Stats() can expose it
+		// to monitoring without relying on log scraping.
+		listener.readBufferFailed.Store(true)
 	}
 
 	// Start packet routing

@@ -190,11 +190,17 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 }
 
 // Stats returns observability counters for the listener: the number of
-// packets dropped because the worker queue was full and the number of
-// packets that failed to route to a session (AUDIT 5.1, M-7).
+// packets dropped because the worker queue was full, the number of
+// packets that failed to route to a session (AUDIT 5.1, M-7), and
+// whether the OS read buffer could not be sized as requested (BUG-PB-2).
 func (l *SSU2Listener) Stats() map[string]uint64 {
+	readBufferFailed := uint64(0)
+	if l.readBufferFailed.Load() {
+		readBufferFailed = 1
+	}
 	return map[string]uint64{
-		"dropped_packets": atomic.LoadUint64(&l.droppedPackets),
-		"routing_errors":  atomic.LoadUint64(&l.routingErrors),
+		"dropped_packets":    atomic.LoadUint64(&l.droppedPackets),
+		"routing_errors":     atomic.LoadUint64(&l.routingErrors),
+		"read_buffer_failed": readBufferFailed,
 	}
 }
