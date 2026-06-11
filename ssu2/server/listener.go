@@ -1,6 +1,7 @@
 package server
 
 import (
+	"container/list"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -81,6 +82,11 @@ type SSU2Listener struct {
 	// droppedPackets counts packets silently discarded when packetQueue is full (M-7).
 	// Accessed atomically to avoid races between receiveLoop and stats readers.
 	droppedPackets uint64
+
+	// routingErrors counts packets that failed to route to a session and were
+	// not handled as a TokenRequest (AUDIT 5.1). Previously these failures
+	// were swallowed with no signal. Accessed atomically.
+	routingErrors uint64
 
 	// Lifecycle management
 	closed       bool
@@ -412,21 +418,65 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 
 // registerAndQueueConn registers the connection in the sessions map and
 // queues it for acceptance.
+//
+// AUDIT fixes:
+//   - 1.1: the connection ID uniqueness check in generateUniqueConnectionID
+//     releases its lock before this insert, so a concurrent worker could have
+//     claimed the same ID. The insert is now guarded by a re-check under the
+//     write lock, rejecting (and tearing down) a colliding session instead of
+//     silently overwriting and orphaning the previous one.
+//   - 8.2: the session map is capped at config.MaxSessions so a handshake
+//     flood cannot grow the map and per-session goroutines without bound.
+//   - 2.1/2.2: on every early-return path the session is removed from the map
+//     and torn down (no leaked goroutines), and a close hook is installed so a
+//     normal close later deregisters the session from both routing maps.
 func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU2Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "registerAndQueueConn", "conn_id": connID}).Debug("registerAndQueueConn: registering session and queuing for accept")
 	l.sessionMutex.Lock()
+	if _, exists := l.sessions[connID]; exists {
+		l.sessionMutex.Unlock()
+		_ = conn.CloseImmediate()
+		return nil, oops.
+			Code("DUPLICATE_CONNECTION_ID").
+			In("ssu2_listener").
+			With("connection_id", connID).
+			Errorf("connection ID already registered")
+	}
+	if l.config.MaxSessions > 0 && len(l.sessions) >= l.config.MaxSessions {
+		l.sessionMutex.Unlock()
+		_ = conn.CloseImmediate()
+		return nil, oops.
+			Code("MAX_SESSIONS_REACHED").
+			In("ssu2_listener").
+			With("max_sessions", l.config.MaxSessions).
+			Errorf("maximum session count reached, connection refused")
+	}
 	l.sessions[connID] = conn
 	l.sessionMutex.Unlock()
+
+	// AUDIT 2.2: deregister the session from both routing maps when it
+	// closes, so closed sessions do not accumulate forever.
+	conn.SetCloseHook(func() {
+		l.removeSession(connID)
+		l.router.RemoveSession(connID)
+	})
 
 	select {
 	case l.acceptQueue <- conn:
 		return conn, nil
 	case <-l.shutdownChan:
+		// AUDIT 2.1: do not leak the session/goroutines on shutdown.
+		l.removeSession(connID)
+		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("LISTENER_CLOSED").
 			In("ssu2_listener").
 			Errorf("listener closed during session creation")
 	default:
+		// AUDIT 2.1: accept queue full — remove from the map and tear the
+		// connection down so its reaper/replay goroutines do not leak.
+		l.removeSession(connID)
+		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("ACCEPT_QUEUE_FULL").
 			In("ssu2_listener").
@@ -640,21 +690,29 @@ const (
 
 // ipRateLimiter implements a simple per-IP rate limiter using a token bucket
 // approximation. Each IP is allowed a fixed number of requests per second.
+//
+// AUDIT 8.4: eviction uses an O(1) LRU (a doubly-linked list ordered from
+// least- to most-recently-seen) rather than an O(n) scan of the whole map.
+// Under a spoofed-source flood the old scan ran for every new IP while holding
+// the mutex, creating a throughput cliff. The list mirrors firstSightTracker.
 type ipRateLimiter struct {
-	entries map[string]*rateLimitEntry
-	rate    int // max requests per second
+	entries map[string]*list.Element // ip -> element holding *rateLimitEntry
+	order   *list.List               // front = LRU, back = MRU
+	rate    int                      // max requests per second
 	maxIPs  int
 	mutex   sync.Mutex
 }
 
 type rateLimitEntry struct {
+	ip        string
 	tokens    float64
 	lastCheck time.Time
 }
 
 func newIPRateLimiter(rate, maxIPs int) *ipRateLimiter {
 	return &ipRateLimiter{
-		entries: make(map[string]*rateLimitEntry),
+		entries: make(map[string]*list.Element),
+		order:   list.New(),
 		rate:    rate,
 		maxIPs:  maxIPs,
 	}
@@ -666,40 +724,39 @@ func (rl *ipRateLimiter) Allow(ip string) bool {
 	defer rl.mutex.Unlock()
 
 	now := time.Now()
-	entry, exists := rl.entries[ip]
-	if !exists {
-		if len(rl.entries) >= rl.maxIPs {
-			// Evict oldest entry
-			var oldestIP string
-			var oldestTime time.Time
-			for k, v := range rl.entries {
-				if oldestIP == "" || v.lastCheck.Before(oldestTime) {
-					oldestIP = k
-					oldestTime = v.lastCheck
-				}
-			}
-			delete(rl.entries, oldestIP)
+	if el, exists := rl.entries[ip]; exists {
+		entry := el.Value.(*rateLimitEntry)
+		// Refill tokens based on elapsed time
+		elapsed := now.Sub(entry.lastCheck).Seconds()
+		entry.tokens += elapsed * float64(rl.rate)
+		if entry.tokens > float64(rl.rate) {
+			entry.tokens = float64(rl.rate)
 		}
-		rl.entries[ip] = &rateLimitEntry{
-			tokens:    float64(rl.rate) - 1,
-			lastCheck: now,
+		entry.lastCheck = now
+		rl.order.MoveToBack(el) // mark most-recently-used
+
+		if entry.tokens >= 1 {
+			entry.tokens--
+			return true
 		}
-		return true
+		return false
 	}
 
-	// Refill tokens based on elapsed time
-	elapsed := now.Sub(entry.lastCheck).Seconds()
-	entry.tokens += elapsed * float64(rl.rate)
-	if entry.tokens > float64(rl.rate) {
-		entry.tokens = float64(rl.rate)
+	// New IP: evict the least-recently-used entry in O(1) if at capacity.
+	if rl.maxIPs > 0 && len(rl.entries) >= rl.maxIPs {
+		if front := rl.order.Front(); front != nil {
+			oldest := front.Value.(*rateLimitEntry)
+			delete(rl.entries, oldest.ip)
+			rl.order.Remove(front)
+		}
 	}
-	entry.lastCheck = now
-
-	if entry.tokens >= 1 {
-		entry.tokens--
-		return true
+	entry := &rateLimitEntry{
+		ip:        ip,
+		tokens:    float64(rl.rate) - 1,
+		lastCheck: now,
 	}
-	return false
+	rl.entries[ip] = rl.order.PushBack(entry)
+	return true
 }
 
 // GetDroppedPackets returns the number of packets dropped due to full packetQueue.

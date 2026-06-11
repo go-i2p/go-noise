@@ -13,6 +13,16 @@ func (h *SSU2Conn) Close() error {
 	return h.CloseWithReason(TerminationNormalClose, nil)
 }
 
+// CloseImmediate closes the connection without waiting the DestroyTimeout
+// Termination period. It is intended for sessions that are being abandoned
+// before they were ever established (e.g. when the accept queue is full or a
+// duplicate connection ID is detected), where waiting to drain a Termination
+// handshake is pointless and would block the caller (AUDIT 2.1).
+func (h *SSU2Conn) CloseImmediate() error {
+	h.destroySkip.Store(true)
+	return h.CloseWithReason(TerminationNormalClose, nil)
+}
+
 // CloseWithReason sends a Termination block with the given reason code
 // and optional additional data, then closes the connection.
 // Per spec §Termination, the data is: validDataPacketsReceived (8 bytes)
@@ -64,7 +74,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// half-open state on the remote side. Use a timer instead of
 		// time.Sleep so future callers could cancel via a context or
 		// additional signal channel.
-		if h.config.DestroyTimeout > 0 {
+		if h.config.DestroyTimeout > 0 && !h.destroySkip.Load() {
 			timeout := h.config.DestroyTimeout
 			const maxDestroyTimeout = 30 * time.Second
 			if timeout > maxDestroyTimeout {
@@ -118,6 +128,16 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		h.stateMutex.Lock()
 		h.state = StateClosed
 		h.stateMutex.Unlock()
+
+		// Deregister from any external routing maps (listener/router). Run
+		// after teardown so no inbound packet can be routed to a half-torn-down
+		// session (AUDIT 2.2).
+		h.closeHookMu.Lock()
+		hook := h.closeHook
+		h.closeHookMu.Unlock()
+		if hook != nil {
+			hook()
+		}
 	})
 
 	h.closeMutex.Lock()
@@ -258,6 +278,17 @@ func (h *SSU2Conn) SetDataHandlerCallbacks(cbs DataHandlerCallbacks) {
 // When false (shared socket scenarios), the PacketConn is left open.
 func (h *SSU2Conn) SetOwnsUnderlying(v bool) {
 	h.ownsUnderlying = v
+}
+
+// SetCloseHook registers a callback invoked once during CloseWithReason,
+// after the connection's goroutines are torn down. The listener uses this
+// to deregister the session from its routing maps when the connection
+// closes, preventing unbounded session accumulation (AUDIT 2.2). The hook
+// must not call CloseWithReason on this connection.
+func (h *SSU2Conn) SetCloseHook(hook func()) {
+	h.closeHookMu.Lock()
+	h.closeHook = hook
+	h.closeHookMu.Unlock()
 }
 
 // GetSSU2Addr returns the SSU2 address associated with this connection.

@@ -65,14 +65,21 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 		return n, nil
 	}
 
-	// Block until a message arrives, the connection closes, or the deadline expires
+	// Block until a message arrives, the connection closes, or the deadline expires.
+	// Use a stoppable timer (rather than time.After) so the timer is released
+	// promptly instead of lingering until it fires (AUDIT 4.4).
+	var deadlineCh <-chan time.Time
+	if timer := h.getReadDeadlineTimer(); timer != nil {
+		defer timer.Stop()
+		deadlineCh = timer.C
+	}
 	var msg []byte
 	select {
 	case msg = <-h.dataHandler.MessageChan():
 		// Message received
 	case <-h.closeChan:
 		return 0, oops.Errorf("connection closed")
-	case <-h.getReadDeadline():
+	case <-deadlineCh:
 		return 0, oops.Errorf("read deadline exceeded")
 	}
 
@@ -195,7 +202,14 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 	// Per spec §Connection Migration: packets from a new address require
 	// path validation before accepting the address change.
 	if addrChanged && h.pathValidator != nil {
-		_, _ = h.pathValidator.InitiatePathValidation(udpAddr)
+		if _, err := h.pathValidator.InitiatePathValidation(udpAddr); err != nil {
+			// Do not silently swallow: a failure to start validation means
+			// the address migration is not being verified (AUDIT 5.2).
+			log.WithFields(logger.Fields{
+				"pkg": "session", "func": "parseInboundPacket",
+				"new_addr": udpAddr.String(),
+			}).WithError(err).Warn("failed to initiate path validation for migrated address")
+		}
 	}
 
 	h.updateActivity()
@@ -293,9 +307,26 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 		if packet.PacketNumber > 0 {
 			h.ackHandler.RecordReceived(packet.PacketNumber)
 		}
+		// Handshake packets are scarce and progress the state machine; dropping
+		// one forces reliance on the (slow) retransmit schedule and inflates
+		// handshake latency. Briefly block to enqueue rather than dropping on a
+		// transiently-full queue, but bound the wait so a stalled handshake
+		// reader cannot pin this worker indefinitely (AUDIT 4.2).
 		select {
 		case h.recvQueue <- packet:
+		case <-h.closeChan:
 		default:
+			timer := time.NewTimer(handshakeEnqueueTimeout)
+			select {
+			case h.recvQueue <- packet:
+			case <-h.closeChan:
+			case <-timer.C:
+				log.WithFields(logger.Fields{
+					"pkg": "session", "func": "processInboundPacket",
+					"msg_type": packet.MessageType,
+				}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
+			}
+			timer.Stop()
 		}
 	}
 }
@@ -352,14 +383,17 @@ func (h *SSU2Conn) handlePeerNextNonce(newNonce uint64) error {
 	return nil
 }
 
-// getReadDeadline returns a channel that closes at read deadline.
-func (h *SSU2Conn) getReadDeadline() <-chan time.Time {
+// getReadDeadlineTimer returns a *time.Timer that fires at the read deadline,
+// or nil if no deadline is set. Callers MUST Stop() the returned timer when
+// done to release it promptly; a previous implementation used time.After,
+// which leaks an unstoppable timer on every Read until it fires (AUDIT 4.4).
+func (h *SSU2Conn) getReadDeadlineTimer() *time.Timer {
 	h.deadlineMutex.RLock()
 	defer h.deadlineMutex.RUnlock()
 	if h.readDeadline.IsZero() {
 		return nil
 	}
-	return time.After(time.Until(h.readDeadline))
+	return time.NewTimer(time.Until(h.readDeadline))
 }
 
 // MessageChan returns a receive-only channel of complete I2NP messages.

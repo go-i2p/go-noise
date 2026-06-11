@@ -150,7 +150,29 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 		// Routing failed, check if this is a token request
 		if packet.MessageType == MessageTypeTokenRequest {
 			_ = l.processTokenRequest(packet, remoteAddr)
+			return
 		}
-		// Otherwise ignore error
+		// AUDIT 5.1: previously all other routing failures were silently
+		// discarded, making session-creation failures and stray-packet
+		// floods invisible. Count them and log at debug so operators can
+		// surface the counter without log spam from late/duplicate packets.
+		atomic.AddUint64(&l.routingErrors, 1)
+		log.WithFields(logger.Fields{
+			"pkg":            "server",
+			"func":           "handleIncomingPacket",
+			"remote_addr":    remoteAddr.String(),
+			"message_type":   packet.MessageType,
+			"routing_errors": atomic.LoadUint64(&l.routingErrors),
+		}).WithError(err).Debug("packet routing failed")
+	}
+}
+
+// Stats returns observability counters for the listener: the number of
+// packets dropped because the worker queue was full and the number of
+// packets that failed to route to a session (AUDIT 5.1, M-7).
+func (l *SSU2Listener) Stats() map[string]uint64 {
+	return map[string]uint64{
+		"dropped_packets": atomic.LoadUint64(&l.droppedPackets),
+		"routing_errors":  atomic.LoadUint64(&l.routingErrors),
 	}
 }

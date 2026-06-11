@@ -169,6 +169,14 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 
 			// Register the new session
 			if err := pr.AddSession(newConn); err != nil {
+				// AUDIT 2.3: the newSessionHandler (listener) already
+				// registered and queued newConn before we got here. If we
+				// cannot add it to the router table we must tear it down so
+				// its map entry and per-session goroutines do not leak. The
+				// connection's close hook deregisters it from the listener
+				// and router maps. CloseImmediate avoids blocking this packet
+				// worker for the Termination wait.
+				_ = newConn.CloseImmediate()
 				return oops.Wrapf(err, "failed to register new session")
 			}
 

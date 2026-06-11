@@ -199,6 +199,14 @@ type SSU2Config struct {
 	// Default: 50000.
 	FirstSightMaxEntries int
 
+	// MaxSessions bounds the number of concurrently-registered inbound
+	// sessions a listener will hold. Once reached, new inbound handshakes
+	// are refused until existing sessions close. This caps the listener's
+	// session-map and per-session goroutine memory so a flood of handshake
+	// packets cannot exhaust resources (AUDIT 8.2). 0 means unlimited.
+	// Default: 65536.
+	MaxSessions int
+
 	// DestroyTimeout is the time to wait after sending a Termination block
 	// before releasing session resources. Per spec §Termination, this gives
 	// the remote peer time to receive and acknowledge the close.

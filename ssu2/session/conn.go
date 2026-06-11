@@ -56,6 +56,11 @@ const (
 	// expired pending packets.
 	retransmitInterval = 250 * time.Millisecond
 
+	// handshakeEnqueueTimeout bounds how long processInboundPacket will block
+	// trying to hand a handshake packet to the handshake reader when the
+	// recvQueue is transiently full, before dropping it (AUDIT 4.2).
+	handshakeEnqueueTimeout = 250 * time.Millisecond
+
 	// destroyTimeout is the default time to wait after sending a Termination
 	// block before releasing session resources. Per spec §Termination:
 	// "Wait for 11 seconds (the maximum RTO)" after sending a Termination
@@ -176,6 +181,21 @@ type SSU2Conn struct {
 	// the PacketConn. When false (e.g. DialSSU2WithConn or listener-accepted
 	// connections), the PacketConn is shared and must not be closed here.
 	ownsUnderlying bool
+
+	// closeHook, if set, is invoked once during CloseWithReason after the
+	// connection's goroutines have been torn down. The listener wires this
+	// to deregister the session from its routing maps so that closed
+	// sessions do not accumulate forever (AUDIT 2.2). It must not call back
+	// into CloseWithReason (which would deadlock on closeOnce).
+	closeHook   func()
+	closeHookMu sync.Mutex
+
+	// destroySkip, when set, causes CloseWithReason to skip the
+	// DestroyTimeout Termination-wait. Used by CloseImmediate for sessions
+	// that are being abandoned before they were ever established, so a
+	// cleanup close cannot block a packet worker for up to DestroyTimeout
+	// (AUDIT 2.1).
+	destroySkip atomic.Bool
 
 	// Background goroutines coordination
 	wg sync.WaitGroup

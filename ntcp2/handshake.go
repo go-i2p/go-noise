@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"io"
+	"sync"
 	"time"
 
 	noise "github.com/go-i2p/go-noise"
@@ -77,9 +78,20 @@ func (c *Conn) Handshake(ctx context.Context) error {
 	// indefinitely (the ctx was previously accepted but never used).
 	raw := nc.Underlying()
 	hsCtx := ctx
-	if cfg.HandshakeTimeout > 0 {
+	timeout := cfg.HandshakeTimeout
+	if timeout <= 0 {
+		// AUDIT 4.1: never allow an unbounded handshake. If no timeout is
+		// configured and the caller's context carries no deadline, fall back
+		// to the default so a peer that completes the TCP connect but stalls
+		// the Noise exchange cannot pin this goroutine (and, for serial
+		// AcceptWithHandshake callers, the whole accept loop) forever.
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			timeout = DefaultHandshakeTimeoutSeconds * time.Second
+		}
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		hsCtx, cancel = context.WithTimeout(ctx, cfg.HandshakeTimeout)
+		hsCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	if deadline, ok := hsCtx.Deadline(); ok {
@@ -342,6 +354,21 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 // containing Alice's RouterInfo (and any optional padding/options blocks
 // per the NTCP2 spec). The caller is responsible for parsing and storing
 // it for the router transport layer.
+// missingReplayWarnOnce ensures the "no replay detector" warning (AUDIT 5.3)
+// is emitted at most once per process rather than on every inbound handshake.
+var missingReplayWarnOnce sync.Once
+
+// warnMissingReplayDetector logs a one-time warning that the responder is
+// running without NTCP2 message-1 replay protection.
+func warnMissingReplayDetector() {
+	missingReplayWarnOnce.Do(func() {
+		log.WithFields(logger.Fields{
+			"pkg":  "ntcp2",
+			"func": "performResponderHandshake",
+		}).Warn("no ReplayDetector configured: NTCP2 message-1 replay protection is DISABLED; set one via WithReplayDetector")
+	})
+}
+
 func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
 	raw := nc.Underlying()
 
@@ -376,6 +403,13 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 				With("remote", raw.RemoteAddr().String()).
 				Errorf("replay detected: ephemeral key has been seen before within TTL window")
 		}
+	} else {
+		// AUDIT 5.3: replay protection is opt-in. A responder with no
+		// ReplayDetector silently accepts replayed message-1 ephemerals,
+		// contrary to the NTCP2 spec's requirement. Warn once so operators
+		// notice the missing protection rather than running unprotected
+		// without any signal.
+		warnMissingReplayDetector()
 	}
 
 	// Parse Alice's options to extract padLen (bytes 2-3) and m3p2Len (bytes 4-5).
