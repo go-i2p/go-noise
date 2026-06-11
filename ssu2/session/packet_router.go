@@ -89,6 +89,55 @@ func (pr *PacketRouter) AddSession(conn *SSU2Conn) error {
 	return nil
 }
 
+// AUDIT 8.3: AddSessionIfBelowCap atomically checks MaxSessions capacity and adds
+// the session under a single write lock. This prevents the race window between
+// the non-atomic check-and-act of SessionCount() vs AddSession() that allows
+// multiple workers to exceed MaxSessions simultaneously.
+func (pr *PacketRouter) AddSessionIfBelowCap(conn *SSU2Conn, maxSessions int) error {
+	log.WithFields(logger.Fields{"pkg": "session", "func": "AddSessionIfBelowCap"}).Debug("Adding session with capacity check")
+	if conn == nil {
+		return oops.
+			Code("INVALID_SESSION").
+			In("packet_router").
+			Errorf("connection cannot be nil")
+	}
+
+	if conn.ssu2Addr == nil {
+		return oops.
+			Code("INVALID_SESSION_ADDR").
+			In("packet_router").
+			Errorf("connection must have SSU2Addr")
+	}
+
+	connID := conn.ssu2Addr.ConnectionID()
+
+	pr.sessionMutex.Lock()
+	defer pr.sessionMutex.Unlock()
+
+	// AUDIT 8.3: Check MaxSessions under write lock to ensure atomicity.
+	// No concurrent worker can modify pr.sessions while we hold the write lock,
+	// so the check-then-add is atomic.
+	if maxSessions > 0 && len(pr.sessions) >= maxSessions {
+		return oops.
+			Code("MAX_SESSIONS_REACHED").
+			In("packet_router").
+			With("max_sessions", maxSessions).
+			With("current_sessions", len(pr.sessions)).
+			Errorf("session capacity exceeded")
+	}
+
+	if _, exists := pr.sessions[connID]; exists {
+		return oops.
+			Code("DUPLICATE_CONNECTION_ID").
+			In("packet_router").
+			With("connection_id", connID).
+			Errorf("connection ID already registered")
+	}
+
+	pr.sessions[connID] = conn
+	return nil
+}
+
 // RemoveSession unregisters a connection from the routing table.
 // This should be called when a connection closes.
 //

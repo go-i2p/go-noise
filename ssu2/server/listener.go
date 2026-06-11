@@ -553,14 +553,23 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 			Errorf("connection ID already registered")
 	}
 
-	// AUDIT 8.3: Check router session count instead of listener.sessions length
-	if l.config.MaxSessions > 0 && l.router.SessionCount() >= l.config.MaxSessions {
+	// AUDIT 8.2: Add independent cap on pendingByInitiator map size to prevent
+	// unbounded growth from retransmitted SessionRequests from many initiators.
+	// The map is populated when each new handshake starts and drained when it
+	// closes. With MaxSessions=1000, this cap should be at most 2*MaxSessions
+	// to allow some headroom for concurrent handshakes and draining.
+	l.sessionMutex.RLock()
+	pendingCount := len(l.pendingByInitiator)
+	l.sessionMutex.RUnlock()
+	maxPendingByInitiator := l.config.MaxSessions * 2
+	if maxPendingByInitiator > 0 && pendingCount >= maxPendingByInitiator {
 		_ = conn.CloseImmediate()
 		return nil, oops.
-			Code("MAX_SESSIONS_REACHED").
+			Code("PENDING_CAPACITY_EXCEEDED").
 			In("ssu2_listener").
-			With("max_sessions", l.config.MaxSessions).
-			Errorf("maximum session count reached, connection refused")
+			With("pending_count", pendingCount).
+			With("max_pending", maxPendingByInitiator).
+			Errorf("pending session capacity exceeded, connection refused")
 	}
 
 	// AUDIT 1.3: Install close hook BEFORE registering with router to prevent
@@ -575,8 +584,10 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 		l.sessionMutex.Unlock()
 	})
 
-	// AUDIT 8.3: Add to router (single source of truth for all sessions)
-	if err := l.router.AddSession(conn); err != nil {
+	// AUDIT 8.3: Use AddSessionIfBelowCap to atomically check MaxSessions and add
+	// the session under a single write lock, preventing concurrent workers from
+	// observing stale SessionCount() and exceeding the cap.
+	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
 		_ = conn.CloseImmediate()
 		return nil, oops.Wrapf(err, "failed to register session in router")
 	}

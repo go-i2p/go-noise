@@ -1,6 +1,23 @@
 // Package ssu2: path/relay/peertest re-exports from ssu2/path.
 // Implementations live in ssu2/path; this file provides
 // backward-compatible access from the flat ssu2 package.
+//
+// AUDIT 6.3: NAT Detection and Reachability State
+// ────────────────────────────────────────────────
+// All NAT detection, PeerTest management, and reachability state management
+// (PeerTestManager, TestResult, NATStatus) is delegated to the external
+// github.com/go-i2p/path package (pinned to v0.1.59999). This means:
+//
+//  1. Errors or panics in path validation code cannot be observed or
+//     instrumented from within go-noise.
+//  2. A bug in external path detection (e.g., false-positive FIREWALLED state)
+//     would be invisible at the go-noise layer.
+//  3. NAT state is the single source of truth from go-i2p/path; go-noise does not
+//     validate or override it.
+//
+// If you need to observe NAT state transitions or integrate custom reachability
+// logic, you must hook directly into go-i2p/path, not go-noise. This is by design
+// to keep the transport layer (go-noise) separate from the routing/path layer.
 package ssu2
 
 import path "github.com/go-i2p/path"
