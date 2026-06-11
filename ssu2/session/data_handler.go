@@ -46,6 +46,11 @@ type DataHandler struct {
 
 	// stopReaper signals the reaper goroutine to exit
 	stopReaper chan struct{}
+
+	// reaperWG tracks the reaper goroutine so Close() waits for it to exit.
+	// BUG-RL-4: previously the goroutine was untracked — CloseWithReason could
+	// return while the reaper still accessed DataHandler.fragments.
+	reaperWG sync.WaitGroup
 }
 
 // DataHandlerCallbacks defines optional callbacks for block types
@@ -174,7 +179,9 @@ func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 // incomplete fragment sets older than fragmentTimeout.
 func (h *DataHandler) StartReaper() {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "StartReaper", "fragmentTimeout": h.fragmentTimeout}).Debug("launching fragment cleanup goroutine")
+	h.reaperWG.Add(1)
 	go func() {
+		defer h.reaperWG.Done()
 		ticker := time.NewTicker(h.fragmentTimeout / 2)
 		defer ticker.Stop()
 		for {
@@ -188,7 +195,7 @@ func (h *DataHandler) StartReaper() {
 	}()
 }
 
-// Close stops the fragment reaper goroutine.
+// Close stops the fragment reaper goroutine and waits for it to exit.
 func (h *DataHandler) Close() {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "Close"}).Debug("stopping DataHandler reaper")
 	select {
@@ -196,6 +203,10 @@ func (h *DataHandler) Close() {
 	default:
 		close(h.stopReaper)
 	}
+	// BUG-RL-4: wait for the reaper goroutine to exit before returning so
+	// that CloseWithReason does not return while the goroutine still
+	// accesses DataHandler.fragments.
+	h.reaperWG.Wait()
 }
 
 // SetCallbacks sets the callback handlers for block types.

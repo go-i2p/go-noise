@@ -1,11 +1,13 @@
 package server
 
 import (
+	"errors"
 	"net"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/logger"
+	"github.com/samber/oops"
 )
 
 // incomingPacket holds a received packet and its source address for worker processing.
@@ -149,7 +151,20 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 	if err := l.router.RoutePacket(packet, remoteAddr); err != nil {
 		// Routing failed, check if this is a token request
 		if packet.MessageType == MessageTypeTokenRequest {
-			_ = l.processTokenRequest(packet, remoteAddr)
+			if err := l.processTokenRequest(packet, remoteAddr); err != nil {
+				// Gate rejections (NO_TOKEN_ISSUED) are already logged at Debug
+				// inside processTokenRequest — only surface genuine failures
+				// (WriteTo error, token generation failure) at WARN. BUG-RL-3.
+				var oopsErr oops.OopsError
+				if !errors.As(err, &oopsErr) || oopsErr.Code() != "NO_TOKEN_ISSUED" {
+					atomic.AddUint64(&l.routingErrors, 1)
+					log.WithFields(logger.Fields{
+						"pkg":         "server",
+						"func":        "handleIncomingPacket",
+						"remote_addr": remoteAddr.String(),
+					}).WithError(err).Warn("token request processing failed")
+				}
+			}
 			return
 		}
 		atomic.AddUint64(&l.routingErrors, 1)
