@@ -182,6 +182,18 @@ type SSU2Conn struct {
 	// connections), the PacketConn is shared and must not be closed here.
 	ownsUnderlying bool
 
+	// readsOwnSocket indicates whether this connection is responsible for reading
+	// from the underlying PacketConn. When true, the connection starts and owns
+	// recvLoop during Handshake(). When false (listener-accepted connections),
+	// the listener's receiveLoop reads the socket and feeds packets via RoutePacket
+	// to recvQueue, and recvLoop is not started.
+	// This is independent of ownsUnderlying: DialSSU2WithConn may have ownsUnderlying=false
+	// but readsOwnSocket=true (the dial caller is the sole reader and responsible
+	// for not co-locating a listener on the same socket).
+	// AUDIT 1.2: Gate recvLoop startup on this flag to prevent listener and
+	// responder from both reading the same shared socket.
+	readsOwnSocket bool
+
 	// closeHook, if set, is invoked once during CloseWithReason after the
 	// connection's goroutines have been torn down. The listener wires this
 	// to deregister the session from its routing maps so that closed
@@ -388,6 +400,7 @@ func assembleSSU2Conn(
 		recvQueue:            make(chan *SSU2Packet, 64),
 		pendingPackets:       make(map[uint32]*PendingPacket),
 		lastActivity:         time.Now(),
+		readsOwnSocket:       true, // AUDIT 1.2: default for dial paths; responders set to false
 	}
 
 	conn.pathValidator = NewPathValidator(conn)

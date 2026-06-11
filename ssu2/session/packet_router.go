@@ -180,6 +180,14 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 				return oops.Wrapf(err, "failed to register new session")
 			}
 
+			// AUDIT 1.2: Feed the triggering handshake packet to the newly created session.
+			// For listener-accepted responders, this is the entry point for the handshake
+			// reader. The listener's receiveLoop has captured this packet; after registration,
+			// the listener must feed it to the session via processInboundPacket so that
+			// receivePacketWithTimeout in the handshake can retrieve it from recvQueue.
+			// For initiators (unlikely path), this ensures the first msg-1 is not lost.
+			newConn.processInboundPacket(packet)
+
 			return nil
 		}
 

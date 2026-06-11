@@ -280,6 +280,16 @@ func (h *SSU2Conn) SetOwnsUnderlying(v bool) {
 	h.ownsUnderlying = v
 }
 
+// SetReadsOwnSocket marks whether this connection is responsible for reading
+// from the underlying PacketConn. When true (default for DialSSU2), the connection
+// starts recvLoop during Handshake() to read packets. When false (listener-accepted
+// connections), recvLoop is not started and packets are fed via RoutePacket from
+// the listener's receiveLoop into recvQueue.
+// AUDIT 1.2: Gate recvLoop startup to prevent multiple readers on the same socket.
+func (h *SSU2Conn) SetReadsOwnSocket(v bool) {
+	h.readsOwnSocket = v
+}
+
 // SetCloseHook registers a callback invoked once during CloseWithReason,
 // after the connection's goroutines are torn down. The listener uses this
 // to deregister the session from its routing maps when the connection

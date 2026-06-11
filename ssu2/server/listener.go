@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -37,9 +38,17 @@ type SSU2Listener struct {
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
 
-	// sessions maps connection ID to active SSU2Conn instances
-	sessions     map[uint64]*SSU2Conn
-	sessionMutex sync.RWMutex
+	// AUDIT 8.3: Removed listener.sessions — router is now single session owner.
+	// All session queries go through router via GetSession/SessionCount/RemoveSession.
+	// pendingByInitiator is the only listener-local session tracking (pre-establishment dedup only).
+
+	// pendingByInitiator maps (initiatorConnID, remoteAddr) to SSU2Conn to dedup
+	// retransmitted SessionRequests. This prevents creating duplicate sessions for
+	// handshake retransmits. Key format: hex(initiatorConnID)|IP:port
+	// Protected by sessionMutex. Bound by MaxSessions.
+	// AUDIT 8.1: dedup index keyed on initiator's source connID + source address
+	pendingByInitiator map[string]*SSU2Conn
+	sessionMutex       sync.RWMutex
 
 	// tokenCache validates retry tokens
 	tokenCache *TokenCache
@@ -140,7 +149,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		underlying:         underlying,
 		config:             config,
 		addr:               addr,
-		sessions:           make(map[uint64]*SSU2Conn),
+		pendingByInitiator: make(map[string]*SSU2Conn),
 		tokenCache:         newTokenCacheFromConfig(config),
 		sessionRateLimiter: newIPRateLimiter(sessionRequestsPerSecond, sessionRateLimiterMaxIPs),
 		firstSight:         newFirstSightTracker(config.FirstSightWindow, config.FirstSightMaxEntries),
@@ -272,6 +281,16 @@ func (l *SSU2Listener) GetAddr() string {
 	return l.addr.String()
 }
 
+// makeDedupKey creates a dedup index key from initiatorConnID and remoteAddr.
+// Format: hex(initiatorConnID)|IP:port
+// AUDIT 8.1: used to detect and deduplicate retransmitted SessionRequests.
+func makeDedupKey(initiatorConnID uint64, remoteAddr *net.UDPAddr) string {
+	if remoteAddr == nil {
+		return ""
+	}
+	return fmt.Sprintf("%016x|%s", initiatorConnID, remoteAddr.String())
+}
+
 // handleNewSession is called by the router when a handshake packet arrives
 // for a new session. It creates a new SSU2Conn and adds it to the accept queue.
 //
@@ -287,6 +306,30 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 
 	if err := l.handleSessionRequestToken(packet, remoteAddr); err != nil {
 		return nil, err
+	}
+
+	// AUDIT 8.1: Extract initiator connection ID early for dedup check.
+	// Per SSU2 spec, initiator's source connID is at header[16:24].
+	var initiatorConnID uint64
+	if len(packet.Header) >= 24 {
+		initiatorConnID = binary.BigEndian.Uint64(packet.Header[16:24])
+	}
+
+	// AUDIT 8.1: Check dedup index for existing session keyed on (initiatorConnID, remoteAddr).
+	// If a session already exists for this (initiator key, source address) pair,
+	// route the retransmit to it instead of creating a duplicate.
+	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
+	l.sessionMutex.RLock()
+	existingConn := l.pendingByInitiator[dedupKey]
+	l.sessionMutex.RUnlock()
+	if existingConn != nil {
+		log.WithFields(logger.Fields{
+			"pkg":         "server",
+			"func":        "handleNewSession",
+			"dedup_key":   dedupKey,
+			"remote_addr": remoteAddr.String(),
+		}).Debug("handleNewSession: routing retransmit to existing pending session")
+		return existingConn, nil
 	}
 
 	connID, err := l.generateUniqueConnectionID()
@@ -305,7 +348,15 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, oops.Wrapf(err, "failed to create SSU2 connection")
 	}
 
-	return l.registerAndQueueConn(conn, connID)
+	// AUDIT 1.2: Mark this listener-accepted responder session as not responsible for
+	// reading the socket. The listener's receiveLoop is the sole socket reader and will
+	// feed packets to this session via RoutePacket → processInboundPacket → recvQueue.
+	// This prevents two goroutines (listener and recvLoop) from concurrently reading
+	// the same shared socket, which violates the SSU2 multiplexing invariant.
+	conn.SetReadsOwnSocket(false)
+
+	// AUDIT 8.1: Pass dedup key to registerAndQueueConn
+	return l.registerAndQueueConn(conn, connID, remoteAddr, initiatorConnID)
 }
 
 // enforceRateLimit checks if the source IP has exceeded the SessionRequest rate.
@@ -368,6 +419,7 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 
 // generateUniqueConnectionID generates a connection ID and verifies uniqueness
 // among active sessions.
+// AUDIT 8.3: Checks router (single source of truth) instead of listener.sessions.
 func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "generateUniqueConnectionID"}).Debug("generateUniqueConnectionID: generating unique connection ID")
 	connID, err := GenerateConnectionID()
@@ -375,10 +427,7 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 		return 0, oops.Wrapf(err, "failed to generate connection ID")
 	}
 
-	l.sessionMutex.RLock()
-	_, exists := l.sessions[connID]
-	l.sessionMutex.RUnlock()
-	if !exists {
+	if l.router.GetSession(connID) == nil {
 		return connID, nil
 	}
 
@@ -387,10 +436,7 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 		return 0, oops.Wrapf(err, "failed to regenerate connection ID")
 	}
 
-	l.sessionMutex.RLock()
-	_, exists = l.sessions[connID]
-	l.sessionMutex.RUnlock()
-	if exists {
+	if l.router.GetSession(connID) != nil {
 		return 0, oops.Errorf("connection ID collision after regeneration (%d)", connID)
 	}
 	return connID, nil
@@ -430,11 +476,15 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 //   - 2.1/2.2: on every early-return path the session is removed from the map
 //     and torn down (no leaked goroutines), and a close hook is installed so a
 //     normal close later deregisters the session from both routing maps.
-func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU2Conn, error) {
+//   - 8.1: pendingByInitiator dedup index is added for retransmit dedup.
+func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "registerAndQueueConn", "conn_id": connID}).Debug("registerAndQueueConn: registering session and queuing for accept")
-	l.sessionMutex.Lock()
-	if _, exists := l.sessions[connID]; exists {
-		l.sessionMutex.Unlock()
+
+	// AUDIT 8.1: Create dedup key for retransmit detection
+	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
+
+	// AUDIT 8.3: Check router for duplicate connection ID instead of listener.sessions
+	if l.router.GetSession(connID) != nil {
 		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("DUPLICATE_CONNECTION_ID").
@@ -442,8 +492,9 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU
 			With("connection_id", connID).
 			Errorf("connection ID already registered")
 	}
-	if l.config.MaxSessions > 0 && len(l.sessions) >= l.config.MaxSessions {
-		l.sessionMutex.Unlock()
+
+	// AUDIT 8.3: Check router session count instead of listener.sessions length
+	if l.config.MaxSessions > 0 && l.router.SessionCount() >= l.config.MaxSessions {
 		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("MAX_SESSIONS_REACHED").
@@ -451,14 +502,28 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU
 			With("max_sessions", l.config.MaxSessions).
 			Errorf("maximum session count reached, connection refused")
 	}
-	l.sessions[connID] = conn
+
+	// AUDIT 8.3: Add to router (single source of truth for all sessions)
+	if err := l.router.AddSession(conn); err != nil {
+		_ = conn.CloseImmediate()
+		return nil, oops.Wrapf(err, "failed to register session in router")
+	}
+
+	// AUDIT 8.1: Add session to pending dedup index
+	l.sessionMutex.Lock()
+	l.pendingByInitiator[dedupKey] = conn
 	l.sessionMutex.Unlock()
 
 	// AUDIT 2.2: deregister the session from both routing maps when it
 	// closes, so closed sessions do not accumulate forever.
+	// AUDIT 8.1: Also deregister from pendingByInitiator when session closes.
+	// AUDIT 8.3: Now only remove from router (single source of truth for sessions).
 	conn.SetCloseHook(func() {
-		l.removeSession(connID)
 		l.router.RemoveSession(connID)
+		// AUDIT 8.1: Remove from pending dedup index
+		l.sessionMutex.Lock()
+		delete(l.pendingByInitiator, dedupKey)
+		l.sessionMutex.Unlock()
 	})
 
 	select {
@@ -466,7 +531,8 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU
 		return conn, nil
 	case <-l.shutdownChan:
 		// AUDIT 2.1: do not leak the session/goroutines on shutdown.
-		l.removeSession(connID)
+		// AUDIT 8.3: Remove from router (single source of truth)
+		l.router.RemoveSession(connID)
 		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("LISTENER_CLOSED").
@@ -475,7 +541,8 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64) (*SSU
 	default:
 		// AUDIT 2.1: accept queue full — remove from the map and tear the
 		// connection down so its reaper/replay goroutines do not leak.
-		l.removeSession(connID)
+		// AUDIT 8.3: Remove from router (single source of truth)
+		l.router.RemoveSession(connID)
 		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("ACCEPT_QUEUE_FULL").
@@ -606,35 +673,25 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	return l.sendRetry(remoteAddr, token, packet.Header, incomingSize)
 }
 
-// removeSession removes a session from the listener's session map.
-// This should be called when a connection closes.
-func (l *SSU2Listener) removeSession(connID uint64) {
-	l.sessionMutex.Lock()
-	defer l.sessionMutex.Unlock()
-
-	delete(l.sessions, connID)
-}
-
 // SessionCount returns the current number of active sessions.
-// Useful for monitoring and debugging.
+// AUDIT 8.3: Queries router (single source of truth) instead of local listener.sessions.
 func (l *SSU2Listener) SessionCount() int {
-	l.sessionMutex.RLock()
-	defer l.sessionMutex.RUnlock()
-
-	return len(l.sessions)
+	return l.router.SessionCount()
 }
 
 // AddSession registers an SSU2Conn under the given connection ID.
 // This is primarily useful for testing and for reconnection scenarios.
+// AUDIT 8.3: Delegates to router (single source of truth).
 func (l *SSU2Listener) AddSession(connID uint64, conn *SSU2Conn) {
-	l.sessionMutex.Lock()
-	l.sessions[connID] = conn
-	l.sessionMutex.Unlock()
+	// Note: AddSession can fail if connID already exists, but we ignore
+	// the error here for backward compatibility with test code.
+	_ = l.router.AddSession(conn)
 }
 
 // RemoveSession deregisters the session with the given connection ID.
+// AUDIT 8.3: Delegates to router (single source of truth).
 func (l *SSU2Listener) RemoveSession(connID uint64) {
-	l.removeSession(connID)
+	l.router.RemoveSession(connID)
 }
 
 // Underlying returns the PacketConn used by this listener.

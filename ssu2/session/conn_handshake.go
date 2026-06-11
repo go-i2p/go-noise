@@ -39,11 +39,19 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	h.state = StateHandshaking
 	h.stateMutex.Unlock()
 
-	// Start recvLoop (needed during handshake for receivePacketWithTimeout).
+	// Start recvLoop (needed during handshake for receivePacketWithTimeout),
+	// but only if this connection is responsible for reading the socket.
+	// For listener-accepted responder sessions (readsOwnSocket=false), the listener's
+	// receiveLoop is the sole socket reader and feeds packets via RoutePacket →
+	// processInboundPacket → recvQueue. Starting recvLoop here would cause two
+	// goroutines reading the same socket, violating the SSU2 concurrent-reader
+	// multiplexing invariant (AUDIT 1.2).
 	// Started here rather than in the constructor so that callers who create
 	// a conn but never call Handshake or Close don't leak a goroutine.
-	h.wg.Add(1)
-	go h.recvLoop()
+	if h.readsOwnSocket {
+		h.wg.Add(1)
+		go h.recvLoop()
+	}
 
 	// Ensure recvLoop is cleaned up if handshake fails. The CloseWithReason
 	// call is idempotent (via closeOnce), so it's safe to call again later.

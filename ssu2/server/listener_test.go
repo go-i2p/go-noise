@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"net"
 	"sync"
 	"testing"
@@ -183,19 +184,20 @@ func TestSSU2Listener_SessionCount(t *testing.T) {
 	conn1 := NewMockSSU2Conn(connID1)
 	conn2 := NewMockSSU2Conn(connID2)
 
-	listener.sessionMutex.Lock()
-	listener.sessions[connID1] = conn1
-	listener.sessions[connID2] = conn2
-	listener.sessionMutex.Unlock()
+	// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+	listener.AddSession(connID1, conn1)
+	listener.AddSession(connID2, conn2)
 
 	assert.Equal(t, 2, listener.SessionCount())
 
 	// Remove one
-	listener.removeSession(connID1)
+	// AUDIT 8.3: Use listener.RemoveSession (delegates to router) instead of internal method
+	listener.RemoveSession(connID1)
 	assert.Equal(t, 1, listener.SessionCount())
 
 	// Remove the other
-	listener.removeSession(connID2)
+	// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+	listener.RemoveSession(connID2)
 	assert.Equal(t, 0, listener.SessionCount())
 }
 
@@ -208,19 +210,20 @@ func TestSSU2Listener_RemoveSession(t *testing.T) {
 	conn := NewMockSSU2Conn(connID)
 
 	// Add session
-	listener.sessionMutex.Lock()
-	listener.sessions[connID] = conn
-	listener.sessionMutex.Unlock()
+	// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+	listener.AddSession(connID, conn)
 
 	assert.Equal(t, 1, listener.SessionCount())
 
 	// Remove session
-	listener.removeSession(connID)
+	// AUDIT 8.3: Use listener.RemoveSession (delegates to router) instead of internal method
+	listener.RemoveSession(connID)
 
 	assert.Equal(t, 0, listener.SessionCount())
 
 	// Removing non-existent session should not panic
-	listener.removeSession(99999)
+	// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+	listener.RemoveSession(99999)
 	assert.Equal(t, 0, listener.SessionCount())
 }
 
@@ -333,9 +336,8 @@ func TestSSU2Listener_Concurrent(t *testing.T) {
 
 			connID := uint64(id + 1000)
 			conn := NewMockSSU2Conn(connID)
-			listener.sessionMutex.Lock()
-			listener.sessions[connID] = conn
-			listener.sessionMutex.Unlock()
+			// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+			listener.AddSession(connID, conn)
 
 			// Small delay
 			time.Sleep(1 * time.Millisecond)
@@ -344,7 +346,8 @@ func TestSSU2Listener_Concurrent(t *testing.T) {
 			_ = listener.SessionCount()
 
 			// Remove session
-			listener.removeSession(connID)
+			// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+			listener.RemoveSession(connID)
 		}(i)
 	}
 
@@ -648,5 +651,148 @@ func TestListenerRouterHash(t *testing.T) {
 
 		// Without an ephemeral key, falls back to zero hash
 		assert.True(t, conn.GetSSU2Addr().RouterHash().IsZero())
+	})
+}
+
+// TestRetransmittedSessionRequestDedup verifies that retransmitted SessionRequests
+// (same initiator connection ID and source address) are deduplicated and route
+// to the existing session instead of creating a duplicate.
+// AUDIT 8.1: Duplicate session per retransmitted SessionRequest
+func TestRetransmittedSessionRequestDedup(t *testing.T) {
+	t.Run("deduplicates identical retransmits", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		// Create a SessionRequest packet with a specific initiator connection ID
+		initiatorConnID := uint64(0x1122334455667788)
+		ephemeralKey := make([]byte, 32)
+		for i := range ephemeralKey {
+			ephemeralKey[i] = byte(i + 1)
+		}
+
+		// Build header with initiator connection ID at offset 16-24
+		header := make([]byte, 32)
+		binary.BigEndian.PutUint64(header[16:24], initiatorConnID)
+		header[13] = 2 // Version
+		header[14] = 2 // NetworkID
+
+		packet := &SSU2Packet{
+			Header:       header,
+			EphemeralKey: ephemeralKey,
+			Payload:      nil,
+			MAC:          make([]byte, 16),
+			MessageType:  MessageTypeSessionRequest,
+			PacketNumber: 0,
+		}
+
+		remoteAddr := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 100), Port: 12345}
+
+		// First SessionRequest creates a new session
+		conn1, err := listener.handleNewSession(remoteAddr, packet)
+		require.NoError(t, err)
+		require.NotNil(t, conn1)
+		conn1ID := conn1.GetSSU2Addr().ConnectionID()
+
+		// Verify the session is in the listener
+		assert.Equal(t, 1, listener.SessionCount())
+
+		// Second identical retransmit should return the same session
+		conn2, err := listener.handleNewSession(remoteAddr, packet)
+		require.NoError(t, err)
+		require.NotNil(t, conn2)
+
+		// Should be the same session
+		assert.Equal(t, conn1ID, conn2.GetSSU2Addr().ConnectionID())
+		assert.Equal(t, 1, listener.SessionCount(), "session count should still be 1 (no duplicate created)")
+
+		// Third retransmit should also return the same session
+		conn3, err := listener.handleNewSession(remoteAddr, packet)
+		require.NoError(t, err)
+		require.NotNil(t, conn3)
+		assert.Equal(t, conn1ID, conn3.GetSSU2Addr().ConnectionID())
+		assert.Equal(t, 1, listener.SessionCount())
+	})
+
+	t.Run("different initiator IDs create separate sessions", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		remoteAddr := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 100), Port: 12345}
+		ephemeralKey := make([]byte, 32)
+		for i := range ephemeralKey {
+			ephemeralKey[i] = byte(i + 1)
+		}
+
+		// First packet with initiator conn ID = 0x1111111111111111
+		packet1 := &SSU2Packet{
+			MessageType:  MessageTypeSessionRequest,
+			Header:       make([]byte, 32),
+			EphemeralKey: ephemeralKey,
+			Payload:      nil,
+			MAC:          make([]byte, 16),
+		}
+		binary.BigEndian.PutUint64(packet1.Header[16:24], 0x1111111111111111)
+
+		conn1, err := listener.handleNewSession(remoteAddr, packet1)
+		require.NoError(t, err)
+		assert.Equal(t, 1, listener.SessionCount())
+
+		// Second packet with different initiator conn ID = 0x2222222222222222
+		packet2 := &SSU2Packet{
+			MessageType:  MessageTypeSessionRequest,
+			Header:       make([]byte, 32),
+			EphemeralKey: ephemeralKey,
+			Payload:      nil,
+			MAC:          make([]byte, 16),
+		}
+		binary.BigEndian.PutUint64(packet2.Header[16:24], 0x2222222222222222)
+
+		conn2, err := listener.handleNewSession(remoteAddr, packet2)
+		require.NoError(t, err)
+
+		// Should have two different sessions
+		assert.NotEqual(t, conn1.GetSSU2Addr().ConnectionID(), conn2.GetSSU2Addr().ConnectionID())
+		assert.Equal(t, 2, listener.SessionCount())
+	})
+
+	t.Run("different remote addresses create separate sessions", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		initiatorConnID := uint64(0x3333333333333333)
+		ephemeralKey := make([]byte, 32)
+		for i := range ephemeralKey {
+			ephemeralKey[i] = byte(i + 1)
+		}
+
+		packet := &SSU2Packet{
+			MessageType:  MessageTypeSessionRequest,
+			Header:       make([]byte, 32),
+			EphemeralKey: ephemeralKey,
+			Payload:      nil,
+			MAC:          make([]byte, 16),
+		}
+		binary.BigEndian.PutUint64(packet.Header[16:24], initiatorConnID)
+
+		// First request from address 1
+		addr1 := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 100), Port: 12345}
+		conn1, err := listener.handleNewSession(addr1, packet)
+		require.NoError(t, err)
+		assert.Equal(t, 1, listener.SessionCount())
+
+		// Second request from same initiator ID but different address
+		addr2 := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 101), Port: 12346}
+		conn2, err := listener.handleNewSession(addr2, packet)
+		require.NoError(t, err)
+
+		// Should have two different sessions
+		assert.NotEqual(t, conn1.GetSSU2Addr().ConnectionID(), conn2.GetSSU2Addr().ConnectionID())
+		assert.Equal(t, 2, listener.SessionCount())
+
+		// Retransmit from addr1 should return the first session
+		conn3, err := listener.handleNewSession(addr1, packet)
+		require.NoError(t, err)
+		assert.Equal(t, conn1.GetSSU2Addr().ConnectionID(), conn3.GetSSU2Addr().ConnectionID())
+		assert.Equal(t, 2, listener.SessionCount())
 	})
 }
