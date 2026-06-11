@@ -335,9 +335,21 @@ func (h *SSU2Conn) SetReadsOwnSocket(v bool) {
 // to deregister the session from its routing maps when the connection
 // closes, preventing unbounded session accumulation (AUDIT 2.2). The hook
 // must not call CloseWithReason on this connection.
+//
+// BUG-SA-3: This method chains hooks rather than replacing them, so multiple
+// callers (e.g. the listener and an external router layer) can each register
+// their own hook without overwriting each other.
 func (h *SSU2Conn) SetCloseHook(hook func()) {
 	h.closeHookMu.Lock()
-	h.closeHook = hook
+	prev := h.closeHook
+	if prev == nil {
+		h.closeHook = hook
+	} else {
+		h.closeHook = func() {
+			prev()
+			hook()
+		}
+	}
 	h.closeHookMu.Unlock()
 }
 

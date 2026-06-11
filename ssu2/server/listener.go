@@ -376,6 +376,20 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return existingConn, nil
 	}
 
+	// BUG-SA-1: Pre-check capacity before allocating an SSU2Conn. Without this,
+	// concurrent workers near the cap each create a full conn object only to have
+	// AddSessionIfBelowCap (inside registerAndQueueConn) tear it down with a
+	// routing error. There is still a narrow TOCTOU between this check and the
+	// authoritative check inside AddSessionIfBelowCap (they hold separate locks),
+	// but this eliminates the vast majority of spurious allocations.
+	if l.config.MaxSessions > 0 && l.router.SessionCount() >= l.config.MaxSessions {
+		return nil, oops.
+			Code("SESSION_CAPACITY_EXCEEDED").
+			In("ssu2_listener").
+			With("max_sessions", l.config.MaxSessions).
+			Errorf("session capacity exceeded, dropping SessionRequest")
+	}
+
 	connID, err := l.generateUniqueConnectionID()
 	if err != nil {
 		return nil, err
@@ -550,15 +564,11 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	// AUDIT 8.1: Create dedup key for retransmit detection
 	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
 
-	// AUDIT 8.3: Check router for duplicate connection ID instead of listener.sessions
-	if l.router.GetSession(connID) != nil {
-		_ = conn.CloseImmediate()
-		return nil, oops.
-			Code("DUPLICATE_CONNECTION_ID").
-			In("ssu2_listener").
-			With("connection_id", connID).
-			Errorf("connection ID already registered")
-	}
+	// BUG-SA-1: The unsynchronized GetSession check that previously appeared here was
+	// racy (no lock) and redundant — AddSessionIfBelowCap (below, under
+	// sessionMutex) already performs the authoritative DUPLICATE_CONNECTION_ID check
+	// atomically. Removing the racy pre-check here; the authoritative guard is inside
+	// the lock-protected block.
 
 	// AUDIT 8.2: Add independent cap on pendingByInitiator map size to prevent
 	// unbounded growth from retransmitted SessionRequests from many initiators.
