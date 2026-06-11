@@ -224,6 +224,23 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 			Wrapf(err, "failed to listen on UDP address")
 	}
 
+	// AUDIT 7.2: Set UDP receive buffer to accommodate high-rate traffic.
+	// The default OS kernel UDP buffer (typically 212 KB on Linux) may be too
+	// small for router workloads. Without explicit buffer configuration, the
+	// kernel silently drops inbound datagrams before they reach ReadFrom,
+	// contributing to the droppedPackets counter and reducing throughput.
+	// Set buffer to a larger value (e.g., 8 MB) to improve packet handling
+	// under burst traffic and flood conditions.
+	if err := packetConn.SetReadBuffer(8 * 1024 * 1024); err != nil {
+		log.WithFields(logger.Fields{
+			"pkg":     "server",
+			"func":    "ListenSSU2",
+			"address": addr,
+			"error":   err,
+		}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
+		// Don't fail the listener if SetReadBuffer fails - it's not critical
+	}
+
 	// Create SSU2 listener wrapper
 	listener, err := NewSSU2Listener(packetConn, config)
 	if err != nil {

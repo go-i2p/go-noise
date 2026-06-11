@@ -457,26 +457,37 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 // generateUniqueConnectionID generates a connection ID and verifies uniqueness
 // among active sessions.
 // AUDIT 8.3: Checks router (single source of truth) instead of listener.sessions.
+// AUDIT 8.1: Retry loop to increase probability of finding a unique ID despite
+// concurrent workers also generating and checking IDs.
 func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "generateUniqueConnectionID"}).Debug("generateUniqueConnectionID: generating unique connection ID")
-	connID, err := GenerateConnectionID()
-	if err != nil {
-		return 0, oops.Wrapf(err, "failed to generate connection ID")
+
+	// AUDIT 8.1: Retry up to 5 times to find a unique connection ID.
+	// With a 64-bit random space, collisions are extremely rare. Even if two
+	// workers race to generate IDs, multiple retries increase the probability
+	// that at least one attempt succeeds before another worker can claim it.
+	const maxRetries = 5
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		connID, err := GenerateConnectionID()
+		if err != nil {
+			return 0, oops.Wrapf(err, "failed to generate connection ID")
+		}
+
+		if l.router.GetSession(connID) == nil {
+			return connID, nil
+		}
+
+		if attempt < maxRetries-1 {
+			log.WithFields(logger.Fields{
+				"pkg":         "server",
+				"func":        "generateUniqueConnectionID",
+				"attempt":     attempt + 1,
+				"max_retries": maxRetries,
+			}).Debug("connection ID collision, retrying")
+		}
 	}
 
-	if l.router.GetSession(connID) == nil {
-		return connID, nil
-	}
-
-	connID, err = GenerateConnectionID()
-	if err != nil {
-		return 0, oops.Wrapf(err, "failed to regenerate connection ID")
-	}
-
-	if l.router.GetSession(connID) != nil {
-		return 0, oops.Errorf("connection ID collision after regeneration (%d)", connID)
-	}
-	return connID, nil
+	return 0, oops.Errorf("failed to generate unique connection ID after %d attempts", maxRetries)
 }
 
 // buildConnConfig creates a connection-specific config from the listener config
