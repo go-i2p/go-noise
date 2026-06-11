@@ -120,6 +120,11 @@ type SSU2Conn struct {
 	closeErr   error
 	closeMutex sync.Mutex
 
+	// forceDestroy is closed by listener.Close() during parallel teardown to
+	// cancel the DestroyTimeout wait in CloseWithReason, preventing serial
+	// blocking when the listener shuts down multiple sessions. AUDIT 3.2.
+	forceDestroy chan struct{}
+
 	// Cipher states for transport phase (after handshake)
 	sendCipher  *noise.CipherState
 	recvCipher  *noise.CipherState
@@ -395,6 +400,7 @@ func assembleSSU2Conn(
 		recvWindow:           NewReceiveWindow(0, config.ReceiveWindowSize),
 		state:                StateInit,
 		closeChan:            make(chan struct{}),
+		forceDestroy:         make(chan struct{}),
 		closedMessageChan:    closedChan,
 		sendQueue:            make(chan *SSU2Packet, 64),
 		recvQueue:            make(chan *SSU2Packet, 64),
@@ -454,7 +460,21 @@ func NewMockSSU2Conn(connID uint64) *SSU2Conn {
 		ssu2Addr:          NewMockSSU2Addr(connID),
 		state:             StateEstablished,
 		closeChan:         make(chan struct{}),
+		forceDestroy:      make(chan struct{}),
 		closedMessageChan: closedChan,
+	}
+}
+
+// TriggerForceDestroy closes the forceDestroy channel to signal cancellation
+// of the DestroyTimeout wait in CloseWithReason. Used by listener.Close()
+// during parallel teardown to avoid serial blocking (AUDIT 3.2).
+// Safe to call multiple times (idempotent via select/default pattern).
+func (h *SSU2Conn) TriggerForceDestroy() {
+	select {
+	case <-h.forceDestroy:
+		// Already closed
+	default:
+		close(h.forceDestroy)
 	}
 }
 

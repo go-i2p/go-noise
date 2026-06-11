@@ -74,6 +74,8 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// half-open state on the remote side. Use a timer instead of
 		// time.Sleep so future callers could cancel via a context or
 		// additional signal channel.
+		// AUDIT 3.2: Also listen on forceDestroy channel so listener.Close()
+		// can cancel all pending destroys in parallel rather than serially.
 		if h.config.DestroyTimeout > 0 && !h.destroySkip.Load() {
 			timeout := h.config.DestroyTimeout
 			const maxDestroyTimeout = 30 * time.Second
@@ -81,8 +83,16 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 				timeout = maxDestroyTimeout
 			}
 			timer := time.NewTimer(timeout)
-			<-timer.C
-			timer.Stop()
+			select {
+			case <-timer.C:
+				// Timeout expired, proceed with teardown
+			case <-h.closeChan:
+				// Connection already closing via normal path
+				timer.Stop()
+			case <-h.forceDestroy:
+				// AUDIT 3.2: Listener is shutting down, cancel wait
+				timer.Stop()
+			}
 		}
 
 		// Stop keepalive timer

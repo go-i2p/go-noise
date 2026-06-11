@@ -246,6 +246,19 @@ func (l *SSU2Listener) Close() error {
 	l.closed = true
 	close(l.shutdownChan)
 
+	// AUDIT 3.2: Cancel all pending DestroyTimeout waits in parallel by closing
+	// their forceDestroy channels. This prevents serial blocking when the listener
+	// has multiple in-flight CloseWithReason calls waiting for the full timeout.
+	sessions := l.router.GetAllSessions()
+	for _, conn := range sessions {
+		// Trigger forceDestroy channel closure to signal cancellation of the
+		// DestroyTimeout wait. Use a goroutine per session to avoid blocking
+		// on individual channel operations.
+		go func(c *SSU2Conn) {
+			c.TriggerForceDestroy()
+		}(conn)
+	}
+
 	// M-2: Close the underlying connection first to unblock ReadFrom
 	// in receiveLoop, rather than relying on deadline-based polling.
 	closeErr := l.underlying.Close()

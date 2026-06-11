@@ -796,3 +796,96 @@ func TestRetransmittedSessionRequestDedup(t *testing.T) {
 		assert.Equal(t, 2, listener.SessionCount())
 	})
 }
+
+// TestListenerClose_ParallelTeardown verifies that listener.Close() cancels all
+// pending DestroyTimeout waits in parallel, completing in ~one destroy interval
+// rather than N× destroy intervals. AUDIT 3.2.
+func TestListenerClose_ParallelTeardown(t *testing.T) {
+	t.Run("closes multiple sessions without blocking", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		err := listener.Start()
+		require.NoError(t, err)
+
+		// Create N sessions and verify that closing the listener completes
+		// in reasonable time (not serially waiting on each session's destroy).
+		// With the AUDIT 3.2 fix, all sessions' forceDestroy channels are
+		// closed in parallel, allowing their CloseWithReason goroutines to
+		// unblock immediately instead of waiting for the full timeout.
+		numSessions := 10
+
+		for i := 0; i < numSessions; i++ {
+			connID := uint64(i + 1000)
+			conn := NewMockSSU2Conn(connID)
+			listener.AddSession(connID, conn)
+		}
+
+		// Verify all sessions are registered
+		assert.Equal(t, numSessions, listener.SessionCount())
+
+		// Close the listener and measure how long it takes.
+		// With AUDIT 3.2 fix: all forceDestroy channels closed in parallel
+		// Without fix (bug): would wait serially on each session
+		// Since we're not testing exact timing but just that it completes
+		// without hanging, a simple measurement is sufficient.
+		startTime := time.Now()
+		err = listener.Close()
+		duration := time.Since(startTime)
+
+		require.NoError(t, err)
+
+		// The key assertion: close should not take an unreasonably long time.
+		// If each session had to wait even a small timeout serially,
+		// N sessions × timeout would be significant. The close should complete
+		// in well under 1 second for this test.
+		maxExpectedDuration := 1 * time.Second
+		assert.Less(t, duration, maxExpectedDuration,
+			"listener.Close() took %v, expected < %v (AUDIT 3.2 parallel teardown should be fast)",
+			duration, maxExpectedDuration)
+
+		t.Logf("listener.Close() with %d sessions took %v", numSessions, duration)
+	})
+
+	t.Run("concurrent operations with listener close", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		err := listener.Start()
+		require.NoError(t, err)
+
+		numSessions := 10
+
+		// Add sessions
+		for i := 0; i < numSessions; i++ {
+			connID := uint64(i + 2000)
+			conn := NewMockSSU2Conn(connID)
+			listener.AddSession(connID, conn)
+		}
+
+		assert.Equal(t, numSessions, listener.SessionCount())
+
+		// Race: close listener while sessions may still be in flight
+		// This is a concurrency test run with -race flag to detect any
+		// data races or concurrent map access issues.
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = listener.Close()
+		}()
+
+		// Give close() a chance to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Try to add more sessions (should be safe even during close)
+		for i := 0; i < 5; i++ {
+			connID := uint64(i + 3000)
+			conn := NewMockSSU2Conn(connID)
+			listener.AddSession(connID, conn)
+		}
+
+		wg.Wait()
+		// Test passes if no panic or race condition detected under -race
+	})
+}

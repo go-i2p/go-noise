@@ -271,3 +271,17 @@ func (pr *PacketRouter) SessionCount() int {
 
 	return len(pr.sessions)
 }
+
+// GetAllSessions returns a snapshot of all registered sessions.
+// The returned slice is a copy of the session list at the time of the call.
+// Used by listener.Close() to trigger parallel teardown of all sessions (AUDIT 3.2).
+func (pr *PacketRouter) GetAllSessions() []*SSU2Conn {
+	pr.sessionMutex.RLock()
+	defer pr.sessionMutex.RUnlock()
+
+	sessions := make([]*SSU2Conn, 0, len(pr.sessions))
+	for _, conn := range pr.sessions {
+		sessions = append(sessions, conn)
+	}
+	return sessions
+}
