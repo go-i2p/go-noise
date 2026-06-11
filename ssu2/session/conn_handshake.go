@@ -219,7 +219,7 @@ func (h *SSU2Conn) processSessionCreated(response *SSU2Packet) error {
 	}
 
 	if len(response.Header) >= 24 {
-		h.remoteConnectionID = binary.BigEndian.Uint64(response.Header[16:24])
+		h.remoteConnectionID.Store(binary.BigEndian.Uint64(response.Header[16:24]))
 	}
 
 	return h.installSessionConfirmedHeaderKey()
@@ -247,7 +247,7 @@ func (h *SSU2Conn) installSessionConfirmedHeaderKey() error {
 // sendSessionConfirmed creates and sends SessionConfirmed fragments.
 // sendSessionConfirmed creates and sends SessionConfirmed fragments.
 func (h *SSU2Conn) sendSessionConfirmed() error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "sendSessionConfirmed", "remoteConnectionID": h.remoteConnectionID}).Debug("Creating and sending SessionConfirmed fragments")
+	log.WithFields(logger.Fields{"pkg": "session", "func": "sendSessionConfirmed", "remoteConnectionID": h.remoteConnectionID.Load()}).Debug("Creating and sending SessionConfirmed fragments")
 	// Use LocalRouterInfo if provided; fall back to RouterHash for backward compatibility.
 	// Note: passing RouterHash instead of a full RouterInfo will fail strict static key verification.
 	routerInfoBytes := h.config.LocalRouterInfo
@@ -256,7 +256,7 @@ func (h *SSU2Conn) sendSessionConfirmed() error {
 		// This maintains backward compatibility but will not pass verifyPeerRouterInfoStaticKey.
 		routerInfoBytes = h.config.RouterHash[:]
 	}
-	fragments, err := h.handshakeHandler.CreateSessionConfirmedFragments(h.remoteConnectionID, 0, routerInfoBytes)
+	fragments, err := h.handshakeHandler.CreateSessionConfirmedFragments(h.remoteConnectionID.Load(), 0, routerInfoBytes)
 	if err != nil {
 		return oops.Wrapf(err, "failed to create SessionConfirmed")
 	}
@@ -322,7 +322,7 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	if len(sessionRequest.Header) >= 24 {
 		initiatorConnID = binary.BigEndian.Uint64(sessionRequest.Header[16:24])
 	}
-	h.remoteConnectionID = initiatorConnID
+	h.remoteConnectionID.Store(initiatorConnID)
 
 	if err := h.installSessCreateHeaderKey(); err != nil {
 		return 0, err

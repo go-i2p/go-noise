@@ -167,7 +167,7 @@ func (h *SSU2Conn) newDataPacket() *SSU2Packet {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "newDataPacket"}).Debug("allocating data packet")
 	pktNum := h.nextSendSequence()
 	hdr := make([]byte, ShortHeaderSize)
-	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID)
+	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 	return &SSU2Packet{
 		MessageType:  MessageTypeData,
@@ -180,6 +180,19 @@ func (h *SSU2Conn) newDataPacket() *SSU2Packet {
 // writeBlock sends a single SSU2Block as a Data packet.
 func (h *SSU2Conn) writeBlock(block *SSU2Block) error {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "writeBlock", "blockType": block.Type}).Debug("sending block")
+
+	// AUDIT 2.2: Check write deadline BEFORE consuming sequence number to avoid
+	// wasting sequence numbers on writes that will be rejected by deadline anyway.
+	// This prevents sequence number gaps that cause unnecessary peer retransmissions.
+	select {
+	case <-h.getWriteDeadline():
+		return oops.Errorf("write deadline exceeded")
+	case <-h.closeChan:
+		return oops.Errorf("connection closed")
+	default:
+		// Deadline not yet expired, safe to proceed
+	}
+
 	packet := h.newDataPacket()
 
 	// Serialize block into payload
@@ -402,7 +415,7 @@ func (h *SSU2Conn) sendImmediateACK() {
 	}
 	pktNum := h.nextSendSequence()
 	hdr := make([]byte, ShortHeaderSize)
-	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID)
+	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 	packet := &SSU2Packet{
 		MessageType:  MessageTypeData,
@@ -575,7 +588,7 @@ func (h *SSU2Conn) sendNextNonceInline() error {
 	}
 
 	hdr := make([]byte, ShortHeaderSize)
-	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID)
+	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 	hdr[12] = MessageTypeData
 

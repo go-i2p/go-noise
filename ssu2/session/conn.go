@@ -175,7 +175,10 @@ type SSU2Conn struct {
 	// remoteConnectionID is the peer's connection ID, learned during
 	// the handshake. Outbound data-phase packets must use this value
 	// as the Destination Connection ID per SSU2 spec.
-	remoteConnectionID uint64
+	// AUDIT 1.4: Use atomic.Uint64 for thread-safe access without explicit locks,
+	// consistent with other protocol fields. Written once during handshake,
+	// then read from all send paths.
+	remoteConnectionID atomic.Uint64
 
 	// Nonce rekeying: tracks whether a NextNonce block has been sent
 	// for the current send cipher. Reset after rekey completes.
@@ -300,8 +303,6 @@ func NewSSU2Conn(
 		handshakeHandler.Close()
 		return nil, err
 	}
-
-	conn.dataHandler.StartReaper()
 
 	return conn, nil
 }

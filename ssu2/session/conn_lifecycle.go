@@ -57,7 +57,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// Create Data packet with termination block
 		pktNum := h.nextSendSequence()
 		hdr := make([]byte, ShortHeaderSize)
-		binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID)
+		binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 		binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 		packet := &SSU2Packet{
 			MessageType:  MessageTypeData,
@@ -197,7 +197,7 @@ func (h *SSU2Conn) RemoteAddr() net.Addr {
 func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
 	pktNum := h.nextSendSequence()
 	hdr := make([]byte, ShortHeaderSize)
-	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID)
+	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 	packet := &SSU2Packet{
 		MessageType:  MessageTypeData,

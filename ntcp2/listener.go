@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
@@ -225,6 +226,17 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			With("listener_addr", nl.addr.String()).
 			With("remote_addr", underlying.RemoteAddr().String()).
 			Wrapf(err, "failed to create noise connection")
+	}
+
+	// AUDIT 2.3: Apply handshake deadline to underlying TCP connection to prevent
+	// slow or stalled peers from holding the connection open indefinitely.
+	// Use the configured HandshakeTimeout or DefaultHandshakeTimeoutSeconds as fallback.
+	handshakeTimeout := connConfig.HandshakeTimeout
+	if handshakeTimeout <= 0 {
+		handshakeTimeout = DefaultHandshakeTimeoutSeconds * time.Second
+	}
+	if tcpConn, ok := underlying.(*net.TCPConn); ok {
+		_ = tcpConn.SetDeadline(time.Now().Add(handshakeTimeout))
 	}
 
 	remoteAddr, err := nl.createRemoteNTCP2Addr(noiseConn)

@@ -466,6 +466,7 @@ func createValidInitiatorConfig(t *testing.T) *SSU2Config {
 	config.WithStaticKey(staticKey).WithRemoteRouterHash(remoteRouterHash).WithRemoteStaticKey(remoteStaticKey)
 	return config
 }
+
 func createValidResponderConfig(t *testing.T) *SSU2Config {
 	staticKey := make([]byte, 32)
 	routerHash := generateRandomHash()

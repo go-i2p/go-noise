@@ -538,6 +538,18 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 			Errorf("maximum session count reached, connection refused")
 	}
 
+	// AUDIT 1.3: Install close hook BEFORE registering with router to prevent
+	// race window where concurrent Close() is called before the hook is set.
+	// The hook must be in place so that any concurrent close will properly
+	// deregister the session from all tracking maps.
+	conn.SetCloseHook(func() {
+		l.router.RemoveSession(connID)
+		// AUDIT 8.1: Remove from pending dedup index
+		l.sessionMutex.Lock()
+		delete(l.pendingByInitiator, dedupKey)
+		l.sessionMutex.Unlock()
+	})
+
 	// AUDIT 8.3: Add to router (single source of truth for all sessions)
 	if err := l.router.AddSession(conn); err != nil {
 		_ = conn.CloseImmediate()
@@ -563,18 +575,6 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	}
 	l.pendingByInitiator[dedupKey] = conn
 	l.sessionMutex.Unlock()
-
-	// AUDIT 2.2: deregister the session from both routing maps when it
-	// closes, so closed sessions do not accumulate forever.
-	// AUDIT 8.1: Also deregister from pendingByInitiator when session closes.
-	// AUDIT 8.3: Now only remove from router (single source of truth for sessions).
-	conn.SetCloseHook(func() {
-		l.router.RemoveSession(connID)
-		// AUDIT 8.1: Remove from pending dedup index
-		l.sessionMutex.Lock()
-		delete(l.pendingByInitiator, dedupKey)
-		l.sessionMutex.Unlock()
-	})
 
 	select {
 	case l.acceptQueue <- conn:
