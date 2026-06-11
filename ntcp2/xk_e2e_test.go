@@ -2,6 +2,7 @@ package ntcp2
 
 import (
 	"context"
+	"crypto/sha256"
 	"net"
 	"sync"
 	"testing"
@@ -423,13 +424,13 @@ func setupHandshakedPair(t *testing.T) (initiator, responder *Conn) {
 }
 
 // TestInboundRouterHash verifies that after a completed XK handshake the
-// responder (inbound) side exposes the initiator's static public key as the
-// remote router hash, rather than returning all zeros.
+// responder (inbound) side exposes SHA-256(initiator_static_key) as the remote
+// router hash, rather than the raw key bytes or all zeros.
 //
-// Before the fix, the responder created a placeholder zero-hash for the
-// remote address because PeerStatic() was not yet available at Accept()
-// time. PropagatePeerStaticKey(), called after Handshake(), now copies the
-// peer's Noise static key into the remote NTCP2Addr.
+// Before AUDIT 5.3: RouterHash was set to the raw 32-byte Noise static public
+// key via data.NewHashFromSlice, which is not SHA-256(RouterIdentity).
+// After AUDIT 5.3: RouterHash is SHA-256(static_key), a closer approximation
+// to the I2P router-hash definition until the full RouterIdentity is available.
 func TestInboundRouterHash(t *testing.T) {
 	cs := upstreamnoise.NewCipherSuite(
 		upstreamnoise.DH25519,
@@ -499,28 +500,24 @@ func TestInboundRouterHash(t *testing.T) {
 	defer responderNTCP2.Close()
 
 	// --- Assertions ---
-	// The responder's RouterHash() should be non-zero: the initiator's Noise
-	// static public key, propagated by PropagatePeerStaticKey().
+	// The responder's RouterHash() should be SHA-256(initiator static key),
+	// not all zeros and not the raw key bytes (AUDIT 5.3).
 	responderRemoteHash := responderNTCP2.RouterHash()
 
-	allZero := true
-	for _, b := range responderRemoteHash {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	assert.False(t, allZero,
+	assert.False(t, responderRemoteHash.IsZero(),
 		"responder remote router hash must not be all zeros after handshake")
 
-	// It should equal the initiator's Noise static public key.
-	rhBytes := responderRemoteHash.Bytes()
-	assert.Equal(t, responderNTCP2.PeerStaticKey(), rhBytes[:],
-		"responder RouterHash should equal PeerStaticKey after PropagatePeerStaticKey")
+	// RouterHash should equal SHA-256(PeerStaticKey), not the raw key.
+	peerKey := responderNTCP2.PeerStaticKey()
+	expectedHash := data.HashData(peerKey)
+	assert.Equal(t, expectedHash, responderRemoteHash,
+		"responder RouterHash should equal SHA-256(PeerStaticKey) after PropagatePeerStaticKey")
 
-	// The initiator's static public key (as raw bytes).
-	assert.Equal(t, initiatorKP.Public[:], rhBytes[:],
-		"responder RouterHash should match the initiator's actual static public key")
+	// Verify SHA-256(initiator static public key) matches independently.
+	expectedHashBytes := sha256.Sum256(initiatorKP.Public[:])
+	rhBytes := responderRemoteHash.Bytes()
+	assert.Equal(t, expectedHashBytes[:], rhBytes[:],
+		"responder RouterHash should be SHA-256 of the initiator's actual static public key")
 }
 
 // TestXKHandshake_NTCP2_AESObfuscation exercises the full NTCP2 pipeline with
