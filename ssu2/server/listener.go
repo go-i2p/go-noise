@@ -342,6 +342,13 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 	}
 
 	if err := l.handleSessionRequestToken(packet, remoteAddr); err != nil {
+		// BUG-EH-3: RETRY_SENT means we sent a Retry successfully — this is the
+		// normal token-gate flow, not a failure. Return (nil, nil) so PacketRouter
+		// drops the packet without incrementing routingErrors or emitting a WARN.
+		var oopsErr oops.OopsError
+		if errors.As(err, &oopsErr) && oopsErr.Code() == "RETRY_SENT" {
+			return nil, nil
+		}
 		return nil, err
 	}
 

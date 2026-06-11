@@ -113,27 +113,54 @@ func (h *SSU2Conn) recvLoop() {
 	// never truncate legitimate packets regardless of the configured MTU.
 	buf := make([]byte, MaxPacketSizeIPv4)
 	for {
-		select {
-		case <-h.closeChan:
-			return
-		default:
-			_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-
+		// BUG-TO-1: For sessions that own the underlying socket (DialSSU2),
+		// block directly on ReadFrom. CloseWithReason closes the socket after
+		// signalling closeChan, which unblocks ReadFrom. This eliminates the
+		// 100 ms CPU wakeup cycle for dial sessions.
+		// For shared-socket sessions (ownsUnderlying=false), fall back to the
+		// 100 ms poll so the loop can still exit when closeChan fires.
+		if h.ownsUnderlying {
 			n, addr, err := h.underlying.ReadFrom(buf)
 			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
+				select {
+				case <-h.closeChan:
+					return
+				default:
 				}
 				h.readErrors.Add(1)
 				continue
 			}
-
 			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
 			if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
 				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
 				h.processInboundPacket(packet)
 			} else {
 				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
+			}
+		} else {
+			// Shared socket: poll with deadline so closeChan is checked periodically.
+			select {
+			case <-h.closeChan:
+				return
+			default:
+				_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+
+				n, addr, err := h.underlying.ReadFrom(buf)
+				if err != nil {
+					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+						continue
+					}
+					h.readErrors.Add(1)
+					continue
+				}
+
+				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
+				if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
+					log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
+					h.processInboundPacket(packet)
+				} else {
+					log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
+				}
 			}
 		}
 	}

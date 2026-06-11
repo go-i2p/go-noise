@@ -143,7 +143,8 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 // flow if the responder requires a token.
 func (h *SSU2Conn) awaitSessionCreated(ctx context.Context, sessionRequest *SSU2Packet) (*SSU2Packet, error) {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "awaitSessionCreated", "timeout": h.config.HandshakeTimeout}).Debug("Waiting for SessionCreated response")
-	response, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout)
+	response, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout,
+		MessageTypeSessionCreated, MessageTypeRetry)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to receive SessionCreated")
 	}
@@ -188,7 +189,8 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 		return nil, oops.Wrapf(err, "failed to send SessionRequest with token")
 	}
 
-	created, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout)
+	created, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout,
+		MessageTypeSessionCreated)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to receive SessionCreated after Retry")
 	}
@@ -368,7 +370,8 @@ func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Pac
 // including multi-fragment reassembly.
 func (h *SSU2Conn) receiveAndProcessSessionConfirmed(ctx context.Context, sessionCreated *SSU2Packet) error {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "receiveAndProcessSessionConfirmed"}).Debug("Waiting for SessionConfirmed")
-	sessionConfirmed, err := h.receiveHandshakeWithRetransmit(ctx, sessionCreated, h.config.HandshakeTimeout)
+	sessionConfirmed, err := h.receiveHandshakeWithRetransmit(ctx, sessionCreated, h.config.HandshakeTimeout,
+		MessageTypeSessionConfirmed)
 	if err != nil {
 		return oops.Wrapf(err, "failed to receive SessionConfirmed")
 	}
@@ -663,7 +666,12 @@ func retransmitWait(attempt int, intervals []time.Duration, remaining time.Durat
 // The spec recommends specific retransmission intervals:
 //   - Session Request: 1.25s, 2.5s, 5s
 //   - Session Created: 1s, 2s, 4s
-func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent *SSU2Packet, totalTimeout time.Duration) (*SSU2Packet, error) {
+//
+// BUG-SM-3: if expectedTypes is non-empty, packets of other types are silently
+// discarded from the queue without consuming a retransmit attempt. This prevents
+// a queue pre-filled with retransmitted SessionRequests from blocking receipt of
+// the subsequent SessionConfirmed.
+func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent *SSU2Packet, totalTimeout time.Duration, expectedTypes ...uint8) (*SSU2Packet, error) {
 	intervals := retransmitSchedule(lastSent.MessageType)
 	// AUDIT 4.1: Use the context deadline when available so that the total
 	// handshake budget is shared across all phases rather than each phase
@@ -687,6 +695,18 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 
 		pkt, err := h.receivePacketWithTimeout(ctx, wait)
 		if err == nil {
+			// BUG-SM-3: discard stale packets of unexpected type (e.g., retransmitted
+			// SessionRequests still in the queue when we are awaiting SessionConfirmed).
+			// Do NOT count this as a retransmit attempt so the budget is preserved.
+			if len(expectedTypes) > 0 && !matchesAny(pkt.MessageType, expectedTypes) {
+				log.WithFields(logger.Fields{
+					"pkg":      "session",
+					"func":     "receiveHandshakeWithRetransmit",
+					"got_type": pkt.MessageType,
+				}).Debug("discarding stale packet of unexpected type")
+				attempt-- // don't consume this attempt
+				continue
+			}
 			return pkt, nil
 		}
 
@@ -699,6 +719,16 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 		}
 	}
 	return nil, oops.Errorf("handshake timeout after %d retransmits", len(intervals))
+}
+
+// matchesAny returns true if t equals one of the types in accepted.
+func matchesAny(t uint8, accepted []uint8) bool {
+	for _, a := range accepted {
+		if t == a {
+			return true
+		}
+	}
+	return false
 }
 
 // checkHandshakeCancelled returns an error if the context or connection is closed.

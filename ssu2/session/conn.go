@@ -59,7 +59,10 @@ const (
 	// handshakeEnqueueTimeout bounds how long processInboundPacket will block
 	// trying to hand a handshake packet to the handshake reader when the
 	// recvQueue is transiently full, before dropping it (AUDIT 4.2).
-	handshakeEnqueueTimeout = 250 * time.Millisecond
+	// BUG-TO-2: reduced from 250 ms to 10 ms so that all 8 packetWorker
+	// goroutines do not simultaneously block for 250 ms each, which would
+	// stall established-session datagrams by filling packetQueue.
+	handshakeEnqueueTimeout = 10 * time.Millisecond
 
 	// destroyTimeout is the default time to wait after sending a Termination
 	// block before releasing session resources. Per spec §Termination:
