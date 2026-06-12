@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod"
 	i2plogger "github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
@@ -30,7 +31,7 @@ func (nc *Conn) Handshake(ctx context.Context) error {
 	nc.handshakeMutex.Lock()
 	defer nc.handshakeMutex.Unlock()
 
-	if nc.isHandshakeDone() {
+	if nc.getState() == mod.StateEstablished {
 		return nil // Already completed
 	}
 
@@ -40,7 +41,7 @@ func (nc *Conn) Handshake(ctx context.Context) error {
 		"pkg":               "noise",
 		"func":              "NoiseConn.Handshake",
 		"pattern":           nc.config.Pattern,
-		"role":              roleStr(nc.config.Initiator),
+		"role":              baseconfig.RoleString(nc.config.Initiator),
 		"local_addr":        nc.LocalAddr().String(),
 		"remote_addr":       nc.RemoteAddr().String(),
 		"handshake_timeout": nc.config.HandshakeTimeout,
@@ -50,7 +51,7 @@ func (nc *Conn) Handshake(ctx context.Context) error {
 
 	timeout := nc.config.HandshakeTimeout
 	if timeout <= 0 {
-		timeout = defaultHandshakeTimeout
+		timeout = baseconfig.DefaultHandshakeTimeout
 	}
 	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, timeout)
 	defer cancelHandshake()
@@ -183,7 +184,7 @@ func (nc *Conn) updateCipherStates(cs1, cs2 *noise.CipherState) {
 		"pkg":             "noise",
 		"func":            "NoiseConn.updateCipherStates",
 		"pattern":         nc.config.Pattern,
-		"role":            roleStr(nc.config.Initiator),
+		"role":            baseconfig.RoleString(nc.config.Initiator),
 		"has_send_cs":     hasSend,
 		"has_recv_cs":     hasRecv,
 		"handshake_ready": hasSend && hasRecv,

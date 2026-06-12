@@ -18,6 +18,7 @@ import (
 // applyOutboundModifier passes encrypted plaintext through the modifier chain
 // for PhaseData (post-handshake data transport). Called by Write before encryption.
 // Returns data unchanged if no modifier chain is configured.
+// Note: NTCP2 provides a transport-specific override in ntcp2/conn_framing.go.
 func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
 	chain := nc.config.GetModifierChain()
 	if chain == nil {
@@ -30,6 +31,7 @@ func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
 // applyInboundModifier passes decrypted plaintext through the modifier chain
 // for PhaseData (post-handshake data transport). Called by Read after decryption.
 // Returns data unchanged if no modifier chain is configured.
+// Note: NTCP2 provides a transport-specific override in ntcp2/conn_framing.go.
 func (nc *Conn) applyInboundModifier(data []byte) ([]byte, error) {
 	chain := nc.config.GetModifierChain()
 	if chain == nil {
@@ -121,18 +123,26 @@ func (nc *Conn) validateWriteState() error {
 }
 
 // configureWriteTimeout sets the write timeout if configured.
-func (nc *Conn) configureWriteTimeout() error {
-	if nc.config.WriteTimeout > 0 {
-		log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.configureWriteTimeout", "timeout": nc.config.WriteTimeout}).Debug("setting write deadline")
-		if err := nc.underlying.SetWriteDeadline(time.Now().Add(nc.config.WriteTimeout)); err != nil {
+// configureDeadline is a helper for setting read or write deadlines on the underlying connection.
+// It accepts a timeout duration and a deadline setter function to avoid code duplication
+// between configureReadTimeout and configureWriteTimeout.
+func (nc *Conn) configureDeadline(timeout time.Duration, setDeadline func(time.Time) error, timeoutType string) error {
+	if timeout > 0 {
+		if err := setDeadline(time.Now().Add(timeout)); err != nil {
 			return oops.
 				Code("SET_DEADLINE_FAILED").
 				In("noise").
-				With("timeout", nc.config.WriteTimeout).
-				Wrapf(err, "failed to set write deadline")
+				With("timeout", timeout).
+				With("type", timeoutType).
+				Wrapf(err, "failed to set %s deadline", timeoutType)
 		}
 	}
 	return nil
+}
+
+func (nc *Conn) configureWriteTimeout() error {
+	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.configureWriteTimeout", "timeout": nc.config.WriteTimeout}).Debug("setting write deadline")
+	return nc.configureDeadline(nc.config.WriteTimeout, nc.underlying.SetWriteDeadline, "write")
 }
 
 // encryptData encrypts the provided data using the send cipher state.
@@ -177,16 +187,7 @@ func (nc *Conn) writeEncryptedData(originalData, encryptedData []byte) (int, err
 
 // configureReadTimeout sets the read timeout if configured.
 func (nc *Conn) configureReadTimeout() error {
-	if nc.config.ReadTimeout > 0 {
-		if err := nc.underlying.SetReadDeadline(time.Now().Add(nc.config.ReadTimeout)); err != nil {
-			return oops.
-				Code("SET_DEADLINE_FAILED").
-				In("noise").
-				With("timeout", nc.config.ReadTimeout).
-				Wrapf(err, "failed to set read deadline")
-		}
-	}
-	return nil
+	return nc.configureDeadline(nc.config.ReadTimeout, nc.underlying.SetReadDeadline, "read")
 }
 
 // readEncryptedData reads a length-prefixed encrypted frame from the

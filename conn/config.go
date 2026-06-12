@@ -12,10 +12,6 @@ import (
 	"github.com/samber/oops"
 )
 
-// defaultHandshakeTimeout is the fallback used by Handshake when
-// HandshakeTimeout is zero or negative (defence-in-depth clamp).
-const defaultHandshakeTimeout = 30 * time.Second
-
 // ConnConfig contains configuration for creating a NoiseConn.
 // It follows the builder pattern for optional configuration and validation.
 type ConnConfig struct {
@@ -89,7 +85,7 @@ func NewConnConfig(pattern string, initiator bool) *ConnConfig {
 		Pattern:   pattern,
 		Initiator: initiator,
 		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
-			HandshakeTimeout: defaultHandshakeTimeout,
+			HandshakeTimeout: baseconfig.DefaultHandshakeTimeout,
 			ReadTimeout:      0,               // No timeout by default
 			WriteTimeout:     0,               // No timeout by default
 			HandshakeRetries: 0,               // Default to no retries; use HandshakeWithRetry() for retry semantics

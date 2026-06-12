@@ -13,6 +13,10 @@ import (
 	"github.com/go-i2p/go-noise/handshake"
 )
 
+// DefaultHandshakeTimeout is the default maximum time for handshake completion
+// across all Noise configuration types.
+const DefaultHandshakeTimeout = 30 * time.Second
+
 // BaseHandshakeConfig holds the five timeout/retry fields and the modifier
 // slice that are duplicated across every Noise config type. Embed this struct
 // in each concrete config to promote these fields into the outer type.
@@ -47,4 +51,13 @@ type BaseHandshakeConfig struct {
 	// Modifiers are applied in order during outbound processing and in reverse
 	// order during inbound processing. Default: empty (no modifiers).
 	Modifiers []handshake.HandshakeModifier
+}
+
+// RoleString returns "initiator" when initiator is true, "responder" otherwise.
+// Used as a log field value when logging connection role information.
+func RoleString(initiator bool) string {
+	if initiator {
+		return "initiator"
+	}
+	return "responder"
 }

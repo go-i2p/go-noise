@@ -63,7 +63,7 @@ func (nc *Conn) readDirect(b []byte) (int, error) {
 
 // readFramed reads an NTCP2 data-phase frame with SipHash length deobfuscation.
 func (nc *Conn) readFramed(b []byte) (int, error) {
-	if err := nc.guardReadNonce(); err != nil {
+	if err := nc.guardNonce(nc.readNonce, "read"); err != nil {
 		return 0, err
 	}
 
@@ -278,6 +278,7 @@ func (nc *Conn) writeDirect(b []byte) (int, error) {
 // applyOutboundModifier passes plaintext through the NoiseConn's modifier chain
 // for PhaseData. Used by the framed write path before Encrypt. Returns data
 // unchanged when no modifier chain is configured.
+// Note: This is a transport-specific override of conn.Conn.applyOutboundModifier (conn/io.go).
 func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
 	chain := nc.noiseConn.GetModifierChain()
 	if chain == nil {
@@ -289,6 +290,7 @@ func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
 // applyInboundModifier passes decrypted plaintext through the NoiseConn's
 // modifier chain for PhaseData. Used by the framed read path after Decrypt.
 // Returns data unchanged when no modifier chain is configured.
+// Note: This is a transport-specific override of conn.Conn.applyInboundModifier (conn/io.go).
 func (nc *Conn) applyInboundModifier(data []byte) ([]byte, error) {
 	chain := nc.noiseConn.GetModifierChain()
 	if chain == nil {
@@ -343,7 +345,7 @@ func (nc *Conn) writeFramed(b []byte) (int, error) {
 
 // writeSingleFrame encrypts one chunk and writes it as an NTCP2 wire frame.
 func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
-	if err := nc.guardWriteNonce(); err != nil {
+	if err := nc.guardNonce(nc.writeNonce, "write"); err != nil {
 		return 0, err
 	}
 

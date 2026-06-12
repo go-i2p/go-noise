@@ -36,17 +36,10 @@ type Token struct {
 
 // NewTokenCache creates a new token cache with the specified TTL.
 // If ttl is zero or negative, defaults to 60 seconds.
+// Uses the default maximum cache size MaxTokenCacheSize.
 func NewTokenCache(ttl time.Duration) *TokenCache {
 	log.WithFields(logger.Fields{"pkg": "wire", "func": "NewTokenCache", "ttl": ttl}).Debug("Creating new TokenCache")
-	if ttl <= 0 {
-		ttl = 60 * time.Second
-	}
-
-	return &TokenCache{
-		tokens:  make(map[string]*Token),
-		ttl:     ttl,
-		maxSize: MaxTokenCacheSize,
-	}
+	return NewTokenCacheWithMaxSize(ttl, MaxTokenCacheSize)
 }
 
 // NewTokenCacheWithMaxSize creates a new token cache with the specified TTL and
@@ -54,11 +47,18 @@ func NewTokenCache(ttl time.Duration) *TokenCache {
 // is zero or negative, defaults to MaxTokenCacheSize.
 func NewTokenCacheWithMaxSize(ttl time.Duration, maxSize int) *TokenCache {
 	log.WithFields(logger.Fields{"pkg": "wire", "func": "NewTokenCacheWithMaxSize", "ttl": ttl, "maxSize": maxSize}).Debug("Creating new TokenCache with custom max size")
-	tc := NewTokenCache(ttl)
-	if maxSize > 0 {
-		tc.maxSize = maxSize
+	if ttl <= 0 {
+		ttl = 60 * time.Second
 	}
-	return tc
+	if maxSize <= 0 {
+		maxSize = MaxTokenCacheSize
+	}
+
+	return &TokenCache{
+		tokens:  make(map[string]*Token),
+		ttl:     ttl,
+		maxSize: maxSize,
+	}
 }
 
 // GenerateToken creates a new token for the specified address.

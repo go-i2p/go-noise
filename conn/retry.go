@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod"
 	i2plogger "github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -62,7 +63,7 @@ func (nc *Conn) logSuccessAfterRetries(attempt int) {
 			"func": "NoiseConn.logSuccessAfterRetries", "attempts": attempt + 1,
 			"pattern":     nc.config.Pattern,
 			"remote_addr": nc.RemoteAddr().String(),
-			"role":        roleStr(nc.config.Initiator),
+			"role":        baseconfig.RoleString(nc.config.Initiator),
 		}).Info("handshake succeeded after retries")
 	}
 }
@@ -132,7 +133,7 @@ func (nc *Conn) logRetryAttempt(attempt int, lastErr error) {
 		"last_error":      lastErr.Error(),
 		"last_error_code": errorCode,
 		"remote_addr":     nc.RemoteAddr().String(),
-		"role":            roleStr(nc.config.Initiator),
+		"role":            baseconfig.RoleString(nc.config.Initiator),
 	}).Warn("handshake failed, retrying with exponential backoff")
 }
 

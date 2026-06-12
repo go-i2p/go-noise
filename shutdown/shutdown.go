@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/logger"
 	i2plogger "github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -81,7 +82,7 @@ type ShutdownManager struct {
 // If timeout is 0, a default of 30 seconds is used.
 func NewShutdownManager(timeout time.Duration) *ShutdownManager {
 	if timeout == 0 {
-		timeout = 30 * time.Second
+		timeout = baseconfig.DefaultHandshakeTimeout
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

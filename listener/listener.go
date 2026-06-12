@@ -79,7 +79,7 @@ func NewListenerConfig(pattern string) *ListenerConfig {
 	return &ListenerConfig{
 		Pattern: pattern,
 		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
-			HandshakeTimeout: 30 * time.Second,
+			HandshakeTimeout: baseconfig.DefaultHandshakeTimeout,
 			ReadTimeout:      0,
 			WriteTimeout:     0,
 			HandshakeRetries: 0,

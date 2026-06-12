@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/internal/iobuf"
 	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/go-noise/mod"
@@ -29,15 +30,6 @@ const (
 	// StateClosed represents a closed connection
 	StateClosed = mod.StateClosed
 )
-
-// roleStr returns "initiator" when initiator is true, "responder" otherwise.
-// Used as a log field value throughout the conn package.
-func roleStr(initiator bool) string {
-	if initiator {
-		return "initiator"
-	}
-	return "responder"
-}
 
 // ConnState represents the state of a NoiseConn
 type ConnState = mod.ConnState
@@ -163,7 +155,7 @@ func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*Conn, error) {
 		"pkg":         "noise",
 		"func":        "NewNoiseConn",
 		"pattern":     nc.config.Pattern,
-		"role":        roleStr(nc.config.Initiator),
+		"role":        baseconfig.RoleString(nc.config.Initiator),
 		"local_addr":  nc.localAddr.String(),
 		"remote_addr": nc.remoteAddr.String(),
 	}).Debug("noise connection created")

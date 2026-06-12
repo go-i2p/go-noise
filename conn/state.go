@@ -172,18 +172,6 @@ func (nc *Conn) SetShutdownManager(sm shutdown.Shutdowner) {
 	}
 }
 
-// isClosed returns true if the connection is closed
-func (nc *Conn) isClosed() bool {
-	return nc.getState() == mod.StateClosed
-}
-
-// isHandshakeDone returns true if the handshake is complete
-// Only established connections have completed handshakes - closed connections should not pass this check
-func (nc *Conn) isHandshakeDone() bool {
-	state := nc.getState()
-	return state == mod.StateEstablished
-}
-
 // getState returns the current connection state in a thread-safe manner
 func (nc *Conn) getState() mod.ConnState {
 	nc.stateMutex.RLock()
@@ -203,4 +191,17 @@ func (nc *Conn) setState(newState mod.ConnState) {
 		"old_state": oldState.String(),
 		"new_state": newState.String(),
 	}).Debug("Connection state changed")
+}
+
+// isClosed returns true if the connection is closed.
+// Provided for test code; production code should use getState() == mod.StateClosed directly.
+func (nc *Conn) isClosed() bool {
+	return nc.getState() == mod.StateClosed
+}
+
+// isHandshakeDone returns true if the handshake is complete.
+// Provided for test code; production code should use getState() == mod.StateEstablished directly.
+func (nc *Conn) isHandshakeDone() bool {
+	state := nc.getState()
+	return state == mod.StateEstablished
 }

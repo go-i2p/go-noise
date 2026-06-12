@@ -318,7 +318,10 @@ func (nc *Config) Validate() error {
 	return validation.RunValidators(
 		nc.validateBasicConfiguration,
 		nc.validateCryptographicParameters,
-		nc.validateTimeoutConfiguration,
+		// Inline timeout configuration validation; see BaseHandshakeConfig documentation.
+		func() error {
+			return validation.ValidateTransportConfig(nc.HandshakeTimeout, nc.HandshakeRetries, nc.RetryBackoff, "ntcp2")
+		},
 		nc.validateFrameConfiguration,
 		nc.validateModifiers,
 	)
@@ -386,12 +389,6 @@ func (nc *Config) validateCryptographicParameters() error {
 	}
 
 	return nil
-}
-
-// validateTimeoutConfiguration checks handshake timeouts and retry settings.
-func (nc *Config) validateTimeoutConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateTimeoutConfiguration"}).Debug("Validating NTCP2 timeout configuration")
-	return validation.ValidateTransportConfig(nc.HandshakeTimeout, nc.HandshakeRetries, nc.RetryBackoff, "ntcp2")
 }
 
 // validateFrameConfiguration checks frame size and padding settings.

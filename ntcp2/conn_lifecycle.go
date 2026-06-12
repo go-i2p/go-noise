@@ -27,13 +27,7 @@ func (nc *Conn) guardNonce(nonce uint64, direction string) error {
 	return nil
 }
 
-// guardReadNonce rejects read operations when the nonce counter has reached MaxNonce.
-// Per the spec: "Connection must be dropped and restarted after it reaches that value."
-func (nc *Conn) guardReadNonce() error { return nc.guardNonce(nc.readNonce, "read") }
 
-// guardWriteNonce rejects write operations when the nonce counter has reached MaxNonce.
-// Per the spec: "Connection must be dropped and restarted after it reaches that value."
-func (nc *Conn) guardWriteNonce() error { return nc.guardNonce(nc.writeNonce, "write") }
 
 // handleAEADError implements probing-resistance behaviour on AEAD authentication
 // failure. Per the NTCP2 spec, the receiver should:

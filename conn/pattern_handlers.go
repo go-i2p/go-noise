@@ -20,44 +20,74 @@ type PatternHandlerFunc func(pctx PatternContext, ctx context.Context) error
 // patternMu guards concurrent access to initiatorHandlers and responderHandlers.
 var patternMu sync.RWMutex
 
+// Pattern group definitions for organizing Noise handshake pattern implementations.
+var (
+	// onewayPatterns are Noise patterns that complete in one message exchange.
+	onewayPatterns = []string{"N", "K", "X"}
+	// twoMessagePatterns are Noise patterns that complete in two message exchanges.
+	twoMessagePatterns = []string{"NN", "NK", "NX", "KN", "KK", "KX", "IN", "IK", "IX"}
+	// threeMessagePatterns are Noise patterns that complete in three message exchanges.
+	threeMessagePatterns = []string{"XN", "XK", "XX"}
+)
+
 // initiatorHandlers maps pattern names to their initiator handshake implementations.
 // Each handler is a closure over one of the six template functions in pattern_templates.go.
-var initiatorHandlers = map[string]PatternHandlerFunc{
-	"N":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "N") }),
-	"K":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "K") }),
-	"X":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "X") }),
-	"NN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NN") }),
-	"NK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NK") }),
-	"NX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NX") }),
-	"KN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KN") }),
-	"KK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KK") }),
-	"KX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KX") }),
-	"IN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IN") }),
-	"IK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IK") }),
-	"IX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IX") }),
-	"XN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XN") }),
-	"XK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XK") }),
-	"XX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XX") }),
-}
+// Built by init() to reduce redundancy across the three pattern type categories.
+var initiatorHandlers = buildInitiatorHandlers()
 
 // responderHandlers maps pattern names to their responder handshake implementations.
 // Each handler is a closure over one of the six template functions in pattern_templates.go.
-var responderHandlers = map[string]PatternHandlerFunc{
-	"N":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "N") }),
-	"K":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "K") }),
-	"X":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "X") }),
-	"NN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NN") }),
-	"NK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NK") }),
-	"NX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NX") }),
-	"KN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KN") }),
-	"KK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KK") }),
-	"KX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KX") }),
-	"IN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IN") }),
-	"IK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IK") }),
-	"IX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IX") }),
-	"XN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XN") }),
-	"XK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XK") }),
-	"XX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XX") }),
+// Built by init() to reduce redundancy across the three pattern type categories.
+var responderHandlers = buildResponderHandlers()
+
+// buildInitiatorHandlers constructs the initiator handler map from pattern groups,
+// reducing code duplication versus explicit map literals.
+func buildInitiatorHandlers() map[string]PatternHandlerFunc {
+	handlers := make(map[string]PatternHandlerFunc)
+	for _, pattern := range onewayPatterns {
+		p := pattern // capture loop variable
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performOnewayInitiator(ctx, p)
+		})
+	}
+	for _, pattern := range twoMessagePatterns {
+		p := pattern
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performTwoMsgInitiator(ctx, p)
+		})
+	}
+	for _, pattern := range threeMessagePatterns {
+		p := pattern
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performThreeMsgInitiator(ctx, p)
+		})
+	}
+	return handlers
+}
+
+// buildResponderHandlers constructs the responder handler map from pattern groups,
+// reducing code duplication versus explicit map literals.
+func buildResponderHandlers() map[string]PatternHandlerFunc {
+	handlers := make(map[string]PatternHandlerFunc)
+	for _, pattern := range onewayPatterns {
+		p := pattern // capture loop variable
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performOnewayResponder(ctx, p)
+		})
+	}
+	for _, pattern := range twoMessagePatterns {
+		p := pattern
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performTwoMsgResponder(ctx, p)
+		})
+	}
+	for _, pattern := range threeMessagePatterns {
+		p := pattern
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return nc.performThreeMsgResponder(ctx, p)
+		})
+	}
+	return handlers
 }
 
 // wrapConnHandler adapts a *Conn method into a PatternHandlerFunc.
