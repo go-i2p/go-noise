@@ -11,7 +11,7 @@ func TestNewReceiveWindow(t *testing.T) {
 	tests := []struct {
 		name         string
 		expected     uint32
-		maxSize      int
+		maxSize      uint
 		wantMaxSize  int
 		wantExpected uint32
 	}{
@@ -40,13 +40,6 @@ func TestNewReceiveWindow(t *testing.T) {
 			name:         "zero maxSize uses default",
 			expected:     100,
 			maxSize:      0,
-			wantMaxSize:  DefaultMaxWindowSize,
-			wantExpected: 100,
-		},
-		{
-			name:         "negative maxSize uses default",
-			expected:     100,
-			maxSize:      -10,
 			wantMaxSize:  DefaultMaxWindowSize,
 			wantExpected: 100,
 		},
@@ -365,7 +358,7 @@ func TestReceiveWindow_PartialGapFill(t *testing.T) {
 
 // TestReceiveWindow_WindowFull verifies window size limit enforcement.
 func TestReceiveWindow_WindowFull(t *testing.T) {
-	maxSize := 10
+	maxSize := uint(10)
 	rw := NewReceiveWindow(1000, maxSize)
 
 	// Fill window with future packets
@@ -377,7 +370,7 @@ func TestReceiveWindow_WindowFull(t *testing.T) {
 		}
 	}
 
-	if rw.GetWindowSize() != maxSize {
+	if rw.GetWindowSize() != int(maxSize) {
 		t.Fatalf("window size = %d, want %d", rw.GetWindowSize(), maxSize)
 	}
 
@@ -393,7 +386,7 @@ func TestReceiveWindow_WindowFull(t *testing.T) {
 		t.Errorf("ready packets = %d, want 0", len(ready))
 	}
 
-	if rw.GetWindowSize() != maxSize {
+	if rw.GetWindowSize() != int(maxSize) {
 		t.Errorf("window size = %d, want %d (unchanged)", rw.GetWindowSize(), maxSize)
 	}
 }

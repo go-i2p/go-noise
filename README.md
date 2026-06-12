@@ -278,6 +278,20 @@ Current test coverage includes unit and integration tests for core functionality
 - Handshake modifier chaining and transformations
 - Error handling scenarios across all components
 
+### Test Organization
+
+The test suite is organized into two levels:
+
+- **Per-package tests** (`*_test.go` files): Unit and integration tests live alongside their source code. Each package includes focused tests for its own functionality.
+  - `conn_test.go`, `handshake_test.go`, etc. test their respective packages in isolation
+  - Some packages include integration tests (e.g., `conn/integration_test.go`, `ntcp2/e2e_integration_test.go`) for testing cross-package interaction
+
+- **`tests/` directory**: Cross-package and performance tests that depend on multiple modules:
+  - `tests/integration/`: Integration tests exercising the pool, config, and connection layers together
+  - `tests/benchmarks/`: Performance benchmarks for measuring throughput and memory usage of pooling and connection operations
+
+The `tests/` directory layout keeps cross-cutting concerns separate from individual package tests, improving test organization when a test depends on multiple components that don't belong in any single package.
+
 ## Contributing
 
 This library follows Go best practices:

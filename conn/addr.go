@@ -23,9 +23,16 @@ type Addr struct {
 
 // NewNoiseAddr creates a new NoiseAddr wrapping an underlying network address.
 // pattern should be a valid Noise protocol pattern (e.g., "Noise_XX_25519_AESGCM_SHA256").
-// role should be either "initiator" or "responder".
+// role should be either "initiator" or "responder"; other values are logged as warnings.
 func NewNoiseAddr(underlying net.Addr, pattern, role string) *Addr {
 	log.WithFields(logger.Fields{"pkg": "noise", "func": "NewNoiseAddr", "pattern": pattern, "role": role}).Debug("Creating new NoiseAddr")
+
+	// Validate role if provided (for consistency with ntcp2 and ssu2)
+	if role != "" && role != "initiator" && role != "responder" {
+		log.WithFields(logger.Fields{"pkg": "noise", "func": "NewNoiseAddr", "role": role}).
+			Warn("invalid role value; expected 'initiator' or 'responder'")
+	}
+
 	return &Addr{
 		underlying: underlying,
 		pattern:    pattern,

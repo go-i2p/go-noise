@@ -35,7 +35,14 @@ import (
 // This is a convenience function that delegates to the Default Transport.
 //
 // Deprecated: Use Transport.Dial on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. For example:
+//
+//	pool := pool.NewConnPool(&pool.PoolConfig{MaxSize: 10})
+//	transport := noise.NewTransport(pool, noise.NewShutdownManager(30*time.Second))
+//	defer transport.GracefulShutdown()
+//	conn, err := transport.Dial("tcp", "example.com:8080", config)
+//
+// See examples/transport/main.go for a complete example.
 func DialNoise(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().Dial(network, addr, config)
 }
@@ -46,7 +53,7 @@ func DialNoise(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 // returned to the pool when the NoiseConn is closed.
 //
 // Deprecated: Use Transport.DialWithPool on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. See DialNoise for a migration example.
 func DialNoiseWithPool(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPool(network, addr, config)
 }
@@ -56,7 +63,7 @@ func DialNoiseWithPool(network, addr string, config *ConnConfig) (*NoiseConn, er
 // for establishing Noise connections with automatic retry capabilities.
 //
 // Deprecated: Use Transport.DialWithHandshake on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. See DialNoise for a migration example.
 func DialNoiseWithHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithHandshake(network, addr, config)
 }
@@ -65,7 +72,7 @@ func DialNoiseWithHandshake(network, addr string, config *ConnConfig) (*NoiseCon
 // It combines dialing, NoiseConn creation, and handshake with retry in a single operation.
 //
 // Deprecated: Use Transport.DialWithHandshakeContext on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. See DialNoise for a migration example.
 func DialNoiseWithHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithHandshakeContext(ctx, network, addr, config)
 }
@@ -74,7 +81,7 @@ func DialNoiseWithHandshakeContext(ctx context.Context, network, addr string, co
 // It checks the pool first, creates new if needed, and performs handshake with retry logic.
 //
 // Deprecated: Use Transport.DialWithPoolAndHandshake on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. See DialNoise for a migration example.
 func DialNoiseWithPoolAndHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPoolAndHandshake(network, addr, config)
 }
@@ -86,7 +93,7 @@ func DialNoiseWithPoolAndHandshake(network, addr string, config *ConnConfig) (*N
 // empty or the pooled connection fails the handshake.
 //
 // Deprecated: Use Transport.DialWithPoolAndHandshakeContext on a dedicated Transport instance instead of
-// depending on package-level global state.
+// depending on package-level global state. See DialNoise for a migration example.
 func DialNoiseWithPoolAndHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPoolAndHandshakeContext(ctx, network, addr, config)
 }

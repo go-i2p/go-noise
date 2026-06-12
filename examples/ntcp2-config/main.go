@@ -117,9 +117,9 @@ func demonstrateAdvancedConfigurations(routerHash []byte) {
 
 	// Create custom handshake modifiers
 	xorMod := handshake.NewXORModifier("demo-xor", []byte{0xAA, 0xBB, 0xCC, 0xDD})
-	paddingMod, err := handshake.NewPaddingModifier("demo-padding", 8, 32)
+	paddingMod, err := handshake.NewGenericPaddingModifier("demo-padding", 8, 32)
 	if err != nil {
-		fmt.Printf("❌ Failed to create padding modifier: %v\n", err)
+		fmt.Printf("❌ Failed to create generic padding modifier: %v\n", err)
 		return
 	}
 
@@ -263,7 +263,7 @@ func applyNTCP2Features(configBuilder *ntcp2.Config, remoteRouterHash []byte, ar
 func addCustomModifiers(configBuilder *ntcp2.Config, args *ntcp2shared.NTCP2Args) *ntcp2.Config {
 	if args.Verbose {
 		xorMod := handshake.NewXORModifier("demo-xor", []byte{0xAA, 0xBB, 0xCC, 0xDD})
-		paddingMod, err := handshake.NewPaddingModifier("demo-padding", 8, 32)
+		paddingMod, err := handshake.NewGenericPaddingModifier("demo-padding", 8, 32)
 		if err == nil {
 			configBuilder = configBuilder.WithModifiers(xorMod, paddingMod)
 		}

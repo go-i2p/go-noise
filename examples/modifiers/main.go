@@ -33,9 +33,9 @@ func main() {
 // createModifiers initializes and returns the XOR and padding modifiers for testing.
 func createModifiers() (handshake.HandshakeModifier, handshake.HandshakeModifier) {
 	xorModifier := handshake.NewXORModifier("obfuscation", []byte{0xAA, 0xBB, 0xCC, 0xDD})
-	paddingModifier, err := handshake.NewPaddingModifier("padding", 8, 16)
+	paddingModifier, err := handshake.NewGenericPaddingModifier("padding", 8, 16)
 	if err != nil {
-		log.Fatal("Failed to create padding modifier:", err)
+		log.Fatal("Failed to create generic padding modifier:", err)
 	}
 	return xorModifier, paddingModifier
 }

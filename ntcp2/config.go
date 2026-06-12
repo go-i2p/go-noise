@@ -435,12 +435,12 @@ func (nc *Config) validateFrameConfiguration() error {
 func (nc *Config) validateModifiers() error {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateModifiers", "modifier_count": len(nc.Modifiers)}).Debug("Validating NTCP2 modifiers")
 	for _, mod := range nc.Modifiers {
-		if _, ok := mod.(*handshake.PaddingModifier); ok {
+		if _, ok := mod.(*handshake.GenericPaddingModifier); ok {
 			return oops.
 				Code("INCOMPATIBLE_MODIFIER").
 				In("ntcp2").
 				With("modifier", mod.Name()).
-				Errorf("PaddingModifier is not NTCP2-compatible; use NTCP2PaddingModifier")
+				Errorf("GenericPaddingModifier is not NTCP2-compatible; use NTCP2PaddingModifier")
 		}
 	}
 	return nil

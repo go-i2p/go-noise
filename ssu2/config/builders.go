@@ -188,10 +188,8 @@ func (sc *SSU2Config) WithMaxClockSkew(skew time.Duration) *SSU2Config {
 
 // WithReceiveWindowSize sets the maximum number of out-of-order packets
 // the receive window will buffer. Use 0 for DefaultMaxWindowSize.
-func (sc *SSU2Config) WithReceiveWindowSize(size int) *SSU2Config {
-	if size >= 0 {
-		sc.ReceiveWindowSize = size
-	}
+func (sc *SSU2Config) WithReceiveWindowSize(size uint) *SSU2Config {
+	sc.ReceiveWindowSize = size
 	return sc
 }
 

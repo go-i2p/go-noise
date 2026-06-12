@@ -233,7 +233,7 @@ type SSU2Config struct {
 	// buffered by the receive window. Larger values improve throughput
 	// on lossy links at the cost of memory (M-3).
 	// Default: 256. Use 0 for DefaultMaxWindowSize (512).
-	ReceiveWindowSize int
+	ReceiveWindowSize uint
 
 	// RouterInfoValidator is a callback invoked after the handshake
 	// completes on the responder side. It receives the raw RouterInfo block

@@ -36,7 +36,7 @@
 // Usage:
 //
 //	xor := handshake.NewXORModifier("xor", key)
-//	pad, _ := handshake.NewPaddingModifier("pad", 16, 64)
+//	pad, _ := handshake.NewGenericPaddingModifier("pad", 16, 64)
 //	chain := handshake.NewModifierChain("my-chain", xor, pad)
 //
 //	outbound, _ := chain.ModifyOutbound(handshake.PhaseInitial, plaintext)

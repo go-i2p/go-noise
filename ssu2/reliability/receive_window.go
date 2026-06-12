@@ -64,16 +64,16 @@ const (
 //   - maxSize: Maximum buffered packets (use DefaultMaxWindowSize if unsure)
 //
 // Returns a new ReceiveWindow ready to accept packets.
-func NewReceiveWindow(expected uint32, maxSize int) *ReceiveWindow {
+func NewReceiveWindow(expected uint32, maxSize uint) *ReceiveWindow {
 	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewReceiveWindow", "expected": expected, "maxSize": maxSize}).Debug("Creating new ReceiveWindow")
-	if maxSize <= 0 {
+	if maxSize == 0 {
 		maxSize = DefaultMaxWindowSize
 	}
 
 	return &ReceiveWindow{
 		expected: expected,
 		window:   make(map[uint32]*SSU2Packet),
-		maxSize:  maxSize,
+		maxSize:  int(maxSize),
 	}
 }
 

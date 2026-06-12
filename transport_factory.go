@@ -65,12 +65,8 @@ func createNewConn(network, addr string) (net.Conn, error) {
 	conn, err := net.Dial(network, addr)
 	if err != nil {
 		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConn", "network": network, "address": addr}).WithError(err).Error("Dial failed")
-		return nil, oops.
-			Code("DIAL_FAILED").
-			In("transport").
-			With("network", network).
-			With("address", addr).
-			Wrapf(err, "failed to dial %s://%s", network, addr)
+		return nil, wrapTransportError("DIAL_FAILED", network, addr,
+			"failed to dial %s://%s", err, network, addr)
 	}
 	return conn, nil
 }
@@ -82,12 +78,8 @@ func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*
 	noiseConn, err := NewNoiseConn(conn, config)
 	if err != nil {
 		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNoiseConn"}).WithError(err).Error("Failed to create NoiseConn")
-		return nil, oops.
-			Code("NOISE_CONN_FAILED").
-			In("transport").
-			With("network", network).
-			With("address", addr).
-			Wrapf(err, "failed to create noise connection")
+		return nil, wrapTransportError("NOISE_CONN_FAILED", network, addr,
+			"failed to create noise connection", err)
 	}
 	return noiseConn, nil
 }

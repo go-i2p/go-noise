@@ -10,31 +10,34 @@ import (
 	"github.com/samber/oops"
 )
 
-// PaddingModifier implements padding-based obfuscation by adding random
+// GenericPaddingModifier implements padding-based obfuscation by adding random
 // padding to handshake messages and removing it during processing.
 //
-// WARNING: PaddingModifier uses a custom wire format ([4-byte big-endian length][data][padding])
+// WARNING: GenericPaddingModifier uses a custom wire format ([4-byte big-endian length][data][padding])
 // that is NOT part of any I2P specification. It MUST NOT be used in NTCP2 modifier chains
 // or any context that expects fixed-size protocol fields (e.g., NTCP2 Message 1 is exactly
-// 64 bytes per spec §3.2). Using PaddingModifier in place of ntcp2.NTCP2PaddingModifier will
+// 64 bytes per spec §3.2). Using GenericPaddingModifier in place of ntcp2.NTCP2PaddingModifier will
 // produce non-interoperable messages with no error at the modifier layer.
 //
 // For I2P NTCP2 transport contexts, use ntcp2.NTCP2PaddingModifier instead.
 //
-// PaddingModifier is phase-aware: it only applies padding during handshake phases
+// GenericPaddingModifier is phase-aware: it only applies padding during handshake phases
 // (PhaseInitial, PhaseExchange, PhaseFinal). For PhaseData and any unknown phase,
 // data is passed through unmodified to prevent silent corruption of post-handshake
 // transport messages.
-type PaddingModifier struct {
+type GenericPaddingModifier struct {
 	name       string
 	minPadding int
 	maxPadding int
 }
 
-// NewPaddingModifier creates a new padding modifier with the specified
+// Deprecated: Use GenericPaddingModifier instead.
+type PaddingModifier = GenericPaddingModifier
+
+// NewGenericPaddingModifier creates a new generic padding modifier with the specified
 // minimum and maximum padding sizes.
-func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewPaddingModifier", "name": name, "min": minPadding, "max": maxPadding}).Debug("Creating padding modifier")
+func NewGenericPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error) {
+	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewGenericPaddingModifier", "name": name, "min": minPadding, "max": maxPadding}).Debug("Creating generic padding modifier")
 	if minPadding < 0 {
 		return nil, oops.
 			Code("INVALID_PADDING").
@@ -52,11 +55,16 @@ func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifi
 			Errorf("maximum padding cannot be less than minimum padding")
 	}
 
-	return &PaddingModifier{
+	return &GenericPaddingModifier{
 		name:       name,
 		minPadding: minPadding,
 		maxPadding: maxPadding,
 	}, nil
+}
+
+// Deprecated: Use NewGenericPaddingModifier instead.
+func NewPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error) {
+	return NewGenericPaddingModifier(name, minPadding, maxPadding)
 }
 
 // ModifyOutbound adds padding to outbound handshake data.
@@ -66,7 +74,7 @@ func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifi
 // For PhaseData (and any future phases beyond PhaseFinal), data is returned
 // unmodified. This prevents silent corruption of post-handshake transport
 // messages that use their own framing (e.g., Noise transport, NTCP2 SipHash).
-func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
+func (pm *GenericPaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	if phase > PhaseFinal {
 		return data, nil // Post-handshake: pass through unmodified
 	}
@@ -75,7 +83,7 @@ func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]
 		return data, nil // No padding configured
 	}
 
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "PaddingModifier.ModifyOutbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier outbound")
+	log.WithFields(logger.Fields{"pkg": "handshake", "func": "GenericPaddingModifier.ModifyOutbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier outbound")
 
 	// Guard: reject data larger than the 4-byte length prefix can encode.
 	// This branch is unreachable on 32-bit platforms (where len() <= MaxInt32 < MaxUint32)
@@ -135,7 +143,7 @@ func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]
 // For PhaseData (and any future phases beyond PhaseFinal), data is returned
 // unmodified. This mirrors ModifyOutbound's phase guard and prevents
 // misinterpretation of post-handshake transport frames as padded messages.
-func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
+func (pm *GenericPaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	if phase > PhaseFinal {
 		return data, nil // Post-handshake: pass through unmodified
 	}
@@ -144,7 +152,7 @@ func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]b
 		return data, nil // No padding configured, return data unchanged
 	}
 
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "PaddingModifier.ModifyInbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier inbound")
+	log.WithFields(logger.Fields{"pkg": "handshake", "func": "GenericPaddingModifier.ModifyInbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier inbound")
 
 	if len(data) < 4 {
 		return nil, oops.
@@ -181,12 +189,12 @@ func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]b
 }
 
 // Name returns the name of the padding modifier for logging and debugging.
-func (pm *PaddingModifier) Name() string {
+func (pm *GenericPaddingModifier) Name() string {
 	return pm.name
 }
 
-// Close is a no-op for PaddingModifier because it holds no sensitive key material.
+// Close is a no-op for GenericPaddingModifier because it holds no sensitive key material.
 // It satisfies the HandshakeModifier lifecycle contract.
-func (pm *PaddingModifier) Close() error {
+func (pm *GenericPaddingModifier) Close() error {
 	return nil
 }
