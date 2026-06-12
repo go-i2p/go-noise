@@ -29,6 +29,15 @@ const (
 	StateClosed = mod.StateClosed
 )
 
+// roleStr returns "initiator" when initiator is true, "responder" otherwise.
+// Used as a log field value throughout the conn package.
+func roleStr(initiator bool) string {
+	if initiator {
+		return "initiator"
+	}
+	return "responder"
+}
+
 // ConnState represents the state of a NoiseConn
 type ConnState = mod.ConnState
 
@@ -153,7 +162,7 @@ func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*Conn, error) {
 		"pkg":         "noise",
 		"func":        "NewNoiseConn",
 		"pattern":     nc.config.Pattern,
-		"role":        map[bool]string{true: "initiator", false: "responder"}[nc.config.Initiator],
+		"role":        roleStr(nc.config.Initiator),
 		"local_addr":  nc.localAddr.String(),
 		"remote_addr": nc.remoteAddr.String(),
 	}).Debug("noise connection created")

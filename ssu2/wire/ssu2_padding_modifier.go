@@ -84,15 +84,12 @@ func NewSSU2PaddingModifierWithMTU(name string, minPad, maxPad, mtu int, aeadMod
 	}, nil
 }
 
-// NewSSU2PaddingModifierForTesting creates a modifier with deterministic padding.
-// WARNING: This should NEVER be used in production as it compromises security.
-func NewSSU2PaddingModifierForTesting(name string, minPad, maxPad int, aeadMode bool) (*SSU2PaddingModifier, error) {
-	modifier, err := NewSSU2PaddingModifier(name, minPad, maxPad, aeadMode)
-	if err != nil {
-		return nil, err
-	}
-	modifier.engine.Config.TestMode = true
-	return modifier, nil
+// WithTestMode enables deterministic (non-random) padding for this modifier.
+// WARNING: For testing only — deterministic padding compromises security.
+// Returns the receiver for method chaining.
+func (spm *SSU2PaddingModifier) WithTestMode() *SSU2PaddingModifier {
+	spm.engine.Config.TestMode = true
+	return spm
 }
 
 // ModifyOutbound adds MTU-aware padding based on message phase.

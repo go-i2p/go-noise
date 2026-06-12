@@ -319,3 +319,13 @@ func assertSipHashFrameRoundTrip(
 	require.NoError(t, err)
 	assert.Equal(t, payload, buf, fmt.Sprintf("%s: payload must survive SipHash framing round-trip", direction))
 }
+
+// newNTCP2TestModifier creates a deterministic (TestMode) NTCP2 padding modifier.
+func newNTCP2TestModifier(t *testing.T, name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error) {
+	t.Helper()
+	mod, err := NewNTCP2PaddingModifier(name, minPadding, maxPadding, useAEADPadding)
+	if err != nil {
+		return nil, err
+	}
+	return mod.WithTestMode(), nil
+}

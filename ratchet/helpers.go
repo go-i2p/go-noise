@@ -107,9 +107,3 @@ func (sm *SessionManager) lookupLockedSession(sessionTag [8]byte) (*Session, err
 	session.mu.Lock()
 	return session, nil
 }
-
-// applyRatchetKeys performs a DH ratchet step and applies the derived keys
-// to the session's ratchet state for the given direction. When send is true,
-// it updates the sending ratchet state; when false, the receiving state.
-// This consolidates the common PerformRatchet + deriveTagAndSymKeysFromChainKey
-// + assign pattern shared by applyRecvRatchetKeys and applySendRatchetKeys.

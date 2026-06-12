@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
+	modvalidation "github.com/go-i2p/go-noise/mod/validation"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -220,18 +221,8 @@ func WrapNTCP2Listener(listener net.Listener, config *Config) (*Listener, error)
 
 // validateBasicParams validates common parameters for dial and listen operations.
 func validateBasicParams(network, addr string, config *Config) error {
-	if network == "" {
-		return oops.
-			Code("INVALID_NETWORK").
-			In("ntcp2").
-			Errorf("network cannot be empty")
-	}
-
-	if addr == "" {
-		return oops.
-			Code("INVALID_ADDRESS").
-			In("ntcp2").
-			Errorf("address cannot be empty")
+	if err := modvalidation.ValidateNetworkAddr(network, addr, "ntcp2"); err != nil {
+		return err
 	}
 
 	if config == nil {

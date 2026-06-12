@@ -1,25 +1,14 @@
 package noise
 
 import (
+	"github.com/go-i2p/go-noise/mod/validation"
 	"github.com/samber/oops"
 )
 
 // validateNetworkAddr validates the network and address parameters shared
 // by validateDialParams and validateListenParams.
 func validateNetworkAddr(network, addr string) error {
-	if network == "" {
-		return oops.
-			Code("INVALID_NETWORK").
-			Errorf("network cannot be empty")
-	}
-
-	if addr == "" {
-		return oops.
-			Code("INVALID_ADDRESS").
-			Errorf("address cannot be empty")
-	}
-
-	return nil
+	return validation.ValidateNetworkAddr(network, addr, "noise")
 }
 
 // validateDialParams validates parameters for DialNoise function.

@@ -102,3 +102,21 @@ func ValidateTransportConfig(timeout time.Duration, retries int, backoff time.Du
 	}
 	return ValidateRetryConfig(retries, backoff, pkg)
 }
+
+// ValidateNetworkAddr checks that the network and address strings are non-empty.
+// This is the canonical check shared by the root noise package, ntcp2, and ssu2.
+func ValidateNetworkAddr(network, addr, pkg string) error {
+	if network == "" {
+		return oops.
+			Code("INVALID_NETWORK").
+			In(pkg).
+			Errorf("network cannot be empty")
+	}
+	if addr == "" {
+		return oops.
+			Code("INVALID_ADDRESS").
+			In(pkg).
+			Errorf("address cannot be empty")
+	}
+	return nil
+}

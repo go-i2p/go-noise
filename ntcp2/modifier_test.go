@@ -334,7 +334,7 @@ func TestNTCP2PaddingModifier_Creation(t *testing.T) {
 
 func TestNTCP2PaddingModifier_CleartextPadding(t *testing.T) {
 	// Test cleartext padding for messages 1 and 2 with production-grade implementation
-	modifier, err := NewNTCP2PaddingModifierForTesting("cleartext_test", 4, 16, false)
+	modifier, err := newNTCP2TestModifier(t, "cleartext_test", 4, 16, false)
 	require.NoError(t, err)
 
 	originalData := []byte("test handshake data")
@@ -384,7 +384,7 @@ func TestNTCP2PaddingModifier_AEADPadding(t *testing.T) {
 	// AEAD padding is only applied during PhaseData (post-handshake), not
 	// PhaseFinal (message 3), because message 3 padding must be included
 	// in m3p2Len which is committed in message 1.
-	modifier, err := NewNTCP2PaddingModifierForTesting("aead_test", 4, 16, true)
+	modifier, err := newNTCP2TestModifier(t, "aead_test", 4, 16, true)
 	require.NoError(t, err)
 
 	originalData := []byte("test data phase message")
@@ -432,7 +432,7 @@ func TestNTCP2PaddingModifier_AEADPadding(t *testing.T) {
 
 func TestNTCP2PaddingModifier_NoPadding(t *testing.T) {
 	// Test with no padding configured
-	modifier, err := NewNTCP2PaddingModifierForTesting("no_padding", 0, 0, false)
+	modifier, err := newNTCP2TestModifier(t, "no_padding", 0, 0, false)
 	require.NoError(t, err)
 
 	testData := []byte("test data")
@@ -443,9 +443,9 @@ func TestNTCP2PaddingModifier_NoPadding(t *testing.T) {
 }
 
 func TestNTCP2PaddingModifier_PhaseMatching(t *testing.T) {
-	cleartextModifier, err := NewNTCP2PaddingModifierForTesting("cleartext", 4, 8, false)
+	cleartextModifier, err := newNTCP2TestModifier(t, "cleartext", 4, 8, false)
 	require.NoError(t, err)
-	aeadModifier, err := NewNTCP2PaddingModifierForTesting("aead", 4, 8, true)
+	aeadModifier, err := newNTCP2TestModifier(t, "aead", 4, 8, true)
 	require.NoError(t, err)
 
 	testData := []byte("test data")
@@ -485,7 +485,7 @@ func TestNTCP2Modifiers_Integration(t *testing.T) {
 	aesModifier, err := NewAESObfuscationModifier("aes", routerHash, iv)
 	require.NoError(t, err)
 
-	cleartextPadding, err := NewNTCP2PaddingModifierForTesting("cleartext_pad", 4, 8, false)
+	cleartextPadding, err := newNTCP2TestModifier(t, "cleartext_pad", 4, 8, false)
 	require.NoError(t, err)
 
 	sipKeys := [2]uint64{0x0123456789ABCDEF, 0xFEDCBA9876543210}
@@ -585,7 +585,7 @@ func TestNTCP2PaddingModifier_ProductionFeatures(t *testing.T) {
 	})
 
 	t.Run("AEAD Frame Validation", func(t *testing.T) {
-		modifier, err := NewNTCP2PaddingModifierForTesting("validation_test", 4, 8, true)
+		modifier, err := newNTCP2TestModifier(t, "validation_test", 4, 8, true)
 		require.NoError(t, err)
 
 		// Create proper I2P block format data
@@ -659,7 +659,7 @@ func TestNTCP2PaddingModifier_SecurityProperties(t *testing.T) {
 		assert.False(t, allSame, "Production padding should be non-deterministic")
 
 		// Test deterministic mode produces same results
-		testMod, err := NewNTCP2PaddingModifierForTesting("test", 4, 16, false)
+		testMod, err := newNTCP2TestModifier(t, "test", 4, 16, false)
 		require.NoError(t, err)
 
 		result1, err := testMod.ModifyOutbound(handshake.PhaseInitial, testData)
@@ -671,7 +671,7 @@ func TestNTCP2PaddingModifier_SecurityProperties(t *testing.T) {
 	})
 
 	t.Run("AEAD Block Parsing Security", func(t *testing.T) {
-		modifier, err := NewNTCP2PaddingModifierForTesting("security_test", 4, 8, true)
+		modifier, err := newNTCP2TestModifier(t, "security_test", 4, 8, true)
 		require.NoError(t, err)
 
 		// Test malformed block handling - should handle gracefully without error
@@ -699,7 +699,7 @@ func TestNTCP2PaddingModifier_SecurityProperties(t *testing.T) {
 func TestNTCP2PaddingModifier_I2PCompliance(t *testing.T) {
 	t.Run("Handshake Phase Compliance", func(t *testing.T) {
 		// Messages 1-2: cleartext padding (outside AEAD)
-		cleartextMod, err := NewNTCP2PaddingModifierForTesting("msg12", 0, 31, false)
+		cleartextMod, err := newNTCP2TestModifier(t, "msg12", 0, 31, false)
 		require.NoError(t, err)
 
 		msg1Data := []byte("SessionRequest ephemeral key and options")
@@ -710,7 +710,7 @@ func TestNTCP2PaddingModifier_I2PCompliance(t *testing.T) {
 		assert.NotEqual(t, byte(254), padded1[len(msg1Data)]) // No AEAD padding block
 
 		// Message 3+: AEAD padding (inside AEAD frames)
-		aeadMod, err := NewNTCP2PaddingModifierForTesting("msg3", 0, 32, true)
+		aeadMod, err := newNTCP2TestModifier(t, "msg3", 0, 32, true)
 		require.NoError(t, err)
 
 		msg3Data := []byte("SessionConfirmed RouterInfo and options")
@@ -722,7 +722,7 @@ func TestNTCP2PaddingModifier_I2PCompliance(t *testing.T) {
 	})
 
 	t.Run("Data Phase Block Format", func(t *testing.T) {
-		modifier, err := NewNTCP2PaddingModifierForTesting("data_phase", 8, 16, true)
+		modifier, err := newNTCP2TestModifier(t, "data_phase", 8, 16, true)
 		require.NoError(t, err)
 
 		// Simulate data phase message with I2NP message block
@@ -1101,7 +1101,7 @@ func TestAuditFix_RemoveTrailingPaddingBlock_BoundedByMaxPadding(t *testing.T) {
 	data[len(payload)+1] = byte(paddingSize >> 8)
 	data[len(payload)+2] = byte(paddingSize)
 
-	result, err := modifier.removeTrailingPaddingBlock(data)
+	result, err := modifier.removeAEADPadding(data)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(data), len(result),
@@ -1121,7 +1121,7 @@ func TestAuditFix_RemoveTrailingPaddingBlock_WithinMaxPadding(t *testing.T) {
 	data[len(payload)+1] = 0
 	data[len(payload)+2] = byte(paddingSize)
 
-	result, err := modifier.removeTrailingPaddingBlock(data)
+	result, err := modifier.removeAEADPadding(data)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(payload), len(result),

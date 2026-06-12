@@ -63,8 +63,9 @@ func (nc *Conn) applyHandshakeInbound(phase handshake.HandshakePhase, data []byt
 	return chain.ModifyInbound(phase, data)
 }
 
-// validateWriteState validates the connection state before writing.
-func (nc *Conn) validateWriteState() error {
+// validateIOState validates the connection state before a read or write.
+// direction should be "read" or "write".
+func (nc *Conn) validateIOState(direction string) error {
 	if nc.isClosed() {
 		return oops.
 			Code("CONN_CLOSED").
@@ -81,15 +82,29 @@ func (nc *Conn) validateWriteState() error {
 			Errorf("handshake not completed")
 	}
 
-	if nc.sendCipherState == nil {
+	if direction == "write" && nc.sendCipherState == nil {
 		return oops.
 			Code("NO_CIPHER_STATE").
 			In("noise").
 			Errorf("send cipher state not initialized")
 	}
 
+	if direction == "read" && nc.recvCipherState == nil {
+		return oops.
+			Code("NO_CIPHER_STATE").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("receive cipher state not initialized")
+	}
+
 	return nil
 }
+
+// validateWriteState validates the connection state before writing.
+func (nc *Conn) validateWriteState() error { return nc.validateIOState("write") }
+
+// validateReadState validates the connection state before reading.
+func (nc *Conn) validateReadState() error { return nc.validateIOState("read") }
 
 // configureWriteTimeout sets the write timeout if configured.
 func (nc *Conn) configureWriteTimeout() error {
@@ -144,35 +159,6 @@ func (nc *Conn) writeEncryptedData(originalData, encryptedData []byte) (int, err
 	}).Trace("encrypted data written to wire")
 
 	return len(originalData), nil
-}
-
-// validateReadState validates the connection state before reading.
-func (nc *Conn) validateReadState() error {
-	if nc.isClosed() {
-		return oops.
-			Code("CONN_CLOSED").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("connection is closed")
-	}
-
-	if !nc.isHandshakeDone() {
-		return oops.
-			Code("HANDSHAKE_NOT_DONE").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("handshake not completed")
-	}
-
-	if nc.recvCipherState == nil {
-		return oops.
-			Code("NO_CIPHER_STATE").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("receive cipher state not initialized")
-	}
-
-	return nil
 }
 
 // configureReadTimeout sets the read timeout if configured.

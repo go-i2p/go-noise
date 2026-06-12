@@ -10,37 +10,30 @@ import (
 	"github.com/samber/oops"
 )
 
-// guardReadNonce rejects read operations when the nonce counter has reached MaxNonce.
-// Per the spec: "Connection must be dropped and restarted after it reaches that value."
-func (nc *Conn) guardReadNonce() error {
-	if nc.readNonce >= MaxNonce {
+// guardNonce rejects read or write operations when the nonce counter has
+// reached MaxNonce. Per the spec: "Connection must be dropped and restarted
+// after it reaches that value." direction should be "read" or "write".
+func (nc *Conn) guardNonce(nonce uint64, direction string) error {
+	if nonce >= MaxNonce {
 		nc.broken.Store(true)
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.guardReadNonce", "read_nonce": nc.readNonce}).Error("Read nonce exhausted, connection must be terminated")
+		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.guardNonce", direction + "_nonce": nonce}).Error(direction + " nonce exhausted, connection must be terminated")
 		return oops.
 			Code("NONCE_EXHAUSTED").
 			In("ntcp2").
-			With("read_nonce", nc.readNonce).
+			With(direction+"_nonce", nonce).
 			With("max_nonce", MaxNonce).
-			Errorf("read nonce exhausted (reached %d), connection must be terminated", nc.readNonce)
+			Errorf("%s nonce exhausted (reached %d), connection must be terminated", direction, nonce)
 	}
 	return nil
 }
 
+// guardReadNonce rejects read operations when the nonce counter has reached MaxNonce.
+// Per the spec: "Connection must be dropped and restarted after it reaches that value."
+func (nc *Conn) guardReadNonce() error { return nc.guardNonce(nc.readNonce, "read") }
+
 // guardWriteNonce rejects write operations when the nonce counter has reached MaxNonce.
 // Per the spec: "Connection must be dropped and restarted after it reaches that value."
-func (nc *Conn) guardWriteNonce() error {
-	if nc.writeNonce >= MaxNonce {
-		nc.broken.Store(true)
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.guardWriteNonce", "write_nonce": nc.writeNonce}).Error("Write nonce exhausted, connection must be terminated")
-		return oops.
-			Code("NONCE_EXHAUSTED").
-			In("ntcp2").
-			With("write_nonce", nc.writeNonce).
-			With("max_nonce", MaxNonce).
-			Errorf("write nonce exhausted (reached %d), connection must be terminated", nc.writeNonce)
-	}
-	return nil
-}
+func (nc *Conn) guardWriteNonce() error { return nc.guardNonce(nc.writeNonce, "write") }
 
 // applyProbingResistanceDelay applies the same probing-resistance delay
 // as handleAEADError, per the NTCP2 spec: "Take the same error action

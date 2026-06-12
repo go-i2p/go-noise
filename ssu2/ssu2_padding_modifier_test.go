@@ -10,6 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newSSU2TestModifier creates a deterministic (TestMode) SSU2 padding modifier.
+func newSSU2TestModifier(t *testing.T, name string, minPad, maxPad int, aeadMode bool) (*SSU2PaddingModifier, error) {
+	t.Helper()
+	mod, err := NewSSU2PaddingModifier(name, minPad, maxPad, aeadMode)
+	if err != nil {
+		return nil, err
+	}
+	return mod.WithTestMode(), nil
+}
+
 // TestNewSSU2PaddingModifier tests the constructor validation
 func TestNewSSU2PaddingModifier(t *testing.T) {
 	tests := []struct {
@@ -148,7 +158,7 @@ func TestSSU2PaddingModifier_MTUConstraints(t *testing.T) {
 
 // TestSSU2PaddingModifier_CleartextPadding tests cleartext padding
 func TestSSU2PaddingModifier_CleartextPadding(t *testing.T) {
-	mod, err := NewSSU2PaddingModifierForTesting("test-cleartext", 16, 32, false)
+	mod, err := newSSU2TestModifier(t, "test-cleartext", 16, 32, false)
 	require.NoError(t, err)
 
 	data := []byte("Hello, SSU2!")
@@ -166,7 +176,7 @@ func TestSSU2PaddingModifier_CleartextPadding(t *testing.T) {
 
 // TestSSU2PaddingModifier_AEADPadding tests AEAD padding
 func TestSSU2PaddingModifier_AEADPadding(t *testing.T) {
-	mod, err := NewSSU2PaddingModifierForTesting("test-aead", 16, 32, true)
+	mod, err := newSSU2TestModifier(t, "test-aead", 16, 32, true)
 	require.NoError(t, err)
 
 	data := []byte("Hello, SSU2!")
@@ -421,7 +431,7 @@ func TestSSU2PaddingModifier_SecureRandomness(t *testing.T) {
 
 // TestSSU2PaddingModifier_DeterministicTesting tests deterministic mode
 func TestSSU2PaddingModifier_DeterministicTesting(t *testing.T) {
-	mod, err := NewSSU2PaddingModifierForTesting("test-deterministic", 16, 32, true)
+	mod, err := newSSU2TestModifier(t, "test-deterministic", 16, 32, true)
 	require.NoError(t, err)
 
 	data := []byte("deterministic test")

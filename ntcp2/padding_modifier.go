@@ -74,15 +74,12 @@ func NewNTCP2PaddingModifierWithRatio(name string, minPadding, maxPadding int, u
 	}, nil
 }
 
-// NewNTCP2PaddingModifierForTesting creates a modifier with deterministic padding for testing.
-// This should NEVER be used in production as it compromises security.
-func NewNTCP2PaddingModifierForTesting(name string, minPadding, maxPadding int, useAEADPadding bool) (*NTCP2PaddingModifier, error) {
-	modifier, err := NewNTCP2PaddingModifier(name, minPadding, maxPadding, useAEADPadding)
-	if err != nil {
-		return nil, err
-	}
-	modifier.engine.Config.TestMode = true
-	return modifier, nil
+// WithTestMode enables deterministic (non-random) padding for this modifier.
+// WARNING: For testing only — deterministic padding compromises security.
+// Returns the receiver for method chaining.
+func (npm *NTCP2PaddingModifier) WithTestMode() *NTCP2PaddingModifier {
+	npm.engine.Config.TestMode = true
+	return npm
 }
 
 // ModifyOutbound adds NTCP2-specific padding based on message phase.
@@ -134,11 +131,6 @@ func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, d
 // removeAEADPadding removes a trailing AEAD padding block via the shared engine.
 func (npm *NTCP2PaddingModifier) removeAEADPadding(data []byte) ([]byte, error) {
 	return npm.engine.RemoveTrailingAEADPadding(data, npm.engine.Config.MaxPadding)
-}
-
-// removeTrailingPaddingBlock delegates to removeAEADPadding for backward compatibility.
-func (npm *NTCP2PaddingModifier) removeTrailingPaddingBlock(data []byte) ([]byte, error) {
-	return npm.removeAEADPadding(data)
 }
 
 // parseBlockStructure analyzes data as I2P block format and tracks parsing state.

@@ -150,6 +150,21 @@ func DialSSU2WithConnAndHandshake(packetConn net.PacketConn, remoteAddr *net.UDP
 	return DialSSU2WithConnAndHandshakeContext(context.Background(), packetConn, remoteAddr, config)
 }
 
+// performSSU2Handshake performs the Noise handshake on an already-created
+// SSU2Conn, closing the conn and returning a wrapped error on failure.
+// Both DialSSU2WithHandshakeContext and DialSSU2WithConnAndHandshakeContext
+// delegate their identical handshake+cleanup tail to this helper.
+func performSSU2Handshake(ctx context.Context, conn *SSU2Conn) (*SSU2Conn, error) {
+	if err := conn.Handshake(ctx); err != nil {
+		conn.Close()
+		return nil, oops.
+			Code("HANDSHAKE_FAILED").
+			In("ssu2_transport").
+			Wrapf(err, "SSU2 handshake failed")
+	}
+	return conn, nil
+}
+
 // DialSSU2WithConnAndHandshakeContext creates an SSU2 connection over an existing
 // PacketConn and performs the handshake with context support.
 func DialSSU2WithConnAndHandshakeContext(ctx context.Context, packetConn net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
@@ -158,18 +173,7 @@ func DialSSU2WithConnAndHandshakeContext(ctx context.Context, packetConn net.Pac
 	if err != nil {
 		return nil, err
 	}
-
-	// Perform handshake with context
-	if err := conn.Handshake(ctx); err != nil {
-		conn.Close()
-		return nil, oops.
-			Code("HANDSHAKE_FAILED").
-			In("ssu2_transport").
-			With("remote_address", remoteAddr).
-			Wrapf(err, "SSU2 handshake failed")
-	}
-
-	return conn, nil
+	return performSSU2Handshake(ctx, conn)
 }
 
 // DialSSU2WithHandshakeContext creates an SSU2 connection and performs the handshake with context.
@@ -193,19 +197,7 @@ func DialSSU2WithHandshakeContext(ctx context.Context, localAddr, remoteAddr *ne
 	if err != nil {
 		return nil, err
 	}
-
-	// Perform handshake with context
-	if err := conn.Handshake(ctx); err != nil {
-		conn.Close()
-		return nil, oops.
-			Code("HANDSHAKE_FAILED").
-			In("ssu2_transport").
-			With("local_address", localAddr).
-			With("remote_address", remoteAddr).
-			Wrapf(err, "SSU2 handshake failed")
-	}
-
-	return conn, nil
+	return performSSU2Handshake(ctx, conn)
 }
 
 // ListenSSU2 creates an SSU2 listener on the specified address.

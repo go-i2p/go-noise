@@ -209,10 +209,9 @@ var (
 	NewChaChaObfuscationModifier = wire.NewChaChaObfuscationModifier
 
 	// SSU2 padding modifier constructors
-	NewSSU2PaddingModifier           = wire.NewSSU2PaddingModifier
-	NewSSU2PaddingModifierWithRatio  = wire.NewSSU2PaddingModifierWithRatio
-	NewSSU2PaddingModifierWithMTU    = wire.NewSSU2PaddingModifierWithMTU
-	NewSSU2PaddingModifierForTesting = wire.NewSSU2PaddingModifierForTesting
+	NewSSU2PaddingModifier          = wire.NewSSU2PaddingModifier
+	NewSSU2PaddingModifierWithRatio = wire.NewSSU2PaddingModifierWithRatio
+	NewSSU2PaddingModifierWithMTU   = wire.NewSSU2PaddingModifierWithMTU
 
 	// IntroKey / StaticKey helpers
 	IntroKeyFromRouterAddress  = wire.IntroKeyFromRouterAddress
