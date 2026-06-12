@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/iobuf"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -39,23 +40,7 @@ func (nc *Conn) Read(b []byte) (int, error) {
 	nc.readMu.Lock()
 	defer nc.readMu.Unlock()
 	// Drain buffered plaintext from a previous oversized frame first.
-	if len(nc.readBuffer) > 0 {
-		n := copy(b, nc.readBuffer)
-		nc.readBuffer = nc.readBuffer[n:]
-		if len(nc.readBuffer) == 0 {
-			// Zero accessible backing memory to limit plaintext lingering.
-			// After the reslice above, nc.readBuffer has len==0 but cap>0.
-			// Reslicing to [:cap] exposes the original backing array so we
-			// can zero it before releasing the reference. This is a standard
-			// Go idiom for wiping slice-backed memory without allocating.
-			if c := cap(nc.readBuffer); c > 0 {
-				tail := nc.readBuffer[:c]
-				for i := range tail {
-					tail[i] = 0
-				}
-			}
-			nc.readBuffer = nil
-		}
+	if n, drained := iobuf.DrainPendingBuffer(&nc.readBuffer, b, true); drained || n > 0 {
 		return n, nil
 	}
 	return nc.readFramed(b)
@@ -108,9 +93,7 @@ func (nc *Conn) readFramed(b []byte) (int, error) {
 	// Per the NTCP2 spec: "routers should zero-out any in-memory ephemeral data".
 	// Note: bufferPlaintext deep-copies the overflow into readBuffer, so zeroing
 	// plaintext here is safe and does not affect the buffered remainder.
-	for i := range plaintext {
-		plaintext[i] = 0
-	}
+	clear(plaintext)
 
 	nc.readNonce++
 

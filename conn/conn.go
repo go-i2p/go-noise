@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/iobuf"
 	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/go-noise/mod"
 	shutdown "github.com/go-i2p/go-noise/shutdown"
@@ -188,13 +189,7 @@ func (nc *Conn) Read(b []byte) (int, error) {
 	defer nc.readMutex.Unlock()
 
 	// First, drain any pending plaintext from a previous Read call
-	if len(nc.pendingPlaintext) > 0 {
-		n := copy(b, nc.pendingPlaintext)
-		nc.pendingPlaintext = nc.pendingPlaintext[n:]
-		// Zero the consumed portion if fully drained
-		if len(nc.pendingPlaintext) == 0 {
-			nc.pendingPlaintext = nil
-		}
+	if n, drained := iobuf.DrainPendingBuffer(&nc.pendingPlaintext, b, true); drained || n > 0 {
 		nc.metrics.AddBytesRead(int64(n))
 		nc.logger.Trace("Data read from pending", i2plogger.Fields{
 			"copied_len": n,

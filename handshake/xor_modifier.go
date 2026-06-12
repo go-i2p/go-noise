@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/go-i2p/crypto/rand"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -109,9 +110,7 @@ func (xm *XORModifier) Close() error {
 	xm.mu.Lock()
 	defer xm.mu.Unlock()
 
-	for i := range xm.xorKey {
-		xm.xorKey[i] = 0
-	}
+	securemem.SecureZero(xm.xorKey)
 	xm.closed = true
 	return nil
 }

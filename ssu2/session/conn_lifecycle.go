@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -114,11 +115,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// Zero pending message buffer to avoid lingering data in memory.
 		// See MEDIUM-1 audit finding.
 		if len(h.pendingMessage) > 0 {
-			// We can't use securemem here without adding a dependency,
-			// but zeroing via slice assignment is sufficient for this buffer.
-			for i := range h.pendingMessage {
-				h.pendingMessage[i] = 0
-			}
+			securemem.SecureZero(h.pendingMessage)
 			h.pendingMessage = nil
 		}
 

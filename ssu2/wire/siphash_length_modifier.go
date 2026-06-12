@@ -16,13 +16,11 @@ const DataLengthFieldSize = pkgsiphash.LengthFieldSize
 type SipHashLengthModifier = pkgsiphash.LengthModifier
 
 // NewSipHashLengthModifier creates a new SipHash length modifier with shared
-// keys for both directions.
-func NewSipHashLengthModifier(name string, sipKeys [2]uint64, initialIV uint64) *SipHashLengthModifier {
-	return pkgsiphash.NewLengthModifier(name, sipKeys, initialIV)
-}
+// keys for both directions. The canonical implementation lives in handshake/siphash;
+// this re-exports it for convenience.
+var NewSipHashLengthModifier = pkgsiphash.NewLengthModifier
 
 // NewSipHashLengthModifierDirectional creates a SipHash length modifier with
-// per-direction keys as required by the SSU2 specification.
-func NewSipHashLengthModifierDirectional(name string, outKeys, inKeys [2]uint64, outIV, inIV uint64) *SipHashLengthModifier {
-	return pkgsiphash.NewLengthModifierDirectional(name, outKeys, inKeys, outIV, inIV)
-}
+// per-direction keys as required by the SSU2 specification. The canonical
+// implementation lives in handshake/siphash; this re-exports it for convenience.
+var NewSipHashLengthModifierDirectional = pkgsiphash.NewLengthModifierDirectional

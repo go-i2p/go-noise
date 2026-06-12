@@ -88,21 +88,23 @@ func normalizePattern(pattern string) string {
 	return pattern
 }
 
-// performInitiatorHandshake handles the initiator side of the handshake.
-func (nc *Conn) performInitiatorHandshake(ctx context.Context) error {
+// performHandshake is a generic handler that consults the appropriate map
+// (initiator or responder) based on the role parameter and invokes the
+// corresponding pattern handler.
+func (nc *Conn) performHandshake(ctx context.Context, role string, handlers map[string]PatternHandlerFunc) error {
 	pattern := nc.config.Pattern
 	nc.logger.WithFields(i2plogger.Fields{
 		"pkg":         "noise",
-		"func":        "NoiseConn.performInitiatorHandshake",
+		"func":        "NoiseConn.performHandshake",
 		"pattern":     pattern,
-		"role":        "initiator",
+		"role":        role,
 		"local_addr":  nc.LocalAddr().String(),
 		"remote_addr": nc.RemoteAddr().String(),
-	}).Debug("performing handshake as initiator")
+	}).Debug("performing handshake as " + role)
 
 	normalized := normalizePattern(pattern)
 	patternMu.RLock()
-	handler, ok := initiatorHandlers[normalized]
+	handler, ok := handlers[normalized]
 	patternMu.RUnlock()
 	if ok {
 		return handler(nc, ctx)
@@ -113,29 +115,14 @@ func (nc *Conn) performInitiatorHandshake(ctx context.Context) error {
 		Errorf("unsupported handshake pattern: %s", pattern)
 }
 
+// performInitiatorHandshake handles the initiator side of the handshake.
+func (nc *Conn) performInitiatorHandshake(ctx context.Context) error {
+	return nc.performHandshake(ctx, "initiator", initiatorHandlers)
+}
+
 // performResponderHandshake handles the responder side of the handshake.
 func (nc *Conn) performResponderHandshake(ctx context.Context) error {
-	pattern := nc.config.Pattern
-	nc.logger.WithFields(i2plogger.Fields{
-		"pkg":         "noise",
-		"func":        "NoiseConn.performResponderHandshake",
-		"pattern":     pattern,
-		"role":        "responder",
-		"local_addr":  nc.LocalAddr().String(),
-		"remote_addr": nc.RemoteAddr().String(),
-	}).Debug("performing handshake as responder")
-
-	normalized := normalizePattern(pattern)
-	patternMu.RLock()
-	handler, ok := responderHandlers[normalized]
-	patternMu.RUnlock()
-	if ok {
-		return handler(nc, ctx)
-	}
-	return oops.
-		Code("UNSUPPORTED_PATTERN").
-		In("noise").
-		Errorf("unsupported handshake pattern: %s", pattern)
+	return nc.performHandshake(ctx, "responder", responderHandlers)
 }
 
 // RegisterPattern registers custom initiator and responder handlers for the

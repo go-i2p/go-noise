@@ -5,15 +5,9 @@ import (
 	"github.com/samber/oops"
 )
 
-// validateNetworkAddr validates the network and address parameters shared
-// by validateDialParams and validateListenParams.
-func validateNetworkAddr(network, addr string) error {
-	return validation.ValidateNetworkAddr(network, addr, "noise")
-}
-
 // validateDialParams validates parameters for DialNoise function.
 func validateDialParams(network, addr string, config *ConnConfig) error {
-	if err := validateNetworkAddr(network, addr); err != nil {
+	if err := validation.ValidateNetworkAddr(network, addr, "noise"); err != nil {
 		return err
 	}
 
@@ -28,7 +22,7 @@ func validateDialParams(network, addr string, config *ConnConfig) error {
 
 // validateListenParams validates parameters for ListenNoise function.
 func validateListenParams(network, addr string, config *ListenerConfig) error {
-	if err := validateNetworkAddr(network, addr); err != nil {
+	if err := validation.ValidateNetworkAddr(network, addr, "noise"); err != nil {
 		return err
 	}
 

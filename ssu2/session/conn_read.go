@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/iobuf"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -51,13 +52,7 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 
 	// Check if we have a pending message from a previous truncated Read.
 	// This mirrors the buffering in conn.Conn.pendingPlaintext.
-	if len(h.pendingMessage) > 0 {
-		n := copy(b, h.pendingMessage)
-		h.pendingMessage = h.pendingMessage[n:]
-		// Zero the consumed portion if fully drained
-		if len(h.pendingMessage) == 0 {
-			h.pendingMessage = nil
-		}
+	if n, drained := iobuf.DrainPendingBuffer(&h.pendingMessage, b, true); drained || n > 0 {
 		log.WithFields(logger.Fields{
 			"pkg": "session", "func": "Read",
 			"copied_len": n, "remaining": len(h.pendingMessage),

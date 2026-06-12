@@ -63,9 +63,8 @@ func (nc *Conn) applyHandshakeInbound(phase handshake.HandshakePhase, data []byt
 	return chain.ModifyInbound(phase, data)
 }
 
-// validateIOState validates the connection state before a read or write.
-// direction should be "read" or "write".
-func (nc *Conn) validateIOState(direction string) error {
+// validateReadState validates the connection state before reading.
+func (nc *Conn) validateReadState() error {
 	if nc.isClosed() {
 		return oops.
 			Code("CONN_CLOSED").
@@ -82,14 +81,7 @@ func (nc *Conn) validateIOState(direction string) error {
 			Errorf("handshake not completed")
 	}
 
-	if direction == "write" && nc.sendCipherState == nil {
-		return oops.
-			Code("NO_CIPHER_STATE").
-			In("noise").
-			Errorf("send cipher state not initialized")
-	}
-
-	if direction == "read" && nc.recvCipherState == nil {
+	if nc.recvCipherState == nil {
 		return oops.
 			Code("NO_CIPHER_STATE").
 			In("noise").
@@ -101,10 +93,32 @@ func (nc *Conn) validateIOState(direction string) error {
 }
 
 // validateWriteState validates the connection state before writing.
-func (nc *Conn) validateWriteState() error { return nc.validateIOState("write") }
+func (nc *Conn) validateWriteState() error {
+	if nc.isClosed() {
+		return oops.
+			Code("CONN_CLOSED").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("connection is closed")
+	}
 
-// validateReadState validates the connection state before reading.
-func (nc *Conn) validateReadState() error { return nc.validateIOState("read") }
+	if !nc.isHandshakeDone() {
+		return oops.
+			Code("HANDSHAKE_NOT_DONE").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("handshake not completed")
+	}
+
+	if nc.sendCipherState == nil {
+		return oops.
+			Code("NO_CIPHER_STATE").
+			In("noise").
+			Errorf("send cipher state not initialized")
+	}
+
+	return nil
+}
 
 // configureWriteTimeout sets the write timeout if configured.
 func (nc *Conn) configureWriteTimeout() error {
