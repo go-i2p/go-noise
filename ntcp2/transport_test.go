@@ -495,7 +495,7 @@ func TestValidateDialParams(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := tt.setupConfig()
-			err := validateDialParams(tt.network, tt.addr, config)
+			err := validateNTCP2DialParams(tt.network, tt.addr, config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -580,7 +580,7 @@ func TestValidateListenParams(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := tt.setupConfig()
-			err := validateListenParams(tt.network, tt.addr, config)
+			err := validateNTCP2ListenParams(tt.network, tt.addr, config)
 
 			if tt.expectError {
 				assert.Error(t, err)

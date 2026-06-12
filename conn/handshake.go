@@ -48,10 +48,14 @@ func (nc *Conn) Handshake(ctx context.Context) error {
 		"max_retries":       nc.config.HandshakeRetries,
 	}).Info("starting noise protocol handshake")
 
-	handshakeCtx := nc.createHandshakeContext(ctx)
-	defer handshakeCtx.cancel()
+	timeout := nc.config.HandshakeTimeout
+	if timeout <= 0 {
+		timeout = defaultHandshakeTimeout
+	}
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, timeout)
+	defer cancelHandshake()
 
-	if err := nc.executeRoleBasedHandshake(handshakeCtx.ctx); err != nil {
+	if err := nc.executeRoleBasedHandshake(handshakeCtx); err != nil {
 		// On failure, recreate the handshake state so that retry attempts
 		// start with fresh nonce counters and chaining key, as required by
 		// the Noise protocol specification.
@@ -286,27 +290,6 @@ func createNoiseAddresses(underlying net.Conn, config *ConnConfig) (*Addr, *Addr
 	remoteAddr := NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, remoteRole)
 
 	return localAddr, remoteAddr
-}
-
-// handshakeContext encapsulates context management for handshake operations.
-type handshakeContext struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-// createHandshakeContext creates a context with timeout for handshake operations.
-// If HandshakeTimeout is zero or negative the default is used (defence-in-depth
-// guard against a future regression that permits a zero value past Validate).
-func (nc *Conn) createHandshakeContext(ctx context.Context) *handshakeContext {
-	timeout := nc.config.HandshakeTimeout
-	if timeout <= 0 {
-		timeout = defaultHandshakeTimeout
-	}
-	handshakeCtx, cancel := context.WithTimeout(ctx, timeout)
-	return &handshakeContext{
-		ctx:    handshakeCtx,
-		cancel: cancel,
-	}
 }
 
 // executeRoleBasedHandshake performs handshake based on initiator/responder role.

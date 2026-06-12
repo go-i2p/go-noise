@@ -16,7 +16,7 @@ import (
 // For more control over the underlying connection, use net.Dial followed by NewNoiseConn and NewNTCP2Conn.
 func DialNTCP2(network, addr string, config *Config) (*Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2", "address": addr}).Debug("Dialing NTCP2 connection")
-	if err := validateDialParams(network, addr, config); err != nil {
+	if err := validateNTCP2DialParams(network, addr, config); err != nil {
 		return nil, err
 	}
 
@@ -87,7 +87,7 @@ func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, co
 // new listener during the overlap window.
 func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ListenNTCP2", "address": addr}).Debug("Creating NTCP2 listener")
-	if err := validateListenParams(network, addr, config); err != nil {
+	if err := validateNTCP2ListenParams(network, addr, config); err != nil {
 		return nil, err
 	}
 
@@ -235,8 +235,8 @@ func validateBasicParams(network, addr string, config *Config) error {
 	return nil
 }
 
-// validateDialParams validates the parameters for dial operations
-func validateDialParams(network, addr string, config *Config) error {
+// validateNTCP2DialParams validates the parameters for dial operations
+func validateNTCP2DialParams(network, addr string, config *Config) error {
 	if err := validateBasicParams(network, addr, config); err != nil {
 		return err
 	}
@@ -268,8 +268,8 @@ func validateDialConfiguration(config *Config) error {
 	return nil
 }
 
-// validateListenParams validates the parameters for listen operations
-func validateListenParams(network, addr string, config *Config) error {
+// validateNTCP2ListenParams validates the parameters for listen operations
+func validateNTCP2ListenParams(network, addr string, config *Config) error {
 	if err := validateBasicParams(network, addr, config); err != nil {
 		return err
 	}

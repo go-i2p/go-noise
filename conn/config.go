@@ -12,8 +12,8 @@ import (
 	"github.com/samber/oops"
 )
 
-// defaultHandshakeTimeout is the fallback applied by createHandshakeContext
-// when HandshakeTimeout is zero or negative (defence-in-depth clamp).
+// defaultHandshakeTimeout is the fallback used by Handshake when
+// HandshakeTimeout is zero or negative (defence-in-depth clamp).
 const defaultHandshakeTimeout = 30 * time.Second
 
 // ConnConfig contains configuration for creating a NoiseConn.

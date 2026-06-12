@@ -142,13 +142,21 @@ func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []
 	return buf
 }
 
+// buildResponseRecordHashInput constructs the 496-byte buffer that is hashed
+// to produce (or verify) the SHA-256 field of a build response record.
+// Layout: randomData[0:495] || reply byte.
+func buildResponseRecordHashInput(randomData [495]byte, reply byte) []byte {
+	data := make([]byte, 496)
+	copy(data[0:495], randomData[:])
+	data[495] = reply
+	return data
+}
+
 // VerifyResponseRecordHash verifies the SHA-256 hash in a serialized response record.
 // The hash covers bytes 32-527 (randomData + reply byte).
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "VerifyResponseRecordHash", "reply_code": reply}).Debug("Verifying response record hash")
-	data := make([]byte, 496)
-	copy(data[0:495], randomData[:])
-	data[495] = reply
+	data := buildResponseRecordHashInput(randomData, reply)
 
 	expectedHash := types.SHA256(data)
 
@@ -168,10 +176,7 @@ func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) e
 // Returns the SHA-256 hash that should be placed in the first 32 bytes of the record.
 func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "CreateBuildResponseRecordRaw", "reply_code": reply}).Debug("Creating build response record hash")
-	data := make([]byte, 496)
-	copy(data[0:495], randomData[:])
-	data[495] = reply
-	return types.SHA256(data)
+	return types.SHA256(buildResponseRecordHashInput(randomData, reply))
 }
 
 // newChaCha20Poly1305 creates a ChaCha20-Poly1305 AEAD cipher and derives the

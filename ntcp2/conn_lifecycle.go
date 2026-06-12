@@ -35,15 +35,6 @@ func (nc *Conn) guardReadNonce() error { return nc.guardNonce(nc.readNonce, "rea
 // Per the spec: "Connection must be dropped and restarted after it reaches that value."
 func (nc *Conn) guardWriteNonce() error { return nc.guardNonce(nc.writeNonce, "write") }
 
-// applyProbingResistanceDelay applies the same probing-resistance delay
-// as handleAEADError, per the NTCP2 spec: "Take the same error action
-// for an invalid length field value in the data phase."
-func (nc *Conn) applyProbingResistanceDelay() {
-	if underlying := nc.noiseConn.Underlying(); underlying != nil {
-		nc.handleAEADError(underlying)
-	}
-}
-
 // handleAEADError implements probing-resistance behaviour on AEAD authentication
 // failure. Per the NTCP2 spec, the receiver should:
 //  1. Read a random number of junk bytes for a random duration.

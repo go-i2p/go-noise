@@ -230,7 +230,9 @@ func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
 func (nc *Conn) validateFrameLength(frameLen uint16) error {
 	if frameLen < MinDataPhaseFrameSize {
 		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.validateFrameLength", "frame_length": frameLen}).Warn("Frame length below minimum")
-		nc.applyProbingResistanceDelay()
+		if underlying := nc.noiseConn.Underlying(); underlying != nil {
+			nc.handleAEADError(underlying)
+		}
 		return oops.
 			Code("FRAME_TOO_SMALL").
 			In("ntcp2").

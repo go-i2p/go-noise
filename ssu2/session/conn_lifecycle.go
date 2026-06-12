@@ -29,10 +29,6 @@ func (h *SSU2Conn) CloseImmediate() error {
 // and optional additional data, then closes the connection.
 // Per spec §Termination, the data is: validDataPacketsReceived (8 bytes)
 // + reason (1 byte) + additional data (optional).
-// CloseWithReason sends a Termination block with the given reason code
-// and optional additional data, then closes the connection.
-// Per spec §Termination, the data is: validDataPacketsReceived (8 bytes)
-// + reason (1 byte) + additional data (optional).
 func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []byte) error {
 	h.closeOnce.Do(func() {
 		log.WithFields(logger.Fields{"pkg": "session", "func": "CloseWithReason", "reason": reason}).Debug("Closing SSU2 connection")
@@ -55,16 +51,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		}
 
 		// Create Data packet with termination block
-		pktNum := h.nextSendSequence()
-		hdr := make([]byte, ShortHeaderSize)
-		binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
-		binary.BigEndian.PutUint32(hdr[8:12], pktNum)
-		packet := &SSU2Packet{
-			MessageType:  MessageTypeData,
-			PacketNumber: pktNum,
-			Header:       hdr,
-			MAC:          make([]byte, MACSize),
-		}
+		packet := h.newDataPacket()
 		payload, err := SerializeBlocks([]*SSU2Block{termBlock})
 		socketDead := false // AUDIT 5.4: Track if socket is dead
 		if err == nil {
@@ -177,7 +164,6 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 }
 
 // LocalAddr implements net.Conn.LocalAddr.
-// LocalAddr implements net.Conn.LocalAddr.
 func (h *SSU2Conn) LocalAddr() net.Addr {
 	if localUDPAddr, ok := h.underlying.LocalAddr().(*net.UDPAddr); ok {
 		role := "initiator"
@@ -193,12 +179,10 @@ func (h *SSU2Conn) LocalAddr() net.Addr {
 }
 
 // RemoteAddr implements net.Conn.RemoteAddr.
-// RemoteAddr implements net.Conn.RemoteAddr.
 func (h *SSU2Conn) RemoteAddr() net.Addr {
 	return h.ssu2Addr
 }
 
-// SendToAddress sends a block to a specific UDP address (implements PathValidationConn).
 // SendToAddress sends a block to a specific UDP address (implements PathValidationConn).
 func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
 	pktNum := h.nextSendSequence()
@@ -225,14 +209,12 @@ func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
 }
 
 // GetRemoteAddr returns the current remote UDP address (implements PathValidationConn).
-// GetRemoteAddr returns the current remote UDP address (implements PathValidationConn).
 func (h *SSU2Conn) GetRemoteAddr() *net.UDPAddr {
 	h.remoteAddrLock.RLock()
 	defer h.remoteAddrLock.RUnlock()
 	return h.remoteAddr
 }
 
-// SetRemoteAddr updates the remote address after successful path validation (implements PathValidationConn).
 // SetRemoteAddr updates the remote address after successful path validation (implements PathValidationConn).
 func (h *SSU2Conn) SetRemoteAddr(addr *net.UDPAddr) error {
 	if addr == nil {
