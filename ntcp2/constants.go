@@ -1,6 +1,10 @@
 package ntcp2
 
-import "time"
+import (
+	"time"
+
+	pkgsiphash "github.com/go-i2p/go-noise/handshake/siphash"
+)
 
 // NTCP2 protocol constants per the I2P NTCP2 specification.
 // Reference: https://i2p.net/en/docs/specs/ntcp2
@@ -37,7 +41,7 @@ const (
 	BlockHeaderSize = 3
 
 	// SipHashIVSize is the size of the SipHash IV in bytes (uint64 = 8 bytes).
-	SipHashIVSize = 8
+	SipHashIVSize = pkgsiphash.IVSize
 
 	// NTCP2ProtocolName is the full Noise protocol name for NTCP2 as defined by the I2P spec.
 	// This is passed to InitializeSymmetric() via the ProtocolName field on noise.Config,

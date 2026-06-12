@@ -3,6 +3,7 @@ package config
 import (
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod/validation"
 	ssu2hs "github.com/go-i2p/go-noise/ssu2/handshake"
 	"github.com/go-i2p/go-noise/ssu2/wire"
@@ -197,15 +198,17 @@ func (sc *SSU2Config) ToConnConfig() (*noise.ConnConfig, error) {
 // createBaseConnConfig creates a base ConnConfig with core SSU2 settings.
 func (sc *SSU2Config) createBaseConnConfig() *noise.ConnConfig {
 	return &noise.ConnConfig{
-		Pattern:          sc.Pattern,
-		Initiator:        sc.Initiator,
-		StaticKey:        make([]byte, len(sc.StaticKey)),
-		ProtocolName:     []byte(ssu2hs.SSU2ProtocolName),
-		HandshakeTimeout: sc.HandshakeTimeout,
-		ReadTimeout:      sc.ReadTimeout,
-		WriteTimeout:     sc.WriteTimeout,
-		HandshakeRetries: sc.HandshakeRetries,
-		RetryBackoff:     sc.RetryBackoff,
+		Pattern:      sc.Pattern,
+		Initiator:    sc.Initiator,
+		StaticKey:    make([]byte, len(sc.StaticKey)),
+		ProtocolName: []byte(ssu2hs.SSU2ProtocolName),
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: sc.HandshakeTimeout,
+			ReadTimeout:      sc.ReadTimeout,
+			WriteTimeout:     sc.WriteTimeout,
+			HandshakeRetries: sc.HandshakeRetries,
+			RetryBackoff:     sc.RetryBackoff,
+		},
 	}
 }
 

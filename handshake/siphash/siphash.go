@@ -21,6 +21,9 @@ var log = logger.GetGoI2PLogger()
 // LengthFieldSize is the 2-byte length field used in both NTCP2 and SSU2.
 const LengthFieldSize = 2
 
+// IVSize is the byte size of a SipHash IV (uint64 = 8 bytes).
+const IVSize = 8
+
 // NextMask computes the next SipHash-2-4 mask value. It updates the IV
 // in place and returns the low 16 bits of the hash as the mask.
 //

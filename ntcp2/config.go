@@ -7,6 +7,7 @@ import (
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod/validation"
 	"github.com/go-i2p/logger"
 	upstreamnoise "github.com/go-i2p/noise"
@@ -23,6 +24,10 @@ const DefaultHandshakeRetries = 3
 // It follows the builder pattern for optional configuration and validation,
 // similar to the main ConnConfig but with NTCP2-specific parameters.
 type Config struct {
+	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
+	// common to all Noise config types in this module.
+	baseconfig.BaseHandshakeConfig
+
 	// Pattern is the Noise protocol pattern for NTCP2
 	// Default: "XK" (standard NTCP2 pattern)
 	Pattern string
@@ -51,27 +56,6 @@ type Config struct {
 	// Distinct from RemoteRouterHash (which is SHA-256 of RouterIdentity)
 	RemoteStaticKey []byte
 
-	// HandshakeTimeout is the maximum time to wait for handshake completion
-	// Default: 30 seconds
-	HandshakeTimeout time.Duration
-
-	// ReadTimeout is the timeout for read operations after handshake
-	// Default: no timeout (0)
-	ReadTimeout time.Duration
-
-	// WriteTimeout is the timeout for write operations after handshake
-	// Default: no timeout (0)
-	WriteTimeout time.Duration
-
-	// HandshakeRetries is the number of handshake retry attempts
-	// Default: 3 attempts (0 = no retries, -1 = infinite retries)
-	HandshakeRetries int
-
-	// RetryBackoff is the base delay between retry attempts
-	// Actual delay uses exponential backoff: delay = RetryBackoff * (2^attempt)
-	// Default: 1 second
-	RetryBackoff time.Duration
-
 	// EnableAESObfuscation enables AES-based ephemeral key obfuscation
 	// Default: true (recommended for production)
 	EnableAESObfuscation bool
@@ -87,11 +71,6 @@ type Config struct {
 	// SipHashKeys are the k1, k2 keys for SipHash length obfuscation
 	// If empty, will be derived during handshake
 	SipHashKeys [2]uint64
-
-	// Modifiers is a list of additional handshake modifiers for custom obfuscation
-	// These are applied in addition to NTCP2's standard modifiers
-	// Default: empty (no additional modifiers)
-	Modifiers []handshake.HandshakeModifier
 
 	// MaxFrameSize is the maximum size of NTCP2 data frames
 	// Default: 16384 bytes (16KB)
@@ -153,14 +132,16 @@ type Config struct {
 func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewNTCP2Config", "initiator": initiator}).Debug("Creating new NTCP2Config")
 	return &Config{
-		Pattern:              NTCP2Pattern,
-		Initiator:            initiator,
-		BobRouterHash:        bobRouterHash,
-		HandshakeTimeout:     DefaultHandshakeTimeoutSeconds * time.Second,
-		ReadTimeout:          0,
-		WriteTimeout:         0,
-		HandshakeRetries:     DefaultHandshakeRetries,
-		RetryBackoff:         1 * time.Second,
+		Pattern:       NTCP2Pattern,
+		Initiator:     initiator,
+		BobRouterHash: bobRouterHash,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: DefaultHandshakeTimeoutSeconds * time.Second,
+			ReadTimeout:      0,
+			WriteTimeout:     0,
+			HandshakeRetries: DefaultHandshakeRetries,
+			RetryBackoff:     1 * time.Second,
+		},
 		EnableAESObfuscation: true,
 		EnableSipHashLength:  true,
 		MaxFrameSize:         DefaultMaxFrameSize,
@@ -593,15 +574,17 @@ func (nc *Config) createBaseConnConfig() *noise.ConnConfig {
 	}
 
 	return &noise.ConnConfig{
-		Pattern:          nc.Pattern,
-		Initiator:        nc.Initiator,
-		StaticKey:        staticKey,
-		RemoteKey:        remoteKey,
-		HandshakeTimeout: nc.HandshakeTimeout,
-		ReadTimeout:      nc.ReadTimeout,
-		WriteTimeout:     nc.WriteTimeout,
-		HandshakeRetries: nc.HandshakeRetries,
-		RetryBackoff:     nc.RetryBackoff,
+		Pattern:   nc.Pattern,
+		Initiator: nc.Initiator,
+		StaticKey: staticKey,
+		RemoteKey: remoteKey,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: nc.HandshakeTimeout,
+			ReadTimeout:      nc.ReadTimeout,
+			WriteTimeout:     nc.WriteTimeout,
+			HandshakeRetries: nc.HandshakeRetries,
+			RetryBackoff:     nc.RetryBackoff,
+		},
 		// NTCP2 mandates ChaChaPoly (ChaCha20-Poly1305 per RFC 7539)
 		CipherSuite: upstreamnoise.NewCipherSuite(
 			upstreamnoise.DH25519,
@@ -748,13 +731,15 @@ func (nc *Config) SipHashModifier() *SipHashLengthModifier {
 // and corrupt handshake state if both configs are active concurrently.
 func (nc *Config) Clone() *Config {
 	clone := &Config{
-		Pattern:              nc.Pattern,
-		Initiator:            nc.Initiator,
-		HandshakeTimeout:     nc.HandshakeTimeout,
-		ReadTimeout:          nc.ReadTimeout,
-		WriteTimeout:         nc.WriteTimeout,
-		HandshakeRetries:     nc.HandshakeRetries,
-		RetryBackoff:         nc.RetryBackoff,
+		Pattern:   nc.Pattern,
+		Initiator: nc.Initiator,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: nc.HandshakeTimeout,
+			ReadTimeout:      nc.ReadTimeout,
+			WriteTimeout:     nc.WriteTimeout,
+			HandshakeRetries: nc.HandshakeRetries,
+			RetryBackoff:     nc.RetryBackoff,
+		},
 		EnableAESObfuscation: nc.EnableAESObfuscation,
 		EnableSipHashLength:  nc.EnableSipHashLength,
 		SipHashKeys:          nc.SipHashKeys,

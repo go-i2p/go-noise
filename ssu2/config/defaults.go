@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/common/router_info"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -75,15 +76,17 @@ func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error
 func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 	log.WithFields(logger.Fields{"pkg": "config", "func": "NewSSU2Config", "initiator": initiator}).Debug("Creating new SSU2Config")
 	return &SSU2Config{
-		Pattern:                  "XK",
-		Initiator:                initiator,
-		AllowLoopback:            true, // Default true for testing; adjust in production as needed
-		RouterHash:               routerHash,
-		HandshakeTimeout:         DefaultHandshakeTimeout,
-		ReadTimeout:              0, // No timeout by default
-		WriteTimeout:             0, // No timeout by default
-		HandshakeRetries:         3,
-		RetryBackoff:             1250 * time.Millisecond,
+		Pattern:       "XK",
+		Initiator:     initiator,
+		AllowLoopback: true, // Default true for testing; adjust in production as needed
+		RouterHash:    routerHash,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: DefaultHandshakeTimeout,
+			ReadTimeout:      0, // No timeout by default
+			WriteTimeout:     0, // No timeout by default
+			HandshakeRetries: 3,
+			RetryBackoff:     1250 * time.Millisecond,
+		},
 		EnableChaChaObfuscation:  true,
 		MTU:                      1280, // IPv6 minimum
 		MaxPacketSize:            1500, // Standard Ethernet

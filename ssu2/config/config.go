@@ -4,13 +4,17 @@ import (
 	"time"
 
 	"github.com/go-i2p/common/data"
-	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 )
 
 // SSU2Config contains configuration for creating SSU2 connections and listeners.
 // SSU2 (Secure Semi-reliable UDP version 2) is I2P's UDP-based transport protocol.
 // It follows the builder pattern for optional configuration and validation.
 type SSU2Config struct {
+	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
+	// common to all Noise config types in this module.
+	baseconfig.BaseHandshakeConfig
+
 	// Pattern is the Noise protocol pattern for SSU2
 	// Default: "XK" (standard SSU2 pattern)
 	Pattern string
@@ -51,27 +55,6 @@ type SSU2Config struct {
 	// the responder's static key). This is NOT the router hash — it is the "s"
 	// parameter from the peer's RouterAddress options.
 	RemoteStaticKey []byte
-
-	// HandshakeTimeout is the maximum time to wait for handshake completion
-	// Default: 15 seconds (per SSU2 specification)
-	HandshakeTimeout time.Duration
-
-	// ReadTimeout is the timeout for read operations after handshake
-	// Default: no timeout (0)
-	ReadTimeout time.Duration
-
-	// WriteTimeout is the timeout for write operations after handshake
-	// Default: no timeout (0)
-	WriteTimeout time.Duration
-
-	// HandshakeRetries is the number of handshake retry attempts
-	// Default: 3 attempts (0 = no retries, -1 = infinite retries)
-	HandshakeRetries int
-
-	// RetryBackoff is the base delay between retry attempts
-	// Actual delay uses exponential backoff: delay = RetryBackoff * (2^attempt)
-	// Default: 1 second
-	RetryBackoff time.Duration
 
 	// EnableChaChaObfuscation enables ChaCha20-based ephemeral key obfuscation
 	// Default: true (recommended for production)
@@ -119,11 +102,6 @@ type SSU2Config struct {
 	// UDP requires active keepalive to maintain connection state
 	// Default: 15 seconds
 	KeepaliveInterval time.Duration
-
-	// Modifiers is a list of additional handshake modifiers for custom obfuscation
-	// These are applied in addition to SSU2's standard modifiers
-	// Default: empty (no additional modifiers)
-	Modifiers []handshake.HandshakeModifier
 
 	// IntroKey is the local router's intro key for header protection (32 bytes).
 	// If nil, header protection is disabled (headers sent in plaintext).

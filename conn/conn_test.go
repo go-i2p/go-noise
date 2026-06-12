@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod"
 	"github.com/go-i2p/noise"
 	"github.com/stretchr/testify/assert"
@@ -114,9 +115,9 @@ func newTestNoiseConn(t *testing.T, pattern string, initiator bool) (*Conn, *moc
 	t.Helper()
 	mock := newDefaultMockConn()
 	config := &ConnConfig{
-		Pattern:          pattern,
-		Initiator:        initiator,
-		HandshakeTimeout: 30 * time.Second,
+		Pattern:             pattern,
+		Initiator:           initiator,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 	}
 	conn, err := NewNoiseConn(mock, config)
 	if err != nil {
@@ -141,16 +142,16 @@ func TestNewNoiseConn(t *testing.T) {
 			name:       "Valid configuration",
 			underlying: mockConn,
 			config: &ConnConfig{
-				Pattern:          "XX",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "XX",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: false,
 		},
 		{
 			name:            "Nil underlying connection",
 			underlying:      nil,
-			config:          &ConnConfig{Pattern: "XX", Initiator: true, HandshakeTimeout: 30 * time.Second},
+			config:          &ConnConfig{Pattern: "XX", Initiator: true, BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second}},
 			shouldError:     true,
 			expectedErrCode: "INVALID_CONN",
 		},
@@ -165,9 +166,9 @@ func TestNewNoiseConn(t *testing.T) {
 			name:       "Invalid config - empty pattern",
 			underlying: mockConn,
 			config: &ConnConfig{
-				Pattern:          "",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError:     true,
 			expectedErrCode: "INVALID_CONFIG",
@@ -176,9 +177,9 @@ func TestNewNoiseConn(t *testing.T) {
 			name:       "Invalid pattern",
 			underlying: mockConn,
 			config: &ConnConfig{
-				Pattern:          "INVALID_PATTERN",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "INVALID_PATTERN",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError:     true,
 			expectedErrCode: "INVALID_PATTERN",
@@ -360,9 +361,9 @@ func TestNoiseConnHandshakeInitiator(t *testing.T) {
 	mockConn := newMockNetConn(localAddr, remoteAddr)
 
 	config := &ConnConfig{
-		Pattern:          "NN", // Use NN pattern for simpler handshake
-		Initiator:        true,
-		HandshakeTimeout: 30 * time.Second,
+		Pattern:             "NN", // Use NN pattern for simpler handshake
+		Initiator:           true,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 	}
 
 	conn, err := NewNoiseConn(mockConn, config)
@@ -409,9 +410,9 @@ func TestNoiseConnHandshakeTimeout(t *testing.T) {
 	mockConn := newMockNetConn(localAddr, remoteAddr)
 
 	config := &ConnConfig{
-		Pattern:          "NN",
-		Initiator:        true,
-		HandshakeTimeout: 10 * time.Millisecond, // Very short timeout
+		Pattern:             "NN",
+		Initiator:           true,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 10 * time.Millisecond}, // Very short timeout
 	}
 
 	conn, err := NewNoiseConn(mockConn, config)
@@ -499,9 +500,9 @@ func TestNoiseConnHandshakeErrorPaths(t *testing.T) {
 				return mock
 			},
 			config: &ConnConfig{
-				Pattern:          "NN",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "NN",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: true,
 		},
@@ -511,9 +512,9 @@ func TestNoiseConnHandshakeErrorPaths(t *testing.T) {
 				return newMockNetConn(localAddr, remoteAddr)
 			},
 			config: &ConnConfig{
-				Pattern:          "NN",
-				Initiator:        false, // Responder
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "NN",
+				Initiator:           false, // Responder
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: true, // Will fail due to mocked connection
 		},

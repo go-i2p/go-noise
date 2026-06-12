@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-i2p/go-noise/conn"
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	shutdown "github.com/go-i2p/go-noise/shutdown"
 	"github.com/go-i2p/logger"
 	i2plogger "github.com/go-i2p/logger"
@@ -42,30 +43,15 @@ type Listener struct {
 // ListenerConfig contains configuration for creating a NoiseListener.
 // It follows the builder pattern for optional configuration and validation.
 type ListenerConfig struct {
+	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
+	// common to all Noise config types in this module.
+	baseconfig.BaseHandshakeConfig
+
 	// Pattern is the Noise protocol pattern (e.g., "Noise_XX_25519_AESGCM_SHA256")
 	Pattern string
 
 	// StaticKey is the long-term static key for this listener (32 bytes for Curve25519)
 	StaticKey []byte
-
-	// HandshakeTimeout is the maximum time to wait for handshake completion
-	// Default: 30 seconds
-	HandshakeTimeout time.Duration
-
-	// ReadTimeout is the timeout for read operations after handshake
-	// Default: no timeout (0)
-	ReadTimeout time.Duration
-
-	// WriteTimeout is the timeout for write operations after handshake
-	// Default: no timeout (0)
-	WriteTimeout time.Duration
-
-	// Modifiers is a list of handshake modifiers for obfuscation and padding.
-	// Modifiers are applied in order during outbound processing and in reverse
-	// order during inbound processing. Required for NTCP2 server-side
-	// connections that need AES-CBC obfuscation and SipHash length obfuscation.
-	// Default: empty (no modifiers)
-	Modifiers []handshake.HandshakeModifier
 
 	// PostHandshakeHook is an optional callback invoked after the Noise
 	// handshake completes successfully but before the connection transitions
@@ -86,25 +72,19 @@ type ListenerConfig struct {
 	// For NTCP2, this should be set to [][]byte{[]byte("ask")} to derive
 	// the ask_master used for SipHash key derivation.
 	AdditionalSymmetricKeyLabels [][]byte
-
-	// HandshakeRetries is the number of handshake retry attempts for accepted
-	// connections. 0 means no retries. Default: 0.
-	HandshakeRetries int
-
-	// RetryBackoff is the base delay between retry attempts for accepted
-	// connections. Actual delay uses exponential backoff. Default: 1 second.
-	RetryBackoff time.Duration
 }
 
 // NewListenerConfig creates a new ListenerConfig with sensible defaults.
 func NewListenerConfig(pattern string) *ListenerConfig {
 	return &ListenerConfig{
-		Pattern:          pattern,
-		HandshakeTimeout: 30 * time.Second,
-		ReadTimeout:      0,
-		WriteTimeout:     0,
-		HandshakeRetries: 0,
-		RetryBackoff:     1 * time.Second,
+		Pattern: pattern,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: 30 * time.Second,
+			ReadTimeout:      0,
+			WriteTimeout:     0,
+			HandshakeRetries: 0,
+			RetryBackoff:     1 * time.Second,
+		},
 	}
 }
 

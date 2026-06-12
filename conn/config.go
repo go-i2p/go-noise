@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/mod/validation"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
@@ -18,6 +19,10 @@ const defaultHandshakeTimeout = 30 * time.Second
 // ConnConfig contains configuration for creating a NoiseConn.
 // It follows the builder pattern for optional configuration and validation.
 type ConnConfig struct {
+	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
+	// common to all Noise config types in this module.
+	baseconfig.BaseHandshakeConfig
+
 	// Pattern is the Noise protocol pattern (e.g., "Noise_XX_25519_AESGCM_SHA256")
 	Pattern string
 
@@ -30,35 +35,6 @@ type ConnConfig struct {
 	// RemoteKey is the remote peer's static public key (32 bytes for Curve25519)
 	// Required for some patterns, optional for others
 	RemoteKey []byte
-
-	// HandshakeTimeout is the maximum time to wait for handshake completion
-	// Default: 30 seconds
-	HandshakeTimeout time.Duration
-
-	// ReadTimeout is the timeout for read operations after handshake
-	// Default: no timeout (0)
-	ReadTimeout time.Duration
-
-	// WriteTimeout is the timeout for write operations after handshake
-	// Default: no timeout (0)
-	WriteTimeout time.Duration
-
-	// HandshakeRetries is the number of handshake retry attempts.
-	// Default: 0 (no retries). Set to a positive value and use
-	// HandshakeWithRetry() to enable retry semantics with exponential
-	// backoff. Handshake() always performs a single attempt regardless
-	// of this setting. Use -1 for infinite retries.
-	HandshakeRetries int
-
-	// RetryBackoff is the base delay between retry attempts
-	// Actual delay uses exponential backoff: delay = RetryBackoff * (2^attempt)
-	// Default: 1 second
-	RetryBackoff time.Duration
-
-	// Modifiers is a list of handshake modifiers for obfuscation and padding
-	// Modifiers are applied in order during outbound processing and in reverse
-	// order during inbound processing. Default: empty (no modifiers)
-	Modifiers []handshake.HandshakeModifier
 
 	// CipherSuite specifies the Noise cipher suite to use for the handshake.
 	// If nil, defaults to DH25519 + CipherAESGCM + SHA256.
@@ -110,13 +86,15 @@ type ConnConfig struct {
 func NewConnConfig(pattern string, initiator bool) *ConnConfig {
 	log.WithFields(logger.Fields{"pkg": "noise", "func": "NewConnConfig", "pattern": pattern, "initiator": initiator}).Debug("Creating new ConnConfig")
 	return &ConnConfig{
-		Pattern:          pattern,
-		Initiator:        initiator,
-		HandshakeTimeout: defaultHandshakeTimeout,
-		ReadTimeout:      0,               // No timeout by default
-		WriteTimeout:     0,               // No timeout by default
-		HandshakeRetries: 0,               // Default to no retries; use HandshakeWithRetry() for retry semantics
-		RetryBackoff:     1 * time.Second, // Default backoff 1 second
+		Pattern:   pattern,
+		Initiator: initiator,
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: defaultHandshakeTimeout,
+			ReadTimeout:      0,               // No timeout by default
+			WriteTimeout:     0,               // No timeout by default
+			HandshakeRetries: 0,               // Default to no retries; use HandshakeWithRetry() for retry semantics
+			RetryBackoff:     1 * time.Second, // Default backoff 1 second
+		},
 	}
 }
 

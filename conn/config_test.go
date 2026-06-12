@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -322,10 +323,10 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Valid XX pattern with static key",
 			config: &ConnConfig{
-				Pattern:          "XX",
-				Initiator:        true,
-				StaticKey:        make([]byte, 32),
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "XX",
+				Initiator:           true,
+				StaticKey:           make([]byte, 32),
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: false,
 			description: "Standard valid configuration",
@@ -333,9 +334,9 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Valid NN pattern without static key",
 			config: &ConnConfig{
-				Pattern:          "NN",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "NN",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: false,
 			description: "NN pattern doesn't require static key",
@@ -343,9 +344,9 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Invalid pattern name",
 			config: &ConnConfig{
-				Pattern:          "INVALID",
-				Initiator:        true,
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "INVALID",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: true,
 			description: "Pattern validation now rejects unrecognized pattern names",
@@ -353,9 +354,9 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Zero handshake timeout",
 			config: &ConnConfig{
-				Pattern:          "XX",
-				Initiator:        true,
-				HandshakeTimeout: 0,
+				Pattern:             "XX",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 0},
 			},
 			shouldError: true,
 			description: "Should reject zero timeout",
@@ -363,9 +364,9 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Negative handshake timeout",
 			config: &ConnConfig{
-				Pattern:          "XX",
-				Initiator:        true,
-				HandshakeTimeout: -time.Second,
+				Pattern:             "XX",
+				Initiator:           true,
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: -time.Second},
 			},
 			shouldError: true,
 			description: "Should reject negative timeout",
@@ -373,11 +374,11 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Valid IK pattern",
 			config: &ConnConfig{
-				Pattern:          "IK",
-				Initiator:        true,
-				StaticKey:        make([]byte, 32),
-				RemoteKey:        make([]byte, 32),
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "IK",
+				Initiator:           true,
+				StaticKey:           make([]byte, 32),
+				RemoteKey:           make([]byte, 32),
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: false,
 			description: "IK pattern with both keys",
@@ -385,10 +386,10 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Short static key",
 			config: &ConnConfig{
-				Pattern:          "XX",
-				Initiator:        true,
-				StaticKey:        make([]byte, 16), // Too short
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "XX",
+				Initiator:           true,
+				StaticKey:           make([]byte, 16), // Too short
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: true,
 			description: "Should reject short static key",
@@ -396,10 +397,10 @@ func TestConnConfigValidationExtended(t *testing.T) {
 		{
 			name: "Short remote key",
 			config: &ConnConfig{
-				Pattern:          "NK",
-				Initiator:        true,
-				RemoteKey:        make([]byte, 16), // Too short
-				HandshakeTimeout: 30 * time.Second,
+				Pattern:             "NK",
+				Initiator:           true,
+				RemoteKey:           make([]byte, 16), // Too short
+				BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 			},
 			shouldError: true,
 			description: "Should reject short remote key",

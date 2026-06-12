@@ -8,6 +8,7 @@ import (
 	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -623,7 +624,7 @@ func TestClone_AllNilOptionalFields(t *testing.T) {
 		Pattern:              "XK",
 		Initiator:            true,
 		BobRouterHash:        data.Hash{},
-		HandshakeTimeout:     30 * time.Second,
+		BaseHandshakeConfig:  baseconfig.BaseHandshakeConfig{HandshakeTimeout: 30 * time.Second},
 		MaxFrameSize:         16384,
 		EnableAESObfuscation: true,
 		EnableSipHashLength:  true,
@@ -675,9 +676,11 @@ func TestClone_AllOptionalFieldsPopulated(t *testing.T) {
 		RemoteRouterHash: &remoteRouterHash,
 		RemoteStaticKey:  remoteStaticKey,
 		ObfuscationIV:    obfuscationIV,
-		Modifiers:        []handshake.HandshakeModifier{mod1, mod2},
-		MaxFrameSize:     16384,
-		SipHashKeys:      [2]uint64{0x1234, 0x5678},
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			Modifiers: []handshake.HandshakeModifier{mod1, mod2},
+		},
+		MaxFrameSize: 16384,
+		SipHashKeys:  [2]uint64{0x1234, 0x5678},
 	}
 
 	clone := original.Clone()
@@ -787,7 +790,9 @@ func TestClone_PartialNilFields(t *testing.T) {
 		original := &Config{
 			BobRouterHash: data.Hash{},
 			StaticKey:     make([]byte, 32),
-			Modifiers:     nil,
+			BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+				Modifiers: nil,
+			},
 		}
 		clone := original.Clone()
 		assert.NotNil(t, clone.StaticKey)
@@ -797,7 +802,9 @@ func TestClone_PartialNilFields(t *testing.T) {
 	t.Run("Modifiers_empty_slice", func(t *testing.T) {
 		original := &Config{
 			BobRouterHash: data.Hash{},
-			Modifiers:     []handshake.HandshakeModifier{},
+			BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+				Modifiers: []handshake.HandshakeModifier{},
+			},
 		}
 		clone := original.Clone()
 		// Empty (non-nil) slice is preserved
@@ -820,14 +827,16 @@ func TestClone_PartialNilFields(t *testing.T) {
 // clone are independent of the original (no shared pointer state).
 func TestClone_ValueFieldIndependence(t *testing.T) {
 	original := &Config{
-		Pattern:              "XK",
-		Initiator:            true,
-		BobRouterHash:        data.Hash{},
-		HandshakeTimeout:     30 * time.Second,
-		ReadTimeout:          5 * time.Second,
-		WriteTimeout:         10 * time.Second,
-		HandshakeRetries:     3,
-		RetryBackoff:         2 * time.Second,
+		Pattern:       "XK",
+		Initiator:     true,
+		BobRouterHash: data.Hash{},
+		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
+			HandshakeTimeout: 30 * time.Second,
+			ReadTimeout:      5 * time.Second,
+			WriteTimeout:     10 * time.Second,
+			HandshakeRetries: 3,
+			RetryBackoff:     2 * time.Second,
+		},
 		EnableAESObfuscation: true,
 		EnableSipHashLength:  true,
 		SipHashKeys:          [2]uint64{0xAAAA, 0xBBBB},
