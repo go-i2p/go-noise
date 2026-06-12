@@ -135,34 +135,10 @@ func tryGetPooledConn(addr string) (net.Conn, bool) {
 // createAndHandshakeConn creates a NoiseConn and performs handshake with retry logic.
 // On error, the function closes conn (directly or via noiseConn.Close) so the
 // caller must NOT close conn when an error is returned.
+//
+// This function delegates to the Default Transport's createAndHandshakeConnTransport
+// to avoid duplicating the wrap-then-handshake logic.
 func createAndHandshakeConn(ctx context.Context, conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {
-	noiseConn, err := NewNoiseConn(conn, config)
-	if err != nil {
-		conn.Close()
-		return nil, oops.
-			Code("NOISE_CONN_FAILED").
-			In("transport").
-			With("network", network).
-			With("address", addr).
-			Wrapf(err, "failed to create noise connection")
-	}
-
-	// Register with Default Transport's shutdown manager
-	if sm := GetGlobalShutdownManager(); sm != nil {
-		noiseConn.SetShutdownManager(sm)
-	}
-
-	// Perform handshake with retry logic
-	if err := noiseConn.HandshakeWithRetry(ctx); err != nil {
-		// Close noiseConn to zero key material and close underlying conn
-		noiseConn.Close()
-		return nil, oops.
-			Code("HANDSHAKE_FAILED").
-			In("transport").
-			With("network", network).
-			With("address", addr).
-			Wrapf(err, "handshake failed")
-	}
-
-	return noiseConn, nil
+	sm := GetGlobalShutdownManager()
+	return getDefault().createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)
 }

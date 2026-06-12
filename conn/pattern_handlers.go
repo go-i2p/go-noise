@@ -21,43 +21,43 @@ type PatternHandlerFunc func(pctx PatternContext, ctx context.Context) error
 var patternMu sync.RWMutex
 
 // initiatorHandlers maps pattern names to their initiator handshake implementations.
-// Each handler is wrapped in an adapter that converts the *Conn method to PatternContext.
+// Each handler is a closure over one of the six template functions in pattern_templates.go.
 var initiatorHandlers = map[string]PatternHandlerFunc{
-	"N":  wrapConnHandler((*Conn).performNInitiator),
-	"K":  wrapConnHandler((*Conn).performKInitiator),
-	"X":  wrapConnHandler((*Conn).performXInitiator),
-	"NN": wrapConnHandler((*Conn).performNNInitiator),
-	"NK": wrapConnHandler((*Conn).performNKInitiator),
-	"NX": wrapConnHandler((*Conn).performNXInitiator),
-	"XN": wrapConnHandler((*Conn).performXNInitiator),
-	"XK": wrapConnHandler((*Conn).performXKInitiator),
-	"XX": wrapConnHandler((*Conn).performXXInitiator),
-	"KN": wrapConnHandler((*Conn).performKNInitiator),
-	"KK": wrapConnHandler((*Conn).performKKInitiator),
-	"KX": wrapConnHandler((*Conn).performKXInitiator),
-	"IN": wrapConnHandler((*Conn).performINInitiator),
-	"IK": wrapConnHandler((*Conn).performIKInitiator),
-	"IX": wrapConnHandler((*Conn).performIXInitiator),
+	"N":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "N") }),
+	"K":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "K") }),
+	"X":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayInitiator(ctx, "X") }),
+	"NN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NN") }),
+	"NK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NK") }),
+	"NX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "NX") }),
+	"KN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KN") }),
+	"KK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KK") }),
+	"KX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "KX") }),
+	"IN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IN") }),
+	"IK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IK") }),
+	"IX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgInitiator(ctx, "IX") }),
+	"XN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XN") }),
+	"XK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XK") }),
+	"XX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgInitiator(ctx, "XX") }),
 }
 
 // responderHandlers maps pattern names to their responder handshake implementations.
-// Each handler is wrapped in an adapter that converts the *Conn method to PatternContext.
+// Each handler is a closure over one of the six template functions in pattern_templates.go.
 var responderHandlers = map[string]PatternHandlerFunc{
-	"N":  wrapConnHandler((*Conn).performNResponder),
-	"K":  wrapConnHandler((*Conn).performKResponder),
-	"X":  wrapConnHandler((*Conn).performXResponder),
-	"NN": wrapConnHandler((*Conn).performNNResponder),
-	"NK": wrapConnHandler((*Conn).performNKResponder),
-	"NX": wrapConnHandler((*Conn).performNXResponder),
-	"XN": wrapConnHandler((*Conn).performXNResponder),
-	"XK": wrapConnHandler((*Conn).performXKResponder),
-	"XX": wrapConnHandler((*Conn).performXXResponder),
-	"KN": wrapConnHandler((*Conn).performKNResponder),
-	"KK": wrapConnHandler((*Conn).performKKResponder),
-	"KX": wrapConnHandler((*Conn).performKXResponder),
-	"IN": wrapConnHandler((*Conn).performINResponder),
-	"IK": wrapConnHandler((*Conn).performIKResponder),
-	"IX": wrapConnHandler((*Conn).performIXResponder),
+	"N":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "N") }),
+	"K":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "K") }),
+	"X":  wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performOnewayResponder(ctx, "X") }),
+	"NN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NN") }),
+	"NK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NK") }),
+	"NX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "NX") }),
+	"KN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KN") }),
+	"KK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KK") }),
+	"KX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "KX") }),
+	"IN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IN") }),
+	"IK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IK") }),
+	"IX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performTwoMsgResponder(ctx, "IX") }),
+	"XN": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XN") }),
+	"XK": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XK") }),
+	"XX": wrapConnHandler(func(nc *Conn, ctx context.Context) error { return nc.performThreeMsgResponder(ctx, "XX") }),
 }
 
 // wrapConnHandler adapts a *Conn method into a PatternHandlerFunc.
