@@ -90,9 +90,20 @@ func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 	// Without this, each call to receiveHandshakeWithRetransmit starts a fresh
 	// HandshakeTimeout window, allowing a malicious responder to keep the
 	// initiator pinned for N × HandshakeTimeout instead of 1 × HandshakeTimeout.
-	if h.config.HandshakeTimeout > 0 {
+	//
+	// LEAK-2 / TIMEOUT-1: If HandshakeTimeout is zero and the caller's context
+	// has no deadline, there is no bound on the handshake at all — a stalling
+	// peer holds the goroutine (and the associated connection slot) indefinitely.
+	// Apply a default so the goroutine is always bounded.
+	timeout := h.config.HandshakeTimeout
+	if timeout <= 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			timeout = defaultHandshakeTimeout
+		}
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, h.config.HandshakeTimeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	sessionRequest, err := h.sendSessionRequest()
@@ -162,11 +173,19 @@ func (h *SSU2Conn) awaitSessionCreated(ctx context.Context, sessionRequest *SSU2
 // SessionRequest with the extracted token.
 func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet) (*SSU2Packet, error) {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "handleRetryResponse"}).Debug("Processing Retry and resending SessionRequest with token")
-	if len(response.Header) >= 8 {
-		retryDestID := binary.BigEndian.Uint64(response.Header[0:8])
-		if retryDestID != h.config.ConnectionID {
-			return nil, oops.Errorf("Retry dest connection ID %d does not match our source ID %d (possible injection)", retryDestID, h.config.ConnectionID)
-		}
+	// ERROR-2: The injection guard on the Retry dest connection ID must be
+	// unconditional. Skipping it when the header is short allows an attacker
+	// to inject a forged Retry (with a controlled token) by crafting a
+	// truncated header that bypasses the connection ID comparison.
+	if len(response.Header) < 8 {
+		return nil, oops.
+			Code("RETRY_HEADER_TOO_SHORT").
+			In("session").
+			Errorf("Retry header too short: %d bytes, need at least 8 for connection ID check", len(response.Header))
+	}
+	retryDestID := binary.BigEndian.Uint64(response.Header[0:8])
+	if retryDestID != h.config.ConnectionID {
+		return nil, oops.Errorf("Retry dest connection ID %d does not match our source ID %d (possible injection)", retryDestID, h.config.ConnectionID)
 	}
 
 	token, err := h.extractRetryToken(response)
@@ -289,9 +308,18 @@ func (h *SSU2Conn) handshakeResponder(ctx context.Context) error {
 	// Each receiveHandshakeWithRetransmit call would otherwise start a fresh
 	// HandshakeTimeout window; a stalling initiator can extend the total window
 	// to N × HandshakeTimeout without this guard.
-	if h.config.HandshakeTimeout > 0 {
+	//
+	// LEAK-2 / TIMEOUT-1: mirror the initiator fix — apply a default bound when
+	// neither HandshakeTimeout nor a ctx deadline is set.
+	timeoutR := h.config.HandshakeTimeout
+	if timeoutR <= 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			timeoutR = defaultHandshakeTimeout
+		}
+	}
+	if timeoutR > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, h.config.HandshakeTimeout)
+		ctx, cancel = context.WithTimeout(ctx, timeoutR)
 		defer cancel()
 	}
 	initiatorConnID, err := h.receiveSessionRequest(ctx)
@@ -317,7 +345,19 @@ func (h *SSU2Conn) handshakeResponder(ctx context.Context) error {
 // the initiator's connection ID.
 func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "receiveSessionRequest", "timeout": h.config.HandshakeTimeout}).Debug("Waiting for SessionRequest")
-	sessionRequest, err := h.receivePacketWithTimeout(ctx, h.config.HandshakeTimeout)
+	// TIMEOUT-3: When ctx already carries a deadline (set by handshakeResponder),
+	// passing h.config.HandshakeTimeout as a second timer to receivePacketWithTimeout
+	// is redundant. More critically, when HandshakeTimeout == 0 the explicit
+	// time.NewTimer(0) fires immediately, causing the responder to time out
+	// before the first packet even arrives. Use the remaining ctx deadline time,
+	// or a generous fallback when no deadline is set.
+	timeout := h.config.HandshakeTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(deadline)
+	} else if timeout <= 0 {
+		timeout = defaultHandshakeTimeout
+	}
+	sessionRequest, err := h.receivePacketWithTimeout(ctx, timeout)
 	if err != nil {
 		return 0, oops.Wrapf(err, "failed to receive SessionRequest")
 	}

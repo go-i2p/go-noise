@@ -34,6 +34,17 @@ func (nc *Conn) Read(b []byte) (int, error) {
 			In("ntcp2").
 			Errorf("connection is broken due to previous framing error (SipHash state desynchronized)")
 	}
+	// STATE-1 / RACE-3: reject all data-phase reads until the handshake has
+	// completed and the SipHash cipher state has been installed. Without this
+	// guard a caller can drive readDirect() before cipher keys are set, which
+	// either forwards plaintext bytes from the handshake stream or operates on
+	// an uninitialised cipher state.
+	if !nc.established.Load() {
+		return 0, oops.
+			Code("NOT_ESTABLISHED").
+			In("ntcp2").
+			Errorf("NTCP2 handshake not completed")
+	}
 	if nc.lengthObfuscator.Load() == nil {
 		return nc.readDirect(b)
 	}
@@ -191,11 +202,27 @@ func (nc *Conn) readAndDecryptFrame(underlying net.Conn, frameLen uint16) ([]byt
 
 // bufferPlaintext copies decrypted plaintext into the caller's buffer and stores
 // any remainder in readBuffer for subsequent Read calls.
+// LEAK-3: cap the readBuffer to prevent a stalling consumer from being used as
+// a remote memory-exhaustion vector. The maximum data-phase frame is 65535 bytes;
+// a Poly1305 tag adds 16 bytes of overhead, so the largest legitimate overflow is
+// SpecMaxFrameSize bytes. Anything larger indicates a bug or an attack.
+const maxReadBufferSize = 65535
+
 func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
 	n := copy(b, plaintext)
-	if n < len(plaintext) {
-		nc.readBuffer = make([]byte, len(plaintext)-n)
-		m := copy(nc.readBuffer, plaintext[n:])
+	overflow := plaintext[n:]
+	if len(overflow) > 0 {
+		if len(overflow) > maxReadBufferSize {
+			// Truncate rather than abort; the frame was already decrypted
+			// successfully, so silently discarding excess plaintext is safer
+			// than crashing, but flag the connection as broken since the
+			// SipHash counter has advanced and the truncated data is lost.
+			nc.broken.Store(true)
+			log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.bufferPlaintext", "overflow": len(overflow)}).Error("plaintext overflow exceeds max read buffer; connection is broken")
+			overflow = overflow[:maxReadBufferSize]
+		}
+		nc.readBuffer = make([]byte, len(overflow))
+		m := copy(nc.readBuffer, overflow)
 		// Zero the tail of readBuffer to prevent leaking previously-decrypted I2NP messages
 		// through heap dumps or side-channel disclosure
 		for i := m; i < len(nc.readBuffer); i++ {
@@ -251,6 +278,14 @@ func (nc *Conn) Write(b []byte) (int, error) {
 			Code("CONNECTION_BROKEN").
 			In("ntcp2").
 			Errorf("connection is broken due to previous framing error (SipHash state desynchronized)")
+	}
+	// STATE-1 / RACE-3: mirror the Read guard — reject writes before the
+	// handshake has finished and SipHash outbound keys are installed.
+	if !nc.established.Load() {
+		return 0, oops.
+			Code("NOT_ESTABLISHED").
+			In("ntcp2").
+			Errorf("NTCP2 handshake not completed")
 	}
 	if nc.lengthObfuscator.Load() == nil {
 		return nc.writeDirect(b)

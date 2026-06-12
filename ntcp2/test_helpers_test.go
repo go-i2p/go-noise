@@ -98,6 +98,10 @@ func newPipedNTCP2Conn(t *testing.T) pipedNTCP2Conn {
 	conn, err := NewNTCP2Conn(noiseConn, localAddr, remoteAddr)
 	require.NoError(t, err)
 
+	// Mark the connection as established so framing tests can exercise the
+	// data-phase Read/Write paths without triggering the handshake guard.
+	conn.established.Store(true)
+
 	return pipedNTCP2Conn{
 		conn:    conn,
 		client:  client,

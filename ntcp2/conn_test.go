@@ -175,6 +175,8 @@ func TestNTCP2Conn_Read(t *testing.T) {
 			}
 
 			conn := createTestNTCP2Conn(mockNoise)
+			// This subtest validates the pre-handshake guard; reset to unestablished.
+			conn.established.Store(false)
 
 			buffer := make([]byte, 64)
 			n, err := conn.Read(buffer)
@@ -226,6 +228,8 @@ func TestNTCP2Conn_Write(t *testing.T) {
 			}
 
 			conn := createTestNTCP2Conn(mockNoise)
+			// This subtest validates the pre-handshake guard; reset to unestablished.
+			conn.established.Store(false)
 
 			n, err := conn.Write(tt.writeData)
 
@@ -464,6 +468,10 @@ func createTestNTCP2ConnWithAddrs(mockNoise *mockNoiseConn, localAddr, remoteAdd
 	if err != nil {
 		panic(err) // This should not happen in tests
 	}
+	// Mark the connection as established so data-phase Read/Write work in tests.
+	// Tests that specifically validate the pre-handshake guard should reset this
+	// to false after calling this helper.
+	conn.established.Store(true)
 	return conn
 }
 

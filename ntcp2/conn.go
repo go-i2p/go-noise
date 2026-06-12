@@ -80,6 +80,13 @@ type Conn struct {
 	// desynchronized and all future Read/Write calls will fail immediately.
 	broken atomic.Bool
 
+	// established is set to true at the very end of a successful Handshake().
+	// Read() and Write() MUST check this before performing any data-phase I/O
+	// to prevent sending or receiving data before the cipher states are ready.
+	// STATE-1 / RACE-3: without this gate, callers can read/write plaintext or
+	// use uninitialised SipHash keys before the handshake has completed.
+	established atomic.Bool
+
 	// underlyingClosed is set when sendTCPRST has already closed the TCP socket
 	// via SetLinger(0)+Close(). Close() checks this flag and skips the second
 	// noiseConn.Close() call to prevent an fd-reuse double-close race.

@@ -112,6 +112,7 @@ type SSU2Listener struct {
 
 	// Lifecycle management
 	closed       bool
+	started      bool // RACE-1: guards against double-Start()
 	closeMutex   sync.Mutex
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
@@ -205,6 +206,17 @@ func (l *SSU2Listener) Start() error {
 			Errorf("listener is closed")
 	}
 
+	// RACE-1: Prevent double-Start(). A second Start() would spawn a duplicate set
+	// of goroutines (8 packetWorkers + receiveLoop + tokenCleanupLoop) on the same
+	// PacketConn, violating the single-reader invariant and doubling wg counts.
+	if l.started {
+		return oops.
+			Code("LISTENER_ALREADY_STARTED").
+			In("ssu2_listener").
+			Errorf("listener is already started")
+	}
+	l.started = true
+
 	// Start packet processing worker pool
 	for i := 0; i < packetWorkers; i++ {
 		l.wg.Add(1)
@@ -286,6 +298,23 @@ func (l *SSU2Listener) Close() error {
 	// This prevents send-on-closed-channel panics in handleNewSession.
 	l.wg.Wait()
 
+	// LEAK-4: Drain any sessions already queued in acceptQueue that the caller
+	// will never dequeue now that the listener is closed. Without this, those
+	// sessions remain fully established and their goroutines never stop — a
+	// resource leak proportional to how full the acceptQueue was at shutdown.
+	for {
+		select {
+		case conn, ok := <-l.acceptQueue:
+			if !ok {
+				// Channel was already closed (shouldn't happen here, but be safe).
+				goto drained
+			}
+			_ = conn.CloseImmediate()
+		default:
+			goto drained
+		}
+	}
+drained:
 	// Safe to close accept queue now — all senders have exited
 	close(l.acceptQueue)
 
@@ -357,12 +386,27 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, err
 	}
 
-	// AUDIT 8.1: Extract initiator connection ID early for dedup check.
-	// Per SSU2 spec, initiator's source connID is at header[16:24].
-	var initiatorConnID uint64
-	if len(packet.Header) >= 24 {
-		initiatorConnID = binary.BigEndian.Uint64(packet.Header[16:24])
+	// AUDIT 8.1 / ACCT-1: Reject SessionRequest packets with a truncated header.
+	// Per the SSU2 spec, the SessionRequest header is exactly 32 bytes:
+	//   [0:8]   destination connection ID
+	//   [8:12]  packet number
+	//   [12:16] protocol/type byte
+	//   [16:24] source connection ID (initiator's connection ID)
+	//   [24:32] token
+	// Without at least 24 bytes we cannot read the initiator's source connID,
+	// so the dedup key would collapse to (0, remoteAddr). A malicious peer
+	// can exploit this to falsely "retransmit" to any existing zero-connID
+	// entry or to create multiple sessions under the same dedup key.
+	const minSessionRequestHeaderLen = 24
+	if len(packet.Header) < minSessionRequestHeaderLen {
+		return nil, oops.
+			Code("HEADER_TOO_SHORT").
+			In("ssu2_listener").
+			With("header_len", len(packet.Header)).
+			With("min_len", minSessionRequestHeaderLen).
+			Errorf("SessionRequest header too short to extract initiator connection ID")
 	}
+	initiatorConnID := binary.BigEndian.Uint64(packet.Header[16:24])
 
 	// AUDIT 8.1: Check dedup index for existing session keyed on (initiatorConnID, remoteAddr).
 	// If a session already exists for this (initiator key, source address) pair,
@@ -381,19 +425,13 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return existingConn, nil
 	}
 
-	// BUG-SA-1: Pre-check capacity before allocating an SSU2Conn. Without this,
-	// concurrent workers near the cap each create a full conn object only to have
-	// AddSessionIfBelowCap (inside registerAndQueueConn) tear it down with a
-	// routing error. There is still a narrow TOCTOU between this check and the
-	// authoritative check inside AddSessionIfBelowCap (they hold separate locks),
-	// but this eliminates the vast majority of spurious allocations.
-	if l.config.MaxSessions > 0 && l.router.SessionCount() >= l.config.MaxSessions {
-		return nil, oops.
-			Code("SESSION_CAPACITY_EXCEEDED").
-			In("ssu2_listener").
-			With("max_sessions", l.config.MaxSessions).
-			Errorf("session capacity exceeded, dropping SessionRequest")
-	}
+	// ACCT-2: The racy advisory pre-check on SessionCount() has been removed.
+	// It read the router's session counter WITHOUT holding the same lock used by
+	// AddSessionIfBelowCap, creating a TOCTOU window: the count could be stale in
+	// either direction, causing both false-positive rejections (spurious 503s) and
+	// false-negative passes (accepting when already at cap). The authoritative
+	// check inside AddSessionIfBelowCap (called from registerAndQueueConn, under
+	// the correct lock) is the sole capacity gate.
 
 	connID, err := l.generateUniqueConnectionID()
 	if err != nil {
@@ -471,7 +509,14 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 			Errorf("sent Retry to %s, awaiting re-request with token", remoteAddr)
 	}
 
-	if !errors.Is(err, errNoTokenPresent) {
+	// ERROR-1: When RequireRetry is false, tokens are completely optional.
+	// A token that is present-but-invalid must be treated the same as an absent
+	// token (i.e., allow the session) because the operator has explicitly opted out
+	// of token enforcement. Previously the code rejected invalid tokens even with
+	// RequireRetry=false, which is STRICTER than the case of no token at all —
+	// an inverted and counterintuitive policy. Now an invalid/expired token is
+	// only fatal when RequireRetry=true.
+	if !errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
 		return oops.
 			Code("TOKEN_VALIDATION_FAILED").
 			In("ssu2_listener").
@@ -583,8 +628,17 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	l.sessionMutex.RLock()
 	pendingCount := len(l.pendingByInitiator)
 	l.sessionMutex.RUnlock()
+	// LEAK-1: apply a hard cap on pendingByInitiator entries. When MaxSessions==0
+	// (unconfigured), maxPendingByInitiator would be 0 and the guard below would
+	// be permanently disabled, letting an attacker fill the map without bound
+	// (remote memory-exhaustion DoS). Fall back to a safe default so the cap is
+	// always active regardless of operator configuration.
+	const defaultMaxPendingByInitiator = 2000
 	maxPendingByInitiator := l.config.MaxSessions * 2
-	if maxPendingByInitiator > 0 && pendingCount >= maxPendingByInitiator {
+	if maxPendingByInitiator <= 0 {
+		maxPendingByInitiator = defaultMaxPendingByInitiator
+	}
+	if pendingCount >= maxPendingByInitiator {
 		_ = conn.CloseImmediate()
 		return nil, oops.
 			Code("PENDING_CAPACITY_EXCEEDED").

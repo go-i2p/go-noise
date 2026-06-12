@@ -52,6 +52,22 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 		return nil, err
 	}
 
+	// PORT-2: When localAddr is nil the OS assigns an ephemeral port. Validate
+	// the actual bound address so that surprising binds (loopback-only, reserved
+	// port, etc.) are caught before a handshake is attempted against a remote peer.
+	if localAddr == nil {
+		if actualLocal, ok := packetConn.LocalAddr().(*net.UDPAddr); ok {
+			if err := validateDialLocalAddress(actualLocal, config); err != nil {
+				packetConn.Close()
+				return nil, oops.
+					Code("INVALID_BOUND_LOCAL_ADDRESS").
+					In("ssu2_transport").
+					With("local_address", actualLocal.String()).
+					Wrapf(err, "OS-assigned local address failed validation")
+			}
+		}
+	}
+
 	// Create SSU2 connection wrapper
 	conn, err := createSSU2Connection(packetConn, remoteAddr, config)
 	if err != nil {

@@ -69,6 +69,12 @@ const (
 	// "Wait for 11 seconds (the maximum RTO)" after sending a Termination
 	// block. Can be overridden via SSU2Config.DestroyTimeout (M-4).
 	destroyTimeout = 11 * time.Second
+
+	// defaultHandshakeTimeout is the fallback deadline for SSU2 handshakes
+	// when neither SSU2Config.HandshakeTimeout is set nor the caller's
+	// context carries a deadline (LEAK-2 / TIMEOUT-1). A stalling peer
+	// would otherwise hold the handshake goroutine open indefinitely.
+	defaultHandshakeTimeout = 30 * time.Second
 )
 
 // SSU2Conn implements net.Conn for SSU2 transport connections over UDP.

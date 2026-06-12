@@ -356,8 +356,18 @@ func (nl *Listener) AcceptWithHandshake(ctx context.Context) (ConnIface, error) 
 	}
 	// Propagate the peer's static key to the remote address so the router
 	// hash is available for session deduplication on inbound connections.
+	// REACH-3: Previously this failure was only logged as a warning and the
+	// connection was returned to the caller with an incomplete remote address.
+	// Without the peer's static key the router transport layer cannot perform
+	// session deduplication, which is a correctness (and potentially security)
+	// requirement. Fail the accept so the caller is not handed a half-initialised
+	// connection.
 	if err := ntcp2Conn.PropagatePeerStaticKey(); err != nil {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "Accept"}).WithError(err).Warn("peer static key not propagated after accept handshake")
+		ntcp2Conn.Close()
+		return nil, oops.
+			Code("PEER_STATIC_KEY_FAILED").
+			In("ntcp2").
+			Wrapf(err, "failed to propagate peer static key after accept handshake")
 	}
 	return ntcp2Conn, nil
 }

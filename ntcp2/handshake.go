@@ -183,6 +183,11 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 			In("ntcp2").
 			Wrapf(err, "failed to propagate SipHash modifier after handshake")
 	}
+
+	// STATE-1 / RACE-3: mark the connection as fully established only after the
+	// SipHash keys are installed. Read() and Write() gate on this flag.
+	c.established.Store(true)
+
 	return nil
 }
 

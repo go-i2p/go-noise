@@ -5,7 +5,7 @@
 package replaycache
 
 import (
-	"sort"
+	"container/list"
 	"sync"
 	"time"
 
@@ -40,12 +40,27 @@ type Config struct {
 	NowFunc func() time.Time
 }
 
+// cacheEntry is the value stored in insertOrder list elements.
+type cacheEntry struct {
+	key        [32]byte
+	insertedAt time.Time
+}
+
 // TTLCache is a thread-safe, bounded, TTL-based cache for detecting
 // replayed [32]byte keys. Call New to create an instance and Close
 // to release its background goroutine.
+//
+// ACCT-4: entries are tracked in insertion order via a doubly-linked list so
+// that evictOldestLocked runs in O(k) — removing k entries from the front —
+// rather than the previous O(n log n) full-sort approach.
 type TTLCache struct {
-	mu              sync.RWMutex
-	entries         map[[32]byte]time.Time
+	mu sync.RWMutex
+	// entries maps a [32]byte key to its *list.Element in insertOrder.
+	entries map[[32]byte]*list.Element
+	// insertOrder is a doubly-linked list of *cacheEntry maintained in
+	// insertion order (front = oldest, back = newest). This enables O(k)
+	// eviction of the k oldest entries without sorting.
+	insertOrder     *list.List
 	ttl             time.Duration
 	maxSize         int
 	cleanupInterval time.Duration
@@ -80,7 +95,8 @@ func New(cfg Config) *TTLCache {
 	}
 
 	c := &TTLCache{
-		entries:         make(map[[32]byte]time.Time),
+		entries:         make(map[[32]byte]*list.Element),
+		insertOrder:     list.New(),
 		ttl:             cfg.TTL,
 		maxSize:         maxSize,
 		cleanupInterval: cleanupInterval,
@@ -114,19 +130,23 @@ func (c *TTLCache) CheckAndAdd(key [32]byte) bool {
 
 	now := c.nowFunc()
 
-	if firstSeen, exists := c.entries[key]; exists {
-		if now.Sub(firstSeen) < c.ttl {
+	if elem, exists := c.entries[key]; exists {
+		entry := elem.Value.(*cacheEntry)
+		if now.Sub(entry.insertedAt) < c.ttl {
 			log.WithFields(logger.Fields{"pkg": "replaycache", "func": "TTLCache.CheckAndAdd"}).Debug("Replay detected in cache")
 			return true // replay detected
 		}
-		// Entry expired — treat as new.
+		// Entry expired — remove from list and map, then re-insert below.
+		c.insertOrder.Remove(elem)
+		delete(c.entries, key)
 	}
 
 	if len(c.entries) >= c.maxSize {
 		c.evictOldestLocked()
 	}
 
-	c.entries[key] = now
+	elem := c.insertOrder.PushBack(&cacheEntry{key: key, insertedAt: now})
+	c.entries[key] = elem
 	return false
 }
 
@@ -152,6 +172,7 @@ func (c *TTLCache) Reset() {
 	for k := range c.entries {
 		delete(c.entries, k)
 	}
+	c.insertOrder.Init()
 }
 
 // cleanupLoop periodically evicts expired entries.
@@ -170,44 +191,44 @@ func (c *TTLCache) cleanupLoop() {
 }
 
 // evictExpired removes all entries older than the TTL.
+// Since insertOrder is chronological (front = oldest), we iterate from the
+// front and stop as soon as we hit a non-expired entry, giving O(expired)
+// performance rather than O(all) when few entries have expired.
 func (c *TTLCache) evictExpired() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	cutoff := c.nowFunc().Add(-c.ttl)
-	for key, firstSeen := range c.entries {
-		if firstSeen.Before(cutoff) {
-			delete(c.entries, key)
+	for {
+		front := c.insertOrder.Front()
+		if front == nil {
+			break
 		}
+		entry := front.Value.(*cacheEntry)
+		if !entry.insertedAt.Before(cutoff) {
+			break // remaining entries are newer, stop early
+		}
+		c.insertOrder.Remove(front)
+		delete(c.entries, entry.key)
 	}
 }
 
 // evictOldestLocked removes the oldest 10% of entries when the cache
-// is full. It sorts entries by insertion time so that the genuinely oldest
-// entries are evicted first. Must be called with c.mu held for writing.
+// is full. ACCT-4: replaces the previous O(n log n) sort-and-slice approach
+// with O(k) list-front removal. Must be called with c.mu held for writing.
 func (c *TTLCache) evictOldestLocked() {
 	evictCount := len(c.entries) / 10
 	if evictCount < 1 {
 		evictCount = 1
 	}
 
-	// Collect all entries with their timestamps into a slice so we can sort.
-	type kv struct {
-		key       [32]byte
-		firstSeen time.Time
-	}
-	all := make([]kv, 0, len(c.entries))
-	for k, t := range c.entries {
-		all = append(all, kv{k, t})
-	}
-
-	// Sort ascending by insertion time — oldest first.
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].firstSeen.Before(all[j].firstSeen)
-	})
-
-	// Delete the evictCount oldest entries.
-	for i := 0; i < evictCount && i < len(all); i++ {
-		delete(c.entries, all[i].key)
+	for i := 0; i < evictCount; i++ {
+		front := c.insertOrder.Front()
+		if front == nil {
+			break
+		}
+		entry := front.Value.(*cacheEntry)
+		c.insertOrder.Remove(front)
+		delete(c.entries, entry.key)
 	}
 }

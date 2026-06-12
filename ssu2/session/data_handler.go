@@ -48,6 +48,12 @@ type DataHandler struct {
 	stopReaper chan struct{}
 
 	// reaperWG tracks the reaper goroutine so Close() waits for it to exit.
+
+	// closeOnce ensures the stopReaper channel is closed exactly once even
+	// when Close() is called concurrently (STATE-4). The previous select-based
+	// guard had a TOCTOU: two concurrent callers could both fall through to
+	// close(stopReaper), causing a panic on the second close.
+	closeOnce sync.Once
 	// BUG-RL-4: previously the goroutine was untracked — CloseWithReason could
 	// return while the reaper still accessed DataHandler.fragments.
 	reaperWG sync.WaitGroup
@@ -140,12 +146,15 @@ type DataHandlerCallbacks struct {
 
 // DataHandlerStats tracks statistics for monitoring and debugging.
 type DataHandlerStats struct {
-	MessagesReceived    uint64 // Complete messages received
-	FragmentsReceived   uint64 // Total fragments received
-	MessagesReassembled uint64 // Messages successfully reassembled
-	MessagesDropped     uint64 // Messages dropped (timeout, errors)
-	BlocksProcessed     uint64 // Total blocks processed
-	UnknownBlocks       uint64 // Unknown block types received
+	MessagesReceived       uint64 // Complete messages received
+	FragmentsReceived      uint64 // Total fragments received
+	MessagesReassembled    uint64 // Messages successfully reassembled
+	MessagesDropped        uint64 // Messages dropped (timeout, errors)
+	// ACCT-3: separate counter for queue-full drops so operators can distinguish
+	// between reassembly/timeout losses and backpressure-driven losses.
+	MessagesDroppedQueueFull uint64 // Messages dropped because messageQueue was full
+	BlocksProcessed        uint64 // Total blocks processed
+	UnknownBlocks          uint64 // Unknown block types received
 }
 
 // NewDataHandler creates a new Data message handler.
@@ -198,11 +207,13 @@ func (h *DataHandler) StartReaper() {
 // Close stops the fragment reaper goroutine and waits for it to exit.
 func (h *DataHandler) Close() {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "Close"}).Debug("stopping DataHandler reaper")
-	select {
-	case <-h.stopReaper:
-	default:
+	// STATE-4: Use closeOnce to ensure stopReaper is closed exactly once.
+	// The previous select-based guard was not safe for concurrent Close()
+	// calls — two goroutines could both pass the "channel empty?" check and
+	// both call close(stopReaper), causing a panic.
+	h.closeOnce.Do(func() {
 		close(h.stopReaper)
-	}
+	})
 	// BUG-RL-4: wait for the reaper goroutine to exit before returning so
 	// that CloseWithReason does not return while the goroutine still
 	// accesses DataHandler.fragments.
@@ -393,12 +404,13 @@ func (h *DataHandler) MessageChan() <-chan []byte {
 // GetStats returns a copy of current statistics.
 func (h *DataHandler) GetStats() DataHandlerStats {
 	return DataHandlerStats{
-		MessagesReceived:    atomic.LoadUint64(&h.stats.MessagesReceived),
-		FragmentsReceived:   atomic.LoadUint64(&h.stats.FragmentsReceived),
-		MessagesReassembled: atomic.LoadUint64(&h.stats.MessagesReassembled),
-		MessagesDropped:     atomic.LoadUint64(&h.stats.MessagesDropped),
-		BlocksProcessed:     atomic.LoadUint64(&h.stats.BlocksProcessed),
-		UnknownBlocks:       atomic.LoadUint64(&h.stats.UnknownBlocks),
+		MessagesReceived:         atomic.LoadUint64(&h.stats.MessagesReceived),
+		FragmentsReceived:        atomic.LoadUint64(&h.stats.FragmentsReceived),
+		MessagesReassembled:      atomic.LoadUint64(&h.stats.MessagesReassembled),
+		MessagesDropped:          atomic.LoadUint64(&h.stats.MessagesDropped),
+		MessagesDroppedQueueFull: atomic.LoadUint64(&h.stats.MessagesDroppedQueueFull),
+		BlocksProcessed:          atomic.LoadUint64(&h.stats.BlocksProcessed),
+		UnknownBlocks:            atomic.LoadUint64(&h.stats.UnknownBlocks),
 	}
 }
 

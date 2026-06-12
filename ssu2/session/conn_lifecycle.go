@@ -64,7 +64,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 					"pkg":   "session",
 					"func":  "CloseWithReason",
 					"error": err.Error(),
-				}).Debug("failed to send Termination block (best effort)")
+				}).Warn("failed to send Termination block (best effort)")
 				// Check if error indicates socket is already dead (e.g., broken pipe, connection refused)
 				// This lets us skip the destroy wait since there's no peer to respond anyway.
 				socketDead = isSocketDeadError(err)

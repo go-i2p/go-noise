@@ -69,18 +69,34 @@ func (h *SSU2Conn) wireDataCallbacks() {
 }
 
 // warnMissingSignatureVerifiers logs warnings for unset signature verifiers (G-2).
+// REACH-1 / REACH-2: The previous messages incorrectly stated these blocks
+// "will be rejected" when the verifier is nil. The actual behaviour in
+// handlePeerTest / handleRelayRequest / handleRelayResponse / handleRelayIntro
+// is to SKIP verification and continue processing. This is intentional (the
+// router layer plugs in the verifier), but the inaccurate log messages were
+// misleading operators and concealing the real risk: blocks with forged or
+// missing signatures are silently accepted when no verifier is registered.
 func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	if cbs.VerifyPeerTestSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("PeerTest signature verifier not configured; peer test messages will be rejected (G-2)")
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages (G-2)")
 	}
 	if cbs.VerifyRelayRequestSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayRequest signature verifier not configured; relay requests will be rejected (G-2)")
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayRequest signature verifier not configured; signature verification will be SKIPPED for relay requests (G-2)")
 	}
 	if cbs.VerifyRelayResponseSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayResponse signature verifier not configured; signed relay responses will be rejected (G-2)")
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayResponse signature verifier not configured; signature verification will be SKIPPED for signed relay responses (G-2)")
 	}
 	if cbs.VerifyRelayIntroSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayIntro signature verifier not configured; relay intros will be rejected (G-2)")
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayIntro signature verifier not configured; signature verification will be SKIPPED for relay intros (G-2)")
+	}
+	// Warn about missing application-level dispatch callbacks: these are the
+	// handlers that actually implement NAT detection and relay coordination.
+	// Without them the respective blocks are silently dropped after verification.
+	if cbs.OnPeerTest == nil {
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("OnPeerTest callback not configured; peer test blocks will be silently dropped (NAT detection will not function)")
+	}
+	if cbs.OnRelayRequest == nil {
+		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("OnRelayRequest callback not configured; relay request blocks will be silently dropped (relay coordination will not function)")
 	}
 }
 

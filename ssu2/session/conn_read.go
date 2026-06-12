@@ -133,29 +133,46 @@ func (h *SSU2Conn) recvLoop() {
 				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
 			}
 		} else {
-			// Shared socket: poll with deadline so closeChan is checked periodically.
+			// Shared socket path: this connection does not own the PacketConn but
+			// is its sole reader (DialSSU2WithConn contract). We cannot block
+			// indefinitely on ReadFrom because that would prevent closeChan from
+			// being checked. Use a 100 ms read deadline on this socket to achieve
+			// periodic wakeup.
+			//
+			// NOTE: SetReadDeadline here is safe because the DialSSU2WithConn API
+			// contract guarantees this connection is the SOLE reader of the socket.
+			// Listener-accepted connections never enter this branch because
+			// readsOwnSocket is false for them, so recvLoop is never started.
+			// If a future use case shares this socket with other readers, this
+			// branch must be revisited (RACE-4).
 			select {
 			case <-h.closeChan:
 				return
 			default:
-				_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			}
+			_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 
-				n, addr, err := h.underlying.ReadFrom(buf)
-				if err != nil {
-					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-						continue
-					}
-					h.readErrors.Add(1)
+			n, addr, err := h.underlying.ReadFrom(buf)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
 				}
-
-				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
-				if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
-					log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
-					h.processInboundPacket(packet)
-				} else {
-					log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
+				// Non-timeout error: check if we're closing before counting it.
+				select {
+				case <-h.closeChan:
+					return
+				default:
 				}
+				h.readErrors.Add(1)
+				continue
+			}
+
+			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
+			if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
+				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
+				h.processInboundPacket(packet)
+			} else {
+				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
 			}
 		}
 	}

@@ -86,6 +86,15 @@ func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, co
 // production: stale packets from the previous listener instance may be delivered to the
 // new listener during the overlap window.
 func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
+	return ListenNTCP2WithContext(context.Background(), network, addr, config)
+}
+
+// ListenNTCP2WithContext is like ListenNTCP2 but accepts a context that is
+// forwarded to net.ListenConfig.Listen when SO_REUSEADDR is requested. This
+// allows callers to cancel or time-bound the socket creation step.
+// TIMEOUT-2: ListenNTCP2 previously hardcoded context.Background() for the
+// SO_REUSEADDR path, ignoring any deadline the caller may have set.
+func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *Config) (*Listener, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ListenNTCP2", "address": addr}).Debug("Creating NTCP2 listener")
 	if err := validateNTCP2ListenParams(network, addr, config); err != nil {
 		return nil, err
@@ -107,7 +116,7 @@ func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 		lc := &net.ListenConfig{
 			Control: reuseAddrControl,
 		}
-		listener, err = lc.Listen(context.Background(), network, addr)
+		listener, err = lc.Listen(ctx, network, addr)
 	} else {
 		listener, err = net.Listen(network, addr)
 	}

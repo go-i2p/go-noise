@@ -93,7 +93,9 @@ func insertExpiredKey(c *TTLCache, keyByte byte) [32]byte {
 	var key [32]byte
 	key[0] = keyByte
 	c.mu.Lock()
-	c.entries[key] = time.Now().Add(-3 * c.ttl)
+	entry := &cacheEntry{key: key, insertedAt: time.Now().Add(-3 * c.ttl)}
+	elem := c.insertOrder.PushBack(entry)
+	c.entries[key] = elem
 	c.mu.Unlock()
 	return key
 }
@@ -129,7 +131,9 @@ func TestTTLCache_MaxSizeEviction(t *testing.T) {
 		var key [32]byte
 		key[0] = byte(i >> 8)
 		key[1] = byte(i)
-		c.entries[key] = time.Now()
+		entry := &cacheEntry{key: key, insertedAt: time.Now()}
+		elem := c.insertOrder.PushBack(entry)
+		c.entries[key] = elem
 	}
 	c.mu.Unlock()
 
