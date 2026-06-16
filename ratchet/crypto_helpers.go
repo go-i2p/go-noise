@@ -38,9 +38,11 @@ func deriveDirectionalKeys(baseKey [32]byte, isInitiator bool) (sendKey, recvKey
 }
 
 // deriveSessionKeysFromSecret derives root, symmetric, and tag keys from a shared secret.
+// L-4: Zero intermediate arr copy before returning to prevent key material lingering on stack
 func deriveSessionKeysFromSecret(sharedSecret []byte) (*sessionKeys, error) {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "deriveSessionKeysFromSecret", "secret_len": len(sharedSecret)}).Debug("deriving root/sym/tag keys from shared secret")
 	var arr [32]byte
+	defer func() { zero32(&arr) }() // L-4: Zero intermediate key material
 	copy(arr[:], sharedSecret)
 	kd := kdf.NewKeyDerivation(arr)
 	rootKey, symKey, tagKey, err := kd.DeriveSessionKeys()
@@ -67,7 +69,10 @@ func parseExistingSessionMessage(msg []byte) (ciphertext []byte, tag [16]byte, e
 
 // encryptWithSessionKey encrypts plaintext using ChaCha20-Poly1305 with session tag as AAD.
 // The nonce is counter-based: [0,0,0,0 || LE64(messageNumber)] per the spec.
+// M-7: The messageKey is zeroed before returning to prevent key material lingering in memory.
 func encryptWithSessionKey(messageKey [32]byte, plaintext []byte, sessionTag [8]byte, messageNumber uint32) (ciphertext []byte, tag [16]byte, err error) {
+	defer func() { zero32(&messageKey) }() // M-7: Zero message key after use
+
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "encryptWithSessionKey", "plaintext_len": len(plaintext), "message_number": messageNumber}).Debug("encrypting with session key")
 	aead, err := chacha20poly1305.NewAEAD(messageKey)
 	if err != nil {
@@ -86,7 +91,10 @@ func encryptWithSessionKey(messageKey [32]byte, plaintext []byte, sessionTag [8]
 
 // decryptWithSessionTag decrypts ciphertext using ChaCha20-Poly1305 with session tag as AAD.
 // The nonce is derived from the message number: [0,0,0,0 || LE64(messageNumber)].
+// M-7: The messageKey is zeroed before returning to prevent key material lingering in memory.
 func decryptWithSessionTag(messageKey [32]byte, ciphertext []byte, tag [16]byte, sessionTag [8]byte, messageNumber uint32) ([]byte, error) {
+	defer func() { zero32(&messageKey) }() // M-7: Zero message key after use
+
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "decryptWithSessionTag", "ciphertext_len": len(ciphertext), "message_number": messageNumber}).Debug("decrypting with session tag")
 	aead, err := chacha20poly1305.NewAEAD(messageKey)
 	if err != nil {

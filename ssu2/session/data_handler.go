@@ -146,15 +146,15 @@ type DataHandlerCallbacks struct {
 
 // DataHandlerStats tracks statistics for monitoring and debugging.
 type DataHandlerStats struct {
-	MessagesReceived       uint64 // Complete messages received
-	FragmentsReceived      uint64 // Total fragments received
-	MessagesReassembled    uint64 // Messages successfully reassembled
-	MessagesDropped        uint64 // Messages dropped (timeout, errors)
+	MessagesReceived    uint64 // Complete messages received
+	FragmentsReceived   uint64 // Total fragments received
+	MessagesReassembled uint64 // Messages successfully reassembled
+	MessagesDropped     uint64 // Messages dropped (timeout, errors)
 	// ACCT-3: separate counter for queue-full drops so operators can distinguish
 	// between reassembly/timeout losses and backpressure-driven losses.
 	MessagesDroppedQueueFull uint64 // Messages dropped because messageQueue was full
-	BlocksProcessed        uint64 // Total blocks processed
-	UnknownBlocks          uint64 // Unknown block types received
+	BlocksProcessed          uint64 // Total blocks processed
+	UnknownBlocks            uint64 // Unknown block types received
 }
 
 // NewDataHandler creates a new Data message handler.
@@ -175,9 +175,14 @@ func NewDataHandler(queueSize int) *DataHandler {
 }
 
 // newDataHandlerFromConfig creates a DataHandler using SSU2Config values.
+// L-6: Uses config.MessageQueueSize if specified, defaults to 100.
 func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "newDataHandlerFromConfig"}).Debug("creating data handler from config")
-	dh := NewDataHandler(100)
+	queueSize := 100 // Default
+	if config != nil && config.MessageQueueSize > 0 {
+		queueSize = config.MessageQueueSize
+	}
+	dh := NewDataHandler(queueSize)
 	if config != nil && config.FragmentTimeout > 0 {
 		dh.fragmentTimeout = config.FragmentTimeout
 	}

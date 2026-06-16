@@ -11,6 +11,7 @@ import (
 var (
 	defaultOnce sync.Once
 	defaultInst *Transport
+	defaultMu   sync.Mutex // protects concurrent ResetDefault() + getDefault() calls
 )
 
 // Default is the package-level Transport used by DialNoise, ListenNoise, etc.
@@ -36,7 +37,12 @@ var Default *Transport
 // clean up pool resources and shutdown manager goroutines before dropping the
 // reference. This prevents goroutine leaks in test suites that call ResetDefault
 // multiple times.
+//
+// Thread-safe: uses a mutex to protect against concurrent calls to getDefault().
 func ResetDefault() {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+
 	if defaultInst != nil {
 		_ = defaultInst.GracefulShutdown()
 	}
@@ -46,7 +52,18 @@ func ResetDefault() {
 }
 
 // getDefault lazily creates the singleton Transport and exposes it as Default.
+// Thread-safe: uses a mutex to protect against concurrent calls to ResetDefault().
 func getDefault() *Transport {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+
+	// If already initialized, return existing instance
+	if defaultInst != nil {
+		return defaultInst
+	}
+
+	// Perform the one-time initialization using sync.Once
+	// (mutex is still held, so ResetDefault won't race here)
 	defaultOnce.Do(func() {
 		defaultInst = NewTransport(
 			pool.NewConnPool(&pool.PoolConfig{

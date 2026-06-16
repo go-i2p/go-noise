@@ -136,6 +136,9 @@ func (h *DataHandler) handleCongestion(data []byte) error {
 
 // handleSignedRelayBlock is the common handler for relay blocks that require
 // unconditional signature verification: decode → check signature → verify → dispatch.
+// Per SSU2 spec (G-2), if a signature is present, the verifier callback MUST be
+// configured and must succeed. If the verifier is nil, the block is rejected to
+// prevent fail-open authentication bypass (M-5).
 func (h *DataHandler) handleSignedRelayBlock(
 	block *SSU2Block,
 	label string,
@@ -154,10 +157,12 @@ func (h *DataHandler) handleSignedRelayBlock(
 		return oops.Code("MISSING_SIGNATURE").Errorf("%s block has no signature", label)
 	}
 
-	if verify != nil {
-		if err := verify(); err != nil {
-			return oops.Code("SIGNATURE_INVALID").Wrapf(err, "%s signature verification failed", label)
-		}
+	// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+	if verify == nil {
+		return oops.Code("VERIFIER_MISSING").Errorf("%s block has signature but verifier callback is not configured", label)
+	}
+	if err := verify(); err != nil {
+		return oops.Code("SIGNATURE_INVALID").Wrapf(err, "%s signature verification failed", label)
 	}
 
 	if dispatch != nil {
@@ -213,10 +218,12 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 		if len(decoded.Signature) == 0 {
 			return oops.Code("MISSING_SIGNATURE").Errorf("RelayResponse (code %d) has no signature", decoded.Code)
 		}
-		if cbs.VerifyRelayResponseSignature != nil {
-			if err := cbs.VerifyRelayResponseSignature(decoded); err != nil {
-				return oops.Code("SIGNATURE_INVALID").Wrapf(err, "RelayResponse signature verification failed")
-			}
+		// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+		if cbs.VerifyRelayResponseSignature == nil {
+			return oops.Code("VERIFIER_MISSING").Errorf("RelayResponse (code %d) has signature but verifier callback is not configured", decoded.Code)
+		}
+		if err := cbs.VerifyRelayResponseSignature(decoded); err != nil {
+			return oops.Code("SIGNATURE_INVALID").Wrapf(err, "RelayResponse signature verification failed")
 		}
 	}
 
@@ -296,10 +303,12 @@ func (h *DataHandler) handlePeerTest(block *SSU2Block) error {
 		if len(decoded.Signature) == 0 {
 			return oops.Code("MISSING_SIGNATURE").Errorf("PeerTest message %d has no signature", decoded.MessageCode)
 		}
-		if cbs.VerifyPeerTestSignature != nil {
-			if err := cbs.VerifyPeerTestSignature(decoded); err != nil {
-				return oops.Code("SIGNATURE_INVALID").Wrapf(err, "PeerTest message %d signature verification failed", decoded.MessageCode)
-			}
+		// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+		if cbs.VerifyPeerTestSignature == nil {
+			return oops.Code("VERIFIER_MISSING").Errorf("PeerTest message %d has signature but verifier callback is not configured", decoded.MessageCode)
+		}
+		if err := cbs.VerifyPeerTestSignature(decoded); err != nil {
+			return oops.Code("SIGNATURE_INVALID").Wrapf(err, "PeerTest message %d signature verification failed", decoded.MessageCode)
 		}
 	}
 

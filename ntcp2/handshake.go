@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"io"
 	"sync"
 	"time"
@@ -318,7 +317,6 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 	var bobPadLen int
 	if len(bobOpts) >= ntcp2OptionsSize {
 		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
-		_ = hex.EncodeToString(bobOpts[:ntcp2OptionsSize]) // bobOpts available for debug
 
 		// Validate bobPadLen to prevent unbounded allocation DoS.
 		// Per spec §4.3, padding is "0..223 bytes" in practice. We enforce

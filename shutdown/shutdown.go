@@ -218,13 +218,19 @@ func (sm *ShutdownManager) Shutdown() error {
 }
 
 // logShutdownInitiation logs the start of the shutdown process with current state.
+// L-3: Acquire RLock before reading map lengths to prevent data race
 func (sm *ShutdownManager) logShutdownInitiation() {
+	sm.mu.RLock()
+	connCount := len(sm.connections)
+	listCount := len(sm.listeners)
+	sm.mu.RUnlock()
+
 	sm.logger.WithFields(i2plogger.Fields{
 		"pkg":            "noise",
 		"func":           "ShutdownManager.logShutdownInitiation",
 		"timeout":        sm.shutdownTimeout.String(),
-		"connections":    len(sm.connections),
-		"listeners":      len(sm.listeners),
+		"connections":    connCount,
+		"listeners":      listCount,
 		"shutdown_phase": "initiation",
 		"timestamp":      time.Now().Format(time.RFC3339),
 	}).Info("initiating graceful shutdown")

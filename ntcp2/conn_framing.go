@@ -406,7 +406,10 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 		ivBefore = slm.PeekOutboundIV()
 	}
 
-	frame, mask := nc.buildWireFrameWithMask(encrypted, slm)
+	frame, mask, err := nc.buildWireFrameWithMask(encrypted, slm)
+	if err != nil {
+		return 0, err
+	}
 
 	bytesWritten, err := nc.writeWireFrame(frame)
 	if err != nil {
@@ -497,23 +500,25 @@ func (nc *Conn) encryptFrame(b []byte) ([]byte, error) {
 
 // buildWireFrame constructs the NTCP2 wire frame by prepending a 2-byte SipHash-obfuscated
 // length to the ciphertext. After this call the SipHash outbound state has advanced.
-func (nc *Conn) buildWireFrame(encrypted []byte, slm *SipHashLengthModifier) []byte {
-	frame, _ := nc.buildWireFrameWithMask(encrypted, slm)
-	return frame
+func (nc *Conn) buildWireFrame(encrypted []byte, slm *SipHashLengthModifier) ([]byte, error) {
+	frame, _, err := nc.buildWireFrameWithMask(encrypted, slm)
+	return frame, err
 }
 
 // buildWireFrameWithMask is identical to buildWireFrame but also returns the
 // SipHash mask used for the obfuscated length field, for diagnostic logging.
-func (nc *Conn) buildWireFrameWithMask(encrypted []byte, slm *SipHashLengthModifier) ([]byte, uint16) {
+// Returns error (L-1) if encrypted frame length exceeds maximum (defense-in-depth check).
+func (nc *Conn) buildWireFrameWithMask(encrypted []byte, slm *SipHashLengthModifier) ([]byte, uint16, error) {
 	// Defensive check: upstream encryptFrame() guarantees len(encrypted) <= SpecMaxFrameSize (0xFFFF).
 	// This guard is unreachable in production, but retained as defense-in-depth
 	// to prevent integer overflow during uint16 cast.
+	// L-1: Return error instead of panicking
 	if len(encrypted) > 0xFFFF {
-		// Unreachable: guarded by encryptFrame() return error for FRAME_TOO_LARGE
-		panic(oops.Code("FRAME_TOO_LARGE_AT_CAST_UNREACHABLE").
+		return nil, 0, oops.
+			Code("FRAME_TOO_LARGE_AT_CAST").
 			In("ntcp2").
 			With("encrypted_len", len(encrypted)).
-			Errorf("BUG: encrypted frame length %d exceeds uint16 max; should have been caught by encryptFrame", len(encrypted)))
+			Errorf("encrypted frame length %d exceeds uint16 max; should have been caught by encryptFrame", len(encrypted))
 	}
 	frameLen := uint16(len(encrypted))
 	mask := slm.NextOutboundMask()
@@ -522,7 +527,7 @@ func (nc *Conn) buildWireFrameWithMask(encrypted []byte, slm *SipHashLengthModif
 	frame := make([]byte, FrameLengthFieldSize+len(encrypted))
 	binary.BigEndian.PutUint16(frame[:FrameLengthFieldSize], obfuscatedLen)
 	copy(frame[FrameLengthFieldSize:], encrypted)
-	return frame, mask
+	return frame, mask, nil
 }
 
 // writeWireFrame writes the complete wire frame atomically to the underlying TCP connection.

@@ -51,6 +51,10 @@ type Listener struct {
 
 	// transientErrorMutex protects updates to consecutiveTransientErrors
 	transientErrorMutex sync.Mutex
+
+	// maxConnSemaphore limits concurrent connections to prevent resource exhaustion DoS (M-6)
+	// Nil if MaxConnections is 0 (unlimited). Non-nil if configured.
+	maxConnSemaphore chan struct{}
 }
 
 // ListenerConfig contains configuration for creating a NoiseListener.
@@ -71,6 +75,12 @@ type ListenerConfig struct {
 	// before returning the error to the caller. Defaults to 3 if not set.
 	// Set to 0 to disable automatic retry (all errors returned immediately).
 	MaxAcceptErrors int
+
+	// MaxConnections limits the number of concurrent connections accepted by this
+	// listener, providing backpressure to prevent resource exhaustion DoS attacks (M-6).
+	// Defaults to 0 (unlimited). Set to > 0 to enforce a limit.
+	// When the limit is reached, Accept() blocks until a connection closes.
+	MaxConnections int
 
 	// PostHandshakeHook is an optional callback invoked after the Noise
 	// handshake completes successfully but before the connection transitions
@@ -246,12 +256,19 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 	// Create Noise address for this listener
 	addr := conn.NewNoiseAddr(underlying.Addr(), config.Pattern, "responder")
 
+	// Initialize semaphore for connection limiting (M-6)
+	var maxConnSem chan struct{}
+	if config.MaxConnections > 0 {
+		maxConnSem = make(chan struct{}, config.MaxConnections)
+	}
+
 	nl := &Listener{
-		underlying: underlying,
-		config:     config,
-		addr:       addr,
-		logger:     log,
-		closed:     false,
+		underlying:       underlying,
+		config:           config,
+		addr:             addr,
+		logger:           log,
+		closed:           false,
+		maxConnSemaphore: maxConnSem,
 	}
 
 	log.WithFields(i2plogger.Fields{
@@ -274,6 +291,10 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 // This prevents transient system errors (e.g., temporary file descriptor exhaustion)
 // from killing the accept loop. If MaxAcceptErrors consecutive transient errors
 // occur, the error is returned to the caller.
+//
+// Connection Limiting (M-6): If MaxConnections is configured, Accept blocks
+// until a connection slot becomes available. This provides backpressure against
+// resource exhaustion DoS attacks.
 func (nl *Listener) Accept() (net.Conn, error) {
 	if nl.isClosed() {
 		return nil, oops.
@@ -282,6 +303,16 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			With("listener_addr", nl.addr.String()).
 			Errorf("listener is closed")
 	}
+
+	// Acquire semaphore slot if MaxConnections is configured (M-6)
+	// This blocks if the limit is reached, providing backpressure.
+	if nl.maxConnSemaphore != nil {
+		nl.maxConnSemaphore <- struct{}{}
+	}
+
+	// Flag to track if we successfully acquired a semaphore slot
+	// If we acquired it but then fail before returning, we need to release it
+	slotAcquired := nl.maxConnSemaphore != nil
 
 	// Retry loop for handling transient accept errors with exponential backoff
 	for {
@@ -294,6 +325,25 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			nl.consecutiveTransientErrors = 0
 			nl.transientErrorMutex.Unlock()
 
+			// M-8: Set a handshake deadline on the underlying connection to prevent
+			// a slow or silent peer from holding a goroutine indefinitely.
+			// Use the configured HandshakeTimeout as the deadline duration.
+			if nl.config.HandshakeTimeout > 0 {
+				if err := underlying.SetDeadline(time.Now().Add(nl.config.HandshakeTimeout)); err != nil {
+					if slotAcquired {
+						<-nl.maxConnSemaphore // Release semaphore on deadline failure (M-6)
+						slotAcquired = false
+					}
+					underlying.Close() // Clean up the underlying connection
+					return nil, oops.
+						Code("SET_DEADLINE_FAILED").
+						In("noise").
+						With("listener_addr", nl.addr.String()).
+						With("remote_addr", underlying.RemoteAddr().String()).
+						Wrapf(err, "failed to set handshake deadline")
+				}
+			}
+
 			// Create connection config for the accepted connection (as responder),
 			// propagating modifiers, post-handshake hook, and ASK labels from
 			// the listener config.
@@ -302,6 +352,10 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			// Wrap in NoiseConn
 			noiseConn, err := conn.NewNoiseConn(underlying, connConfig)
 			if err != nil {
+				if slotAcquired {
+					<-nl.maxConnSemaphore // Release semaphore on wrap failure (M-6)
+					slotAcquired = false
+				}
 				underlying.Close() // Clean up the underlying connection
 				return nil, oops.
 					Code("WRAP_FAILED").
@@ -318,6 +372,10 @@ func (nl *Listener) Accept() (net.Conn, error) {
 				"remote_addr":   underlying.RemoteAddr().String(),
 			}).Debug("accepted new noise connection")
 
+			// If we acquired a semaphore slot, wrap the connection to release it on Close() (M-6)
+			if slotAcquired {
+				return newSemaphoreReleaseWrapper(noiseConn, nl.maxConnSemaphore), nil
+			}
 			return noiseConn, nil
 		}
 
@@ -327,8 +385,12 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			isTransient = netErr.Temporary()
 		}
 
-		// If it's not a transient error, return immediately
+		// If it's not a transient error, release semaphore if acquired and return error (M-6)
 		if !isTransient {
+			if slotAcquired {
+				<-nl.maxConnSemaphore
+				slotAcquired = false
+			}
 			return nil, oops.
 				Code("ACCEPT_FAILED").
 				In("noise").
@@ -342,8 +404,12 @@ func (nl *Listener) Accept() (net.Conn, error) {
 		errorCount := nl.consecutiveTransientErrors
 		nl.transientErrorMutex.Unlock()
 
-		// If we've exceeded max transient errors, return the error
+		// If we've exceeded max transient errors, release semaphore and return error (M-6)
 		if nl.config.MaxAcceptErrors > 0 && errorCount > nl.config.MaxAcceptErrors {
+			if slotAcquired {
+				<-nl.maxConnSemaphore
+				slotAcquired = false
+			}
 			return nil, oops.
 				Code("ACCEPT_FAILED_MAX_TRANSIENT").
 				In("noise").
@@ -353,8 +419,12 @@ func (nl *Listener) Accept() (net.Conn, error) {
 				Wrapf(err, "exceeded maximum consecutive transient accept errors")
 		}
 
-		// If max errors is 0 (disabled), return immediately
+		// If max errors is 0 (disabled), release semaphore and return immediately (M-6)
 		if nl.config.MaxAcceptErrors == 0 {
+			if slotAcquired {
+				<-nl.maxConnSemaphore
+				slotAcquired = false
+			}
 			return nil, oops.
 				Code("ACCEPT_FAILED").
 				In("noise").
@@ -513,4 +583,34 @@ func (nl *Listener) isClosed() bool {
 	nl.closeMutex.Lock()
 	defer nl.closeMutex.Unlock()
 	return nl.closed
+}
+
+// semaphoreReleaseWrapper wraps a net.Conn so that its Close() call releases
+// a connection limit semaphore. Used by Accept() when MaxConnections is configured (M-6).
+type semaphoreReleaseWrapper struct {
+	net.Conn
+	semaphore chan struct{}
+	mu        sync.Mutex
+	released  bool
+}
+
+// newSemaphoreReleaseWrapper creates a wrapper that releases a semaphore slot on Close().
+func newSemaphoreReleaseWrapper(conn net.Conn, semaphore chan struct{}) net.Conn {
+	return &semaphoreReleaseWrapper{Conn: conn, semaphore: semaphore}
+}
+
+// Close closes the underlying connection and releases the semaphore slot (M-6).
+func (w *semaphoreReleaseWrapper) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.released {
+		// Already released, but still close the underlying connection
+		return w.Conn.Close()
+	}
+	w.released = true
+	// Close the underlying connection first
+	err := w.Conn.Close()
+	// Always release the semaphore, even if Close failed
+	<-w.semaphore
+	return err
 }

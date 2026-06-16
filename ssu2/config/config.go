@@ -243,4 +243,11 @@ type SSU2Config struct {
 	// Required for responder configs (Initiator=false); use
 	// DefaultRouterInfoValidator or provide a custom implementation.
 	RouterInfoValidator func(routerInfo, authenticatedStaticKey []byte) error
+
+	// MessageQueueSize is the capacity of the inbound message queue for
+	// complete reassembled I2NP messages. When the queue is full and a new
+	// message is received, the oldest message is dropped with a counter
+	// incremented. L-6: Configurable backpressure.
+	// Default: 100 messages.
+	MessageQueueSize int
 }
