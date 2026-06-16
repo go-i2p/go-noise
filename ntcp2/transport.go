@@ -15,12 +15,17 @@ import (
 // This is a convenience function that combines net.Dial, NoiseConn creation, and NTCP2 wrapping.
 // For more control over the underlying connection, use net.Dial followed by NewNoiseConn and NewNTCP2Conn.
 func DialNTCP2(network, addr string, config *Config) (*Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2", "address": addr}).Debug("Dialing NTCP2 connection")
+	return DialNTCP2Context(context.Background(), network, addr, config)
+}
+
+// DialNTCP2Context creates a connection with context support.
+func DialNTCP2Context(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
+	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2Context", "address": addr}).Debug("Dialing NTCP2 connection with context")
 	if err := validateNTCP2DialParams(network, addr, config); err != nil {
 		return nil, err
 	}
 
-	conn, err := establishTCPConnection(network, addr)
+	conn, err := establishTCPConnectionContext(ctx, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +49,7 @@ func DialNTCP2WithHandshake(network, addr string, config *Config) (*Conn, error)
 // The context can be used to cancel the dial or handshake operations.
 func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2WithHandshakeContext", "address": addr}).Debug("Dialing NTCP2 with handshake")
-	ntcp2Conn, err := DialNTCP2(network, addr, config)
+	ntcp2Conn, err := DialNTCP2Context(ctx, network, addr, config)
 	if err != nil {
 		return nil, err
 	}
@@ -365,7 +370,13 @@ func createDialAddresses(conn net.Conn, config *Config) (*Addr, *Addr, error) {
 
 // establishTCPConnection dials the underlying TCP connection with proper error handling.
 func establishTCPConnection(network, addr string) (net.Conn, error) {
-	conn, err := net.Dial(network, addr)
+	return establishTCPConnectionContext(context.Background(), network, addr)
+}
+
+// establishTCPConnectionContext dials the underlying TCP connection with context support.
+func establishTCPConnectionContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, oops.
 			Code("DIAL_FAILED").

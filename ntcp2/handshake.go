@@ -319,6 +319,20 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 	if len(bobOpts) >= ntcp2OptionsSize {
 		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
 		_ = hex.EncodeToString(bobOpts[:ntcp2OptionsSize]) // bobOpts available for debug
+
+		// Validate bobPadLen to prevent unbounded allocation DoS.
+		// Per spec §4.3, padding is "0..223 bytes" in practice. We enforce
+		// a conservative limit to prevent a malicious responder from forcing
+		// the initiator to allocate 64 KiB per connection and blocking on io.ReadFull.
+		if bobPadLen > MaxNTCP2HandshakePadding {
+			return oops.
+				Code("MSG2_PADDING_TOO_LARGE").
+				In("ntcp2").
+				With("padLen", bobPadLen).
+				With("max", MaxNTCP2HandshakePadding).
+				Errorf("message 2 padding too large: %d > %d", bobPadLen, MaxNTCP2HandshakePadding)
+		}
+
 		if bobPadLen > 0 {
 			pad := make([]byte, bobPadLen)
 			if _, err := io.ReadFull(raw, pad); err != nil {

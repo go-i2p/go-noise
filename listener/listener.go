@@ -17,6 +17,12 @@ import (
 // Listener implements net.Listener for accepting Noise Protocol connections.
 // It wraps an underlying net.Listener and provides encrypted connections
 // following the Noise Protocol Framework specification.
+//
+// IMPORTANT: The Listener does not internally retry on transient Accept errors
+// (such as EMFILE, ECONNABORTED, or temporary resource exhaustion). Callers MUST
+// implement retry logic with exponential backoff to recover from transient failures.
+// Failure to do so allows attackers to kill the accept loop by repeatedly opening
+// and resetting connections, causing a Denial of Service on the listener.
 type Listener struct {
 	// underlying is the wrapped network listener
 	underlying net.Listener

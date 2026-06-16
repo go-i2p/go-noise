@@ -1,6 +1,8 @@
 package ratchet
 
 import (
+	"crypto/subtle"
+
 	"github.com/go-i2p/crypto/ecies"
 	"github.com/go-i2p/crypto/types"
 	"github.com/go-i2p/logger"
@@ -116,18 +118,14 @@ func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey
 // for us by comparing the first 16 bytes of the record with our identity hash.
 //
 // This provides a fast pre-check before attempting full ECIES decryption.
+// Uses constant-time comparison to prevent timing-based identity oracle attacks.
 //
 // Parameters:
 //   - encrypted: 528-byte encrypted build request record
 //   - ourIdentityHash: our 32-byte identity hash
 func (c *BuildRequestCrypto) VerifyIdentityHash(encrypted [528]byte, ourIdentityHash [32]byte) bool {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "VerifyIdentityHash"}).Debug("Verifying identity hash prefix match")
-	for i := 0; i < 16; i++ {
-		if encrypted[i] != ourIdentityHash[i] {
-			return false
-		}
-	}
-	return true
+	return subtle.ConstantTimeCompare(encrypted[:16], ourIdentityHash[:16]) == 1
 }
 
 // ExtractIdentityHashPrefixRaw returns the first 16 bytes of an encrypted

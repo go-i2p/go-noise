@@ -71,6 +71,20 @@ func createNewConn(network, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
+// createNewConnContext establishes a new network connection with context support.
+// Returns an error with detailed context if the connection fails.
+func createNewConnContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConnContext", "network": network, "address": addr}).Debug("Dialing new connection with context")
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, network, addr)
+	if err != nil {
+		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConnContext", "network": network, "address": addr}).WithError(err).Error("Dial failed")
+		return nil, wrapTransportError("DIAL_FAILED", network, addr,
+			"failed to dial %s://%s", err, network, addr)
+	}
+	return conn, nil
+}
+
 // createNoiseConn wraps a network connection with NoiseConn configuration.
 // Returns an error with detailed context if NoiseConn creation fails.
 func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {

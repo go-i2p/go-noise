@@ -143,7 +143,8 @@ func (t *Transport) DialWithHandshakeContext(ctx context.Context, network, addr 
 		return nil, err
 	}
 
-	conn, err := net.Dial(network, addr)
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
 		return nil, oops.
 			Code("DIAL_FAILED").
