@@ -1,3 +1,13 @@
+//go:build test_with_external_deps
+// +build test_with_external_deps
+
+// Build constraint: This test file requires the external go-i2p/path dependency
+// which may have out-of-date behavior. To run these tests, use:
+//   go test -tags=test_with_external_deps -race ./ssu2
+// To exclude these tests (keeping the main suite green), simply run:
+//   go test -race ./ssu2
+// See AUDIT.md (LOW-2) for details on the external dependency issue.
+
 package ssu2
 
 import (

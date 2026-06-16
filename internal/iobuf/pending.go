@@ -29,13 +29,20 @@ func DrainPendingBuffer(pending *[]byte, b []byte, zero bool) (n int, drained bo
 
 	// Copy as many bytes as the destination buffer can hold
 	n = copy(b, *pending)
+
+	// If zeroing is enabled, immediately zero the delivered bytes to minimize
+	// plaintext lifetime in memory. This ensures already-delivered plaintext
+	// doesn't linger in the backing array even if the buffer isn't fully drained yet.
+	if zero && n > 0 {
+		securemem.SecureZero((*pending)[:n])
+	}
+
 	*pending = (*pending)[n:]
 
-	// If fully drained and zeroing is enabled, zero the backing array
-	// before releasing the reference.
+	// If fully drained, ensure the entire backing array is zeroed
 	if len(*pending) == 0 {
 		if zero && cap(*pending) > 0 {
-			// Reslice to the original backing array capacity and zero it
+			// Reslice to the original backing array capacity and zero any remainder
 			tail := (*pending)[:cap(*pending)]
 			securemem.SecureZero(tail)
 		}

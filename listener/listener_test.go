@@ -854,3 +854,49 @@ func TestListenerSetShutdownManagerRace(t *testing.T) {
 		}
 	})
 }
+
+// TestAccept_MaxConnections_ExposesHandshake verifies that when MaxConnections is
+// configured, the semaphoreReleaseWrapper still exposes the Handshake() method and
+// other Noise-specific methods through method promotion (HIGH-1 regression test).
+func TestAccept_MaxConnections_ExposesHandshake(t *testing.T) {
+	nl := newTestNoiseListenerFromTCP(t, "XX")
+	// Enable connection limiting with a small limit to force wrapper usage
+	nl.config.MaxConnections = 4
+	t.Cleanup(func() { nl.Close() })
+
+	// Create a client connection
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { clientConn.Close(); serverConn.Close() })
+
+	// Mock the underlying listener to return our server end
+	mockUnderlyingListener := &mockListener{
+		addr: nl.underlying.Addr(),
+		acceptFunc: func() (net.Conn, error) {
+			return serverConn, nil
+		},
+	}
+
+	// Replace the underlying listener temporarily
+	oldUnderlying := nl.underlying
+	nl.underlying = mockUnderlyingListener
+	defer func() { nl.underlying = oldUnderlying }()
+
+	// Accept a connection (should return semaphoreReleaseWrapper)
+	acceptedConn, err := nl.Accept()
+	require.NoError(t, err)
+	require.NotNil(t, acceptedConn)
+	t.Cleanup(func() { acceptedConn.Close() })
+
+	// Verify that the returned connection exposes Handshake() method
+	// through interface assertion (the method should be promoted by embedding *conn.Conn)
+	handshaker, ok := acceptedConn.(interface{ Handshake(context.Context) error })
+	require.True(t, ok, "accepted conn must expose Handshake() when MaxConnections>0")
+
+	// Verify it also exposes GetConnectionState() for completeness
+	stateGetter, ok := acceptedConn.(interface{ GetConnectionState() conn.ConnState })
+	require.True(t, ok, "accepted conn must expose GetConnectionState() when MaxConnections>0")
+
+	// Verify we can call the methods (they may fail due to mock setup, but should be callable)
+	_ = handshaker
+	_ = stateGetter
+}

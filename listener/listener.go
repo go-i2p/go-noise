@@ -585,18 +585,22 @@ func (nl *Listener) isClosed() bool {
 	return nl.closed
 }
 
-// semaphoreReleaseWrapper wraps a net.Conn so that its Close() call releases
+// semaphoreReleaseWrapper wraps a *conn.Conn so that its Close() call releases
 // a connection limit semaphore. Used by Accept() when MaxConnections is configured (M-6).
+// It embeds the concrete *conn.Conn type, not the net.Conn interface, so that all
+// Noise-specific methods (Handshake, GetConnectionState, etc.) are promoted and accessible
+// to callers that type-assert to *conn.Conn.
 type semaphoreReleaseWrapper struct {
-	net.Conn
+	*conn.Conn
 	semaphore chan struct{}
 	mu        sync.Mutex
 	released  bool
 }
 
 // newSemaphoreReleaseWrapper creates a wrapper that releases a semaphore slot on Close().
-func newSemaphoreReleaseWrapper(conn net.Conn, semaphore chan struct{}) net.Conn {
-	return &semaphoreReleaseWrapper{Conn: conn, semaphore: semaphore}
+// It embeds the concrete *conn.Conn so all Noise-specific methods are promoted and accessible.
+func newSemaphoreReleaseWrapper(noiseConn *conn.Conn, semaphore chan struct{}) net.Conn {
+	return &semaphoreReleaseWrapper{Conn: noiseConn, semaphore: semaphore}
 }
 
 // Close closes the underlying connection and releases the semaphore slot (M-6).
