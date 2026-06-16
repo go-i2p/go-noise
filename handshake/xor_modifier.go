@@ -39,17 +39,24 @@ type XORModifier struct {
 // key is generated automatically. Callers must NOT rely on any particular
 // default value — the old well-known default (0xAA) provided no meaningful
 // obfuscation and has been replaced by this random fallback.
-func NewXORModifier(name string, xorKey []byte) *XORModifier {
+//
+// IMPORTANT: If the OS entropy source is unavailable (crypto/rand fails),
+// this function returns an error. Callers MUST NOT proceed with a connection
+// that cannot be obfuscated, as silently degrading to a weak key breaks
+// anonymity guarantees (M-3 audit finding).
+func NewXORModifier(name string, xorKey []byte) (*XORModifier, error) {
 	if len(xorKey) == 0 {
 		// Generate a cryptographically random 32-byte key so that each modifier
 		// instance with no explicit key still produces distinct output.
 		randomKey := make([]byte, 32)
 		if _, err := io.ReadFull(randReader, randomKey); err != nil {
-			// Fall back to a single non-zero byte only if the OS rand source is
-			// completely broken.  This is a security degradation: the resulting
-			// key provides near-zero obfuscation (1 byte, well-known constant).
-			log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewXORModifier", "name": name}).WithError(err).Error("crypto/rand failed, falling back to degraded 1-byte key")
-			randomKey = []byte{0x01}
+			// Return error instead of silently degrading to a 1-byte key.
+			// This forces callers to handle the entropy failure explicitly
+			// rather than proceeding with broken obfuscation (M-3 audit finding).
+			log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewXORModifier", "name": name}).WithError(err).Error("crypto/rand failed; cannot create XOR modifier without degradation")
+			return nil, oops.
+				Code("RNG_FAILED").
+				Wrapf(err, "failed to generate random XOR key")
 		}
 		xorKey = randomKey
 	}
@@ -62,7 +69,7 @@ func NewXORModifier(name string, xorKey []byte) *XORModifier {
 		name:    name,
 		xorKey:  key,
 		keySize: len(key),
-	}
+	}, nil
 }
 
 // ModifyOutbound applies XOR obfuscation to outbound handshake data.

@@ -105,7 +105,8 @@ func TestNTCP2ConfigWithModifiers(t *testing.T) {
 	routerHash := generateRandomHash()
 
 	// Create some test modifiers
-	xorMod := handshake.NewXORModifier("test-xor", []byte{0xAA, 0xBB})
+	xorMod, err := handshake.NewXORModifier("test-xor", []byte{0xAA, 0xBB})
+	require.NoError(t, err)
 	paddingMod, err := handshake.NewPaddingModifier("test-padding", 4, 8)
 	require.NoError(t, err)
 
@@ -292,7 +293,8 @@ func TestNTCP2ConfigToConnConfigWithCustomModifiers(t *testing.T) {
 	m := newTestCryptoMaterial(t)
 
 	// Create custom modifiers — only compatible ones
-	xorMod := handshake.NewXORModifier("custom-xor", []byte{0xCC, 0xDD})
+	xorMod, err := handshake.NewXORModifier("custom-xor", []byte{0xCC, 0xDD})
+	require.NoError(t, err)
 
 	ntcp2Config, err := NewNTCP2Config(m.routerHash, false)
 	require.NoError(t, err)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -11,7 +12,10 @@ import (
 func TestXORModifier(t *testing.T) {
 	t.Run("NewXORModifier with key", func(t *testing.T) {
 		key := []byte{0xAA, 0xBB, 0xCC}
-		modifier := NewXORModifier("test-xor", key)
+		modifier, err := NewXORModifier("test-xor", key)
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 
 		if modifier.Name() != "test-xor" {
 			t.Errorf("Name() = %v, want %v", modifier.Name(), "test-xor")
@@ -29,8 +33,14 @@ func TestXORModifier(t *testing.T) {
 	})
 
 	t.Run("NewXORModifier with empty key generates random key", func(t *testing.T) {
-		mod1 := NewXORModifier("empty-key-1", []byte{})
-		mod2 := NewXORModifier("empty-key-2", []byte{})
+		mod1, err := NewXORModifier("empty-key-1", []byte{})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
+		mod2, err := NewXORModifier("empty-key-2", []byte{})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 
 		// The random default should be 32 bytes long
 		if len(mod1.xorKey) != 32 {
@@ -55,7 +65,10 @@ func TestXORModifier(t *testing.T) {
 
 	t.Run("XOR round-trip", func(t *testing.T) {
 		key := []byte{0xAA, 0xBB}
-		modifier := NewXORModifier("roundtrip", key)
+		modifier, err := NewXORModifier("roundtrip", key)
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 		originalData := []byte("Hello, Noise Protocol!")
 
 		// Apply XOR transformation
@@ -82,7 +95,10 @@ func TestXORModifier(t *testing.T) {
 	})
 
 	t.Run("XOR with different phases including PhaseData", func(t *testing.T) {
-		modifier := NewXORModifier("phase-test", []byte{0x42})
+		modifier, err := NewXORModifier("phase-test", []byte{0x42})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 		testData := []byte("test")
 
 		// XOR should work the same regardless of phase, including PhaseData
@@ -115,7 +131,10 @@ func TestXORModifier(t *testing.T) {
 	})
 
 	t.Run("XOR with empty data", func(t *testing.T) {
-		modifier := NewXORModifier("empty-data", []byte{0xFF})
+		modifier, err := NewXORModifier("empty-data", []byte{0xFF})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 
 		result, err := modifier.ModifyOutbound(PhaseInitial, []byte{})
 		if err != nil {
@@ -129,7 +148,10 @@ func TestXORModifier(t *testing.T) {
 
 	t.Run("XOR key cycling", func(t *testing.T) {
 		key := []byte{0x01, 0x02}
-		modifier := NewXORModifier("cycling", key)
+		modifier, err := NewXORModifier("cycling", key)
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 		data := []byte{0x10, 0x20, 0x30, 0x40, 0x50}
 
 		result, err := modifier.ModifyOutbound(PhaseExchange, data)
@@ -154,7 +176,10 @@ func TestXORModifier(t *testing.T) {
 
 	t.Run("Close zeroes key material", func(t *testing.T) {
 		key := []byte{0x11, 0x22, 0x33}
-		modifier := NewXORModifier("close-test", key)
+		modifier, err := NewXORModifier("close-test", key)
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 
 		if err := modifier.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
@@ -168,7 +193,10 @@ func TestXORModifier(t *testing.T) {
 	})
 
 	t.Run("Concurrent ModifyOutbound and ModifyInbound", func(t *testing.T) {
-		modifier := NewXORModifier("concurrent-xor", []byte{0x5A, 0xA5})
+		modifier, err := NewXORModifier("concurrent-xor", []byte{0x5A, 0xA5})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 		testData := []byte("concurrent test data for XOR modifier")
 
 		const goroutines = 16
@@ -227,10 +255,9 @@ func (failingReader) Read([]byte) (int, error) {
 }
 
 // TestNewXORModifier_EntropyFailureFallback verifies that when the random
-// source fails, NewXORModifier produces a modifier with the degraded 1-byte
-// fallback key {0x01} instead of panicking. This covers the otherwise-
-// unreachable path in production (crypto/rand.Read only fails if the OS
-// entropy source is broken).
+// source fails, NewXORModifier returns an error instead of silently
+// degrading to a weak fallback key. This ensures fail-fast behavior when
+// entropy is unavailable (which is an extremely rare condition).
 func TestNewXORModifier_EntropyFailureFallback(t *testing.T) {
 	// Save and restore the package-level randReader
 	originalReader := randReader
@@ -239,45 +266,28 @@ func TestNewXORModifier_EntropyFailureFallback(t *testing.T) {
 	// Inject a failing reader
 	randReader = io.Reader(failingReader{})
 
-	mod := NewXORModifier("entropy-fail", nil)
+	mod, err := NewXORModifier("entropy-fail", nil)
 
-	// The fallback key should be the well-known degraded value
-	if len(mod.xorKey) != 1 {
-		t.Fatalf("Fallback key length = %d, want 1", len(mod.xorKey))
+	// Should return an error, not a degraded modifier
+	if err == nil {
+		t.Fatal("NewXORModifier with failed entropy should return error")
 	}
-	if mod.xorKey[0] != 0x01 {
-		t.Errorf("Fallback key = %#x, want 0x01", mod.xorKey[0])
+	if mod != nil {
+		t.Error("NewXORModifier with failed entropy should return nil modifier")
 	}
-
-	// The modifier should still function (XOR with 0x01)
-	data := []byte{0x10, 0x20, 0x30}
-	out, err := mod.ModifyOutbound(PhaseInitial, data)
-	if err != nil {
-		t.Fatalf("ModifyOutbound() error = %v", err)
-	}
-	expected := []byte{0x11, 0x21, 0x31}
-	for i, b := range out {
-		if b != expected[i] {
-			t.Errorf("ModifyOutbound byte %d = %#x, want %#x", i, b, expected[i])
-		}
-	}
-
-	// Round-trip should still work
-	recovered, err := mod.ModifyInbound(PhaseInitial, out)
-	if err != nil {
-		t.Fatalf("ModifyInbound() error = %v", err)
-	}
-	for i, b := range recovered {
-		if b != data[i] {
-			t.Errorf("Round-trip byte %d = %#x, want %#x", i, b, data[i])
-		}
+	// Verify the error contains appropriate context
+	if !strings.Contains(err.Error(), "RNG") && !strings.Contains(err.Error(), "random") {
+		t.Logf("Warning: error message may not clearly indicate RNG failure: %v", err)
 	}
 }
 
 // TestNewXORModifier_NormalRandReaderRestored verifies that the injected
 // reader does not leak across tests (basic sanity check).
 func TestNewXORModifier_NormalRandReaderRestored(t *testing.T) {
-	mod := NewXORModifier("after-restore", nil)
+	mod, err := NewXORModifier("after-restore", nil)
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	if len(mod.xorKey) != 32 {
 		t.Errorf("Expected 32-byte random key after reader restore, got %d bytes", len(mod.xorKey))
 	}
@@ -287,7 +297,10 @@ func TestNewXORModifier_NormalRandReaderRestored(t *testing.T) {
 // ModifyOutbound and ModifyInbound to verify that the sync.Mutex prevents
 // data races on `closed` and `xorKey`. Run with: go test -race ./handshake/...
 func TestXORModifier_ConcurrentClose(t *testing.T) {
-	modifier := NewXORModifier("race-close", []byte{0x5A, 0xA5})
+	modifier, err := NewXORModifier("race-close", []byte{0x5A, 0xA5})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	testData := []byte("concurrent close test data")
 
 	const goroutines = 16
@@ -315,7 +328,7 @@ func TestXORModifier_ConcurrentClose(t *testing.T) {
 	wg.Wait()
 
 	// After Close, further calls must return an error
-	_, err := modifier.ModifyOutbound(PhaseData, testData)
+	_, err = modifier.ModifyOutbound(PhaseData, testData)
 	if err == nil {
 		t.Error("ModifyOutbound after Close should return error")
 	}
@@ -326,7 +339,10 @@ func TestXORModifier_ConcurrentClose(t *testing.T) {
 // degradation where zeroed key material would cause XOR to become a no-op.
 func TestXORModifier_UseAfterClose(t *testing.T) {
 	key := []byte{0xAA, 0xBB, 0xCC}
-	modifier := NewXORModifier("use-after-close", key)
+	modifier, err := NewXORModifier("use-after-close", key)
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	testData := []byte("hello noise")
 
 	// Verify it works before Close

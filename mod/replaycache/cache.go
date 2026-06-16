@@ -17,6 +17,11 @@ import (
 // time.NewTicker in cleanupLoop never receives a non-positive interval (MEDIUM-1).
 const defaultCleanupInterval = 60 * time.Second
 
+// defaultTTL is the fallback TTL for cache entries used when TTL is non-positive.
+// It prevents silent weakening of replay detection (M-2 audit finding).
+// 120 seconds is a conservative value suitable for handshake replay detection.
+const defaultTTL = 120 * time.Second
+
 // defaultMaxSize is the fallback maximum number of cache entries used when
 // MaxSize is non-positive. It prevents silent weakening of replay detection.
 const defaultMaxSize = 10000

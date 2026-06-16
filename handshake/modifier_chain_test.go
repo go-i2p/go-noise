@@ -409,7 +409,10 @@ func TestModifierChain_RoundTrip(t *testing.T) {
 
 func TestModifierChaining(t *testing.T) {
 	// Test real modifiers in a chain
-	xorMod := NewXORModifier("xor", []byte{0xAA})
+	xorMod, err := NewXORModifier("xor", []byte{0xAA})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	paddingMod, err := NewPaddingModifier("padding", 3, 3)
 	if err != nil {
 		t.Fatalf("NewPaddingModifier() error = %v", err)
@@ -451,7 +454,10 @@ func TestNewModifierChain_NilFiltering(t *testing.T) {
 	})
 
 	t.Run("Nil-filtered chain still processes data correctly", func(t *testing.T) {
-		xorMod := NewXORModifier("xor", []byte{0x42})
+		xorMod, err := NewXORModifier("xor", []byte{0x42})
+		if err != nil {
+			t.Fatalf("NewXORModifier() error = %v", err)
+		}
 		chain := NewModifierChain("nil-mixed", nil, xorMod, nil)
 
 		testData := []byte("test data")
@@ -475,7 +481,10 @@ func TestNewModifierChain_NilFiltering(t *testing.T) {
 // TestModifierChain_PhaseData verifies that all modifiers in a chain handle
 // PhaseData correctly — no modifier should block or corrupt data for this phase.
 func TestModifierChain_PhaseData(t *testing.T) {
-	xorMod := NewXORModifier("xor", []byte{0x7E})
+	xorMod, err := NewXORModifier("xor", []byte{0x7E})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	chain := NewModifierChain("phase-data-chain", xorMod)
 	testData := []byte("phase data round-trip content")
 
@@ -499,7 +508,10 @@ func TestModifierChain_PhaseData(t *testing.T) {
 // TestModifierChain_Concurrent verifies that concurrent ModifyOutbound and
 // ModifyInbound calls from multiple goroutines are race-free.
 func TestModifierChain_Concurrent(t *testing.T) {
-	xorMod := NewXORModifier("concurrent-xor", []byte{0x3C})
+	xorMod, err := NewXORModifier("concurrent-xor", []byte{0x3C})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	chain := NewModifierChain("concurrent-chain", xorMod)
 	testData := []byte("concurrent chain test payload")
 	const goroutines = 32
@@ -650,12 +662,21 @@ func (c *closeTestModifier) Close() error {
 // type system but needs validation for correct round-trip behavior.
 func TestModifierChain_Nesting(t *testing.T) {
 	// Create an inner chain with two XOR modifiers
-	xor1 := NewXORModifier("inner-xor-1", []byte{0xAA})
-	xor2 := NewXORModifier("inner-xor-2", []byte{0x55})
+	xor1, err := NewXORModifier("inner-xor-1", []byte{0xAA})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
+	xor2, err := NewXORModifier("inner-xor-2", []byte{0x55})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	innerChain := NewModifierChain("inner-chain", xor1, xor2)
 
 	// Create an outer chain that includes the inner chain plus another modifier
-	xor3 := NewXORModifier("outer-xor", []byte{0x0F})
+	xor3, err := NewXORModifier("outer-xor", []byte{0x0F})
+	if err != nil {
+		t.Fatalf("NewXORModifier() error = %v", err)
+	}
 	outerChain := NewModifierChain("outer-chain", innerChain, xor3)
 
 	originalData := []byte("nested chain test data for round-trip")

@@ -17,7 +17,10 @@ func main() {
 	fmt.Printf("Original Length: %d bytes\n\n", len(originalData))
 
 	// Create individual modifiers
-	xorModifier, paddingModifier := createModifiers()
+	xorModifier, paddingModifier, err := createModifiers()
+	if err != nil {
+		log.Fatal("Failed to create modifiers:", err)
+	}
 
 	// Run demonstration sections
 	demonstrateIndividualModifiers(originalData, xorModifier, paddingModifier)
@@ -31,13 +34,16 @@ func main() {
 }
 
 // createModifiers initializes and returns the XOR and padding modifiers for testing.
-func createModifiers() (handshake.HandshakeModifier, handshake.HandshakeModifier) {
-	xorModifier := handshake.NewXORModifier("obfuscation", []byte{0xAA, 0xBB, 0xCC, 0xDD})
+func createModifiers() (handshake.HandshakeModifier, handshake.HandshakeModifier, error) {
+	xorModifier, err := handshake.NewXORModifier("obfuscation", []byte{0xAA, 0xBB, 0xCC, 0xDD})
+	if err != nil {
+		return nil, nil, err
+	}
 	paddingModifier, err := handshake.NewGenericPaddingModifier("padding", 8, 16)
 	if err != nil {
-		log.Fatal("Failed to create generic padding modifier:", err)
+		return nil, nil, err
 	}
-	return xorModifier, paddingModifier
+	return xorModifier, paddingModifier, nil
 }
 
 // demonstrateIndividualModifiers tests XOR and padding modifiers separately to verify round-trip functionality.
