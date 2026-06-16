@@ -44,6 +44,13 @@ type Listener struct {
 
 	// closeMutex protects close operations
 	closeMutex sync.Mutex
+
+	// consecutiveTransientErrors tracks the count of consecutive transient accept errors
+	// for implementing exponential backoff retry logic (see Accept method).
+	consecutiveTransientErrors int
+
+	// transientErrorMutex protects updates to consecutiveTransientErrors
+	transientErrorMutex sync.Mutex
 }
 
 // ListenerConfig contains configuration for creating a NoiseListener.
@@ -58,6 +65,12 @@ type ListenerConfig struct {
 
 	// StaticKey is the long-term static key for this listener (32 bytes for Curve25519)
 	StaticKey []byte
+
+	// MaxAcceptErrors sets the maximum number of consecutive transient accept errors
+	// (such as EMFILE or ECONNABORTED) that the listener will automatically retry
+	// before returning the error to the caller. Defaults to 3 if not set.
+	// Set to 0 to disable automatic retry (all errors returned immediately).
+	MaxAcceptErrors int
 
 	// PostHandshakeHook is an optional callback invoked after the Noise
 	// handshake completes successfully but before the connection transitions
@@ -83,7 +96,8 @@ type ListenerConfig struct {
 // NewListenerConfig creates a new ListenerConfig with sensible defaults.
 func NewListenerConfig(pattern string) *ListenerConfig {
 	return &ListenerConfig{
-		Pattern: pattern,
+		Pattern:         pattern,
+		MaxAcceptErrors: 3, // Default to retrying up to 3 transient errors
 		BaseHandshakeConfig: baseconfig.BaseHandshakeConfig{
 			HandshakeTimeout: baseconfig.DefaultHandshakeTimeout,
 			ReadTimeout:      0,
@@ -153,6 +167,15 @@ func (lc *ListenerConfig) WithHandshakeRetries(retries int) *ListenerConfig {
 // connections. Actual delay uses exponential backoff.
 func (lc *ListenerConfig) WithRetryBackoff(backoff time.Duration) *ListenerConfig {
 	lc.RetryBackoff = backoff
+	return lc
+}
+
+// WithMaxAcceptErrors sets the maximum number of consecutive transient accept errors
+// that the listener will retry before returning an error to the caller. Transient
+// errors include EMFILE, ECONNABORTED, and other temporary system errors.
+// Defaults to 3. Set to 0 to disable automatic retry.
+func (lc *ListenerConfig) WithMaxAcceptErrors(maxErrors int) *ListenerConfig {
+	lc.MaxAcceptErrors = maxErrors
 	return lc
 }
 
@@ -245,6 +268,12 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 // Accept waits for and returns the next connection to the listener.
 // The returned connection is wrapped in a NoiseConn configured as a responder.
 // This method is safe for concurrent use by multiple goroutines.
+//
+// Accept automatically retries on transient errors (EMFILE, ECONNABORTED, etc.)
+// using exponential backoff, up to the configured MaxAcceptErrors threshold.
+// This prevents transient system errors (e.g., temporary file descriptor exhaustion)
+// from killing the accept loop. If MaxAcceptErrors consecutive transient errors
+// occur, the error is returned to the caller.
 func (nl *Listener) Accept() (net.Conn, error) {
 	if nl.isClosed() {
 		return nil, oops.
@@ -254,42 +283,108 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			Errorf("listener is closed")
 	}
 
-	// Accept the underlying connection — net.TCPListener.Accept() is
-	// concurrency-safe, so no mutex is needed here.
-	underlying, err := nl.underlying.Accept()
-	if err != nil {
-		return nil, oops.
-			Code("ACCEPT_FAILED").
-			In("noise").
-			With("listener_addr", nl.addr.String()).
-			Wrapf(err, "failed to accept underlying connection")
+	// Retry loop for handling transient accept errors with exponential backoff
+	for {
+		// Accept the underlying connection — net.TCPListener.Accept() is
+		// concurrency-safe, so no mutex is needed here.
+		underlying, err := nl.underlying.Accept()
+		if err == nil {
+			// Success: reset consecutive transient error counter
+			nl.transientErrorMutex.Lock()
+			nl.consecutiveTransientErrors = 0
+			nl.transientErrorMutex.Unlock()
+
+			// Create connection config for the accepted connection (as responder),
+			// propagating modifiers, post-handshake hook, and ASK labels from
+			// the listener config.
+			connConfig := nl.createAcceptConnConfig()
+
+			// Wrap in NoiseConn
+			noiseConn, err := conn.NewNoiseConn(underlying, connConfig)
+			if err != nil {
+				underlying.Close() // Clean up the underlying connection
+				return nil, oops.
+					Code("WRAP_FAILED").
+					In("noise").
+					With("listener_addr", nl.addr.String()).
+					With("remote_addr", underlying.RemoteAddr().String()).
+					Wrapf(err, "failed to create noise connection")
+			}
+
+			nl.logger.WithFields(i2plogger.Fields{
+				"pkg":           "noise",
+				"func":          "NoiseListener.Accept",
+				"listener_addr": nl.addr.String(),
+				"remote_addr":   underlying.RemoteAddr().String(),
+			}).Debug("accepted new noise connection")
+
+			return noiseConn, nil
+		}
+
+		// Accept error: check if it's a transient error and if we should retry
+		isTransient := false
+		if netErr, ok := err.(net.Error); ok {
+			isTransient = netErr.Temporary()
+		}
+
+		// If it's not a transient error, return immediately
+		if !isTransient {
+			return nil, oops.
+				Code("ACCEPT_FAILED").
+				In("noise").
+				With("listener_addr", nl.addr.String()).
+				Wrapf(err, "failed to accept underlying connection")
+		}
+
+		// Handle transient error: update counter and check if we should retry
+		nl.transientErrorMutex.Lock()
+		nl.consecutiveTransientErrors++
+		errorCount := nl.consecutiveTransientErrors
+		nl.transientErrorMutex.Unlock()
+
+		// If we've exceeded max transient errors, return the error
+		if nl.config.MaxAcceptErrors > 0 && errorCount > nl.config.MaxAcceptErrors {
+			return nil, oops.
+				Code("ACCEPT_FAILED_MAX_TRANSIENT").
+				In("noise").
+				With("listener_addr", nl.addr.String()).
+				With("consecutive_errors", errorCount).
+				With("max_errors", nl.config.MaxAcceptErrors).
+				Wrapf(err, "exceeded maximum consecutive transient accept errors")
+		}
+
+		// If max errors is 0 (disabled), return immediately
+		if nl.config.MaxAcceptErrors == 0 {
+			return nil, oops.
+				Code("ACCEPT_FAILED").
+				In("noise").
+				With("listener_addr", nl.addr.String()).
+				Wrapf(err, "failed to accept underlying connection (transient error, retries disabled)")
+		}
+
+		// Calculate exponential backoff: base^count, capped at 10 seconds
+		backoffDuration := nl.config.RetryBackoff
+		for i := 1; i < errorCount; i++ {
+			backoffDuration *= 2
+			if backoffDuration > 10*time.Second {
+				backoffDuration = 10 * time.Second
+				break
+			}
+		}
+
+		nl.logger.WithFields(i2plogger.Fields{
+			"pkg":                "noise",
+			"func":               "NoiseListener.Accept",
+			"listener_addr":      nl.addr.String(),
+			"consecutive_errors": errorCount,
+			"max_errors":         nl.config.MaxAcceptErrors,
+			"backoff_duration":   backoffDuration.String(),
+			"transient_error":    err.Error(),
+		}).Debug("transient accept error, retrying with backoff")
+
+		// Sleep before retrying
+		time.Sleep(backoffDuration)
 	}
-
-	// Create connection config for the accepted connection (as responder),
-	// propagating modifiers, post-handshake hook, and ASK labels from
-	// the listener config.
-	connConfig := nl.createAcceptConnConfig()
-
-	// Wrap in NoiseConn
-	noiseConn, err := conn.NewNoiseConn(underlying, connConfig)
-	if err != nil {
-		underlying.Close() // Clean up the underlying connection
-		return nil, oops.
-			Code("WRAP_FAILED").
-			In("noise").
-			With("listener_addr", nl.addr.String()).
-			With("remote_addr", underlying.RemoteAddr().String()).
-			Wrapf(err, "failed to create noise connection")
-	}
-
-	nl.logger.WithFields(i2plogger.Fields{
-		"pkg":           "noise",
-		"func":          "NoiseListener.Accept",
-		"listener_addr": nl.addr.String(),
-		"remote_addr":   underlying.RemoteAddr().String(),
-	}).Debug("accepted new noise connection")
-
-	return noiseConn, nil
 }
 
 // createAcceptConnConfig builds a ConnConfig for an accepted (responder)
