@@ -173,10 +173,6 @@ func (nc *Conn) Read(b []byte) (int, error) {
 		return 0, err
 	}
 
-	if err := nc.configureReadTimeout(); err != nil {
-		return 0, err
-	}
-
 	nc.readMutex.Lock()
 	defer nc.readMutex.Unlock()
 
@@ -188,6 +184,12 @@ func (nc *Conn) Read(b []byte) (int, error) {
 			"remaining":  len(nc.pendingPlaintext),
 		})
 		return n, nil
+	}
+
+	// Configure timeout only after acquiring the lock and draining pending data,
+	// so the timeout applies only to the socket operation, not to lock acquisition time.
+	if err := nc.configureReadTimeout(); err != nil {
+		return 0, err
 	}
 
 	encrypted, n, err := nc.readEncryptedData(b)
