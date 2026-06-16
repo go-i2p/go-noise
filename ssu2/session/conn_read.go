@@ -40,14 +40,18 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 	h.readMutex.Lock()
 	defer h.readMutex.Unlock()
 
-	// Enforce mutual exclusivity of Read and MessageChan delivery paths (MEDIUM-1).
-	// The first call to Read sets readModeCalled; if MessageChan was already called,
-	// we return an error to prevent message splitting across both paths.
-	if !h.readModeCalled.CompareAndSwap(false, true) {
-		// readModeCalled was already true; this is OK, just another Read call
-	} else if h.messageChanModeCalled.Load() {
-		// MessageChan was called first; return a hard error to enforce the contract
-		return 0, oops.Errorf("Read() called after MessageChan(); these delivery paths are mutually exclusive")
+	// Enforce mutual exclusivity of Read and MessageChan delivery paths (MEDIUM-1, LOW-3).
+	// Use a single atomic CompareAndSwap on readDeliveryMode to atomically check that
+	// the mode is Unset and set it to Read in one operation. This prevents TOCTOU races
+	// where both Read and MessageChan could observe the mode as unset concurrently.
+	if !h.readDeliveryMode.CompareAndSwap(int32(ReadDeliveryModeUnset), int32(ReadDeliveryModeRead)) {
+		// Mode is already set to something (either Read or Chan).
+		// If it's Read, allow it (concurrent Read calls are OK).
+		// If it's Chan, return an error.
+		mode := h.readDeliveryMode.Load()
+		if mode != int32(ReadDeliveryModeRead) {
+			return 0, oops.Errorf("Read() called after MessageChan(); these delivery paths are mutually exclusive")
+		}
 	}
 
 	// Check if we have a pending message from a previous truncated Read.
@@ -445,17 +449,21 @@ func (h *SSU2Conn) getReadDeadlineTimer() *time.Timer {
 // connection. This method returns a closed channel (panic-free sentinel) if
 // Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
 func (h *SSU2Conn) MessageChan() <-chan []byte {
-	// Enforce mutual exclusivity of MessageChan and Read delivery paths (MEDIUM-1).
-	// If MessageChan is called after Read, we return a closed channel instead of
-	// allowing message splitting.
-	if !h.messageChanModeCalled.CompareAndSwap(false, true) {
-		// messageChanModeCalled was already true; this is OK, just another call
-	} else if h.readModeCalled.Load() {
-		// Read was called first; return a closed channel as a panic-free sentinel
-		log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Error(
-			"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive",
-		)
-		return h.closedMessageChan
+	// Enforce mutual exclusivity of MessageChan and Read delivery paths (MEDIUM-1, LOW-3).
+	// Use a single atomic CompareAndSwap on readDeliveryMode to atomically check that
+	// the mode is Unset and set it to Chan in one operation. This prevents TOCTOU races
+	// where both Read and MessageChan could observe the mode as unset concurrently.
+	if !h.readDeliveryMode.CompareAndSwap(int32(ReadDeliveryModeUnset), int32(ReadDeliveryModeChan)) {
+		// Mode is already set to something (either Read or Chan).
+		// If it's Chan, allow it (concurrent MessageChan calls are OK).
+		// If it's Read, return a closed channel as a panic-free sentinel.
+		mode := h.readDeliveryMode.Load()
+		if mode != int32(ReadDeliveryModeChan) {
+			log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Error(
+				"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive",
+			)
+			return h.closedMessageChan
+		}
 	}
 	return h.dataHandler.MessageChan()
 }

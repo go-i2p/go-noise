@@ -528,7 +528,7 @@ func TestSSU2Conn_DualDeliveryPathMutualExclusion(t *testing.T) {
 	// Read from MessageChan in a goroutine.
 	done := make(chan []byte, 1)
 	go func() {
-		// This should set messageChanModeCalled=true
+		// This will set readDeliveryMode to Chan
 		ch := conn.MessageChan()
 		done <- <-ch
 	}()
@@ -1081,8 +1081,8 @@ func TestMessageChanAfterReadReturnsClosedChannel(t *testing.T) {
 		ReceiveWindowSize: 128,
 	})
 
-	// Set readModeCalled to true to simulate Read() having been called
-	conn.readModeCalled.Store(true)
+	// Set readDeliveryMode to Read to simulate Read() having been called
+	conn.readDeliveryMode.Store(int32(ReadDeliveryModeRead))
 
 	// Now call MessageChan - should return the closed sentinel channel
 	ch := conn.MessageChan()

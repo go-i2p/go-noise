@@ -33,7 +33,23 @@ const (
 	StateClosed = mod.StateClosed
 )
 
+// ReadDeliveryMode tracks which delivery path has been used for reading messages.
+// Used to enforce mutual exclusivity between Read() and MessageChan() delivery paths
+// (see MEDIUM-1, LOW-3). Using a single atomic mode word prevents TOCTOU races where
+// both paths could concurrently observe the other path's flag as unset.
+type ReadDeliveryMode int32
+
 const (
+	// ReadDeliveryModeUnset means neither Read() nor MessageChan() has been called yet.
+	ReadDeliveryModeUnset ReadDeliveryMode = iota
+	// ReadDeliveryModeRead means Read() has been called and is the active path.
+	ReadDeliveryModeRead
+	// ReadDeliveryModeChan means MessageChan() has been called and is the active path.
+	ReadDeliveryModeChan
+)
+
+const (
+	// rekeyThreshold is the send-sequence value at which we initiate a
 	// rekeyThreshold is the send-sequence value at which we initiate a
 	// NextNonce rekey. Per the SSU2 spec the 32-bit packet number must
 	// not wrap, so we start the rekey handshake well before 0xFFFFFFFF.
@@ -164,13 +180,12 @@ type SSU2Conn struct {
 	// compatibility. See MEDIUM-1 audit finding.
 	pendingMessage []byte
 
-	// readModeCalled tracks whether Read() has been called on this connection.
-	// Used to enforce mutual exclusivity with MessageChan(). See MEDIUM-1.
-	readModeCalled atomic.Bool
-
-	// messageChanModeCalled tracks whether MessageChan() has been called on this connection.
-	// Used to enforce mutual exclusivity with Read(). See MEDIUM-1.
-	messageChanModeCalled atomic.Bool
+	// readDeliveryMode tracks which delivery path has been used for reading messages.
+	// Uses atomic CAS to atomically check and set the mode, preventing TOCTOU races
+	// where both Read() and MessageChan() could both observe the mode as unset.
+	// One of {ReadDeliveryModeUnset, ReadDeliveryModeRead, ReadDeliveryModeChan}.
+	// See MEDIUM-1, LOW-3.
+	readDeliveryMode atomic.Int32
 
 	// closedMessageChan is a closed channel returned as a sentinel by MessageChan()
 	// when Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
