@@ -120,9 +120,8 @@ func (sm *ShutdownManager) RegisterConnection(conn ShutdownConn) {
 	}).Debug("registered connection for shutdown management")
 }
 
-// UnregisterConnection removes a connection from shutdown management.
-// This should be called when a connection is closed normally.
-func (sm *ShutdownManager) UnregisterConnection(conn ShutdownConn) {
+// registerConnection is a helper to register or unregister a connection.
+func (sm *ShutdownManager) registerConnection(conn ShutdownConn, register bool) {
 	if conn == nil {
 		return
 	}
@@ -130,14 +129,30 @@ func (sm *ShutdownManager) UnregisterConnection(conn ShutdownConn) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	delete(sm.connections, conn)
+	var op, action string
+	if register {
+		sm.connections[conn] = struct{}{}
+		op = "RegisterConnection"
+		action = "registered"
+	} else {
+		delete(sm.connections, conn)
+		op = "UnregisterConnection"
+		action = "unregistered"
+	}
+
 	sm.logger.WithFields(i2plogger.Fields{
 		"pkg":         "noise",
-		"func":        "ShutdownManager.UnregisterConnection",
+		"func":        "ShutdownManager." + op,
 		"local_addr":  conn.LocalAddr().String(),
 		"remote_addr": conn.RemoteAddr().String(),
 		"total_conns": len(sm.connections),
-	}).Debug("unregistered connection from shutdown management")
+	}).Debug(action + " connection for shutdown management")
+}
+
+// UnregisterConnection removes a connection from shutdown management.
+// This should be called when a connection is closed normally.
+func (sm *ShutdownManager) UnregisterConnection(conn ShutdownConn) {
+	sm.registerConnection(conn, false)
 }
 
 // RegisterListener adds a listener to be managed during shutdown.
