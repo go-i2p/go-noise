@@ -81,16 +81,13 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 	addrStr := addr.String()
 
 	// Check if valid token already exists for this address
-	if existingToken, exists := tc.tokens[addrStr]; exists {
-		if time.Since(existingToken.CreatedAt) <= tc.ttl {
-			log.WithFields(logger.Fields{
-				"pkg":  "wire",
-				"func": "GenerateToken",
-				"addr": addrStr,
-			}).Debug("Returning existing valid token for address")
-			return existingToken.Value, nil
-		}
-		// Token expired, will generate new one
+	if existingToken, ok := tc.lookupToken(addrStr); ok && !tc.isExpired(existingToken) {
+		log.WithFields(logger.Fields{
+			"pkg":  "wire",
+			"func": "GenerateToken",
+			"addr": addrStr,
+		}).Debug("Returning existing valid token for address")
+		return existingToken.Value, nil
 	}
 
 	// Generate 8-byte random token per SSU2 spec
@@ -131,13 +128,8 @@ func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 
-	token, exists := tc.tokens[addr.String()]
-	if !exists {
-		return false
-	}
-
-	// Check if token has expired
-	if time.Since(token.CreatedAt) > tc.ttl {
+	token, exists := tc.lookupToken(addr.String())
+	if !exists || tc.isExpired(token) {
 		return false
 	}
 
@@ -158,13 +150,11 @@ func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
 	defer tc.mutex.Unlock()
 
 	addrStr := addr.String()
-	token, exists := tc.tokens[addrStr]
+	token, exists := tc.lookupToken(addrStr)
 	if !exists {
 		return false
 	}
-
-	// Check if token has expired
-	if time.Since(token.CreatedAt) > tc.ttl {
+	if tc.isExpired(token) {
 		delete(tc.tokens, addrStr)
 		return false
 	}
@@ -249,4 +239,16 @@ func (tc *TokenCache) evictOldestLocked() {
 // GetTTL returns the token time-to-live duration.
 func (tc *TokenCache) GetTTL() time.Duration {
 	return tc.ttl
+}
+
+// lookupToken returns the token for addrStr and whether it exists.
+// Must be called with tc.mutex held (read or write).
+func (tc *TokenCache) lookupToken(addrStr string) (*Token, bool) {
+	token, ok := tc.tokens[addrStr]
+	return token, ok
+}
+
+// isExpired reports whether token has exceeded the cache TTL.
+func (tc *TokenCache) isExpired(token *Token) bool {
+	return time.Since(token.CreatedAt) > tc.ttl
 }

@@ -96,22 +96,36 @@ func (pb *PayloadBuilder) validate() error {
 		}
 	}
 
-	// Padding must be the last block.
+	if err := pb.checkPaddingPosition(paddingIdx); err != nil {
+		return err
+	}
+	return pb.checkTerminationPosition(terminationIdx, paddingIdx)
+}
+
+// checkPaddingPosition validates that the padding block, if present, is the
+// last block in the payload. Per spec the Padding block must trail all others.
+func (pb *PayloadBuilder) checkPaddingPosition(paddingIdx int) error {
 	if paddingIdx >= 0 && paddingIdx != len(pb.blocks)-1 {
-		return oops.Errorf("padding block must be the last block (found at index %d of %d)", paddingIdx, len(pb.blocks)-1)
+		return oops.Errorf("padding block must be the last block (found at index %d of %d)",
+			paddingIdx, len(pb.blocks)-1)
 	}
+	return nil
+}
 
-	// Termination must be last except for padding.
-	if terminationIdx >= 0 {
-		expectedLast := len(pb.blocks) - 1
-		if paddingIdx >= 0 {
-			expectedLast = len(pb.blocks) - 2
-		}
-		if terminationIdx != expectedLast {
-			return oops.Errorf("termination block must be last non-padding block (found at index %d, expected %d)", terminationIdx, expectedLast)
-		}
+// checkTerminationPosition validates that the termination block, if present, is
+// the last non-padding block. It must appear immediately before any Padding block.
+func (pb *PayloadBuilder) checkTerminationPosition(terminationIdx, paddingIdx int) error {
+	if terminationIdx < 0 {
+		return nil
 	}
-
+	expectedLast := len(pb.blocks) - 1
+	if paddingIdx >= 0 {
+		expectedLast = len(pb.blocks) - 2
+	}
+	if terminationIdx != expectedLast {
+		return oops.Errorf("termination block must be last non-padding block (found at index %d, expected %d)",
+			terminationIdx, expectedLast)
+	}
 	return nil
 }
 
