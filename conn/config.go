@@ -80,7 +80,7 @@ type ConnConfig struct {
 
 // NewConnConfig creates a new ConnConfig with sensible defaults.
 func NewConnConfig(pattern string, initiator bool) *ConnConfig {
-	flog("NewConnConfig", logger.Fields{"pattern": pattern, "initiator": initiator}).Debug("Creating new ConnConfig")
+	log.WithFields(logger.Fields{"pkg": "noise", "func": "NewConnConfig", "pattern": pattern, "initiator": initiator}).Debug("Creating new ConnConfig")
 	return &ConnConfig{
 		Pattern:   pattern,
 		Initiator: initiator,
@@ -199,7 +199,7 @@ func (c *ConnConfig) invalidateModifierCache() {
 // Validate checks if the configuration is valid and complete.
 // Returns an error with context if validation fails.
 func (c *ConnConfig) Validate() error {
-	flog("ConnConfig.Validate", logger.Fields{"pattern": c.Pattern}).Debug("Validating ConnConfig")
+	log.WithFields(logger.Fields{"pkg": "noise", "func": "ConnConfig.Validate", "pattern": c.Pattern}).Debug("Validating ConnConfig")
 	return validation.RunValidators(
 		c.validatePattern,
 		c.validateHandshakeTimeout,
