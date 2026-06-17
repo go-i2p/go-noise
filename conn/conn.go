@@ -213,6 +213,11 @@ func (nc *Conn) Read(b []byte) (int, error) {
 
 // Write writes data to the connection.
 // If the handshake is not complete, it will return an error.
+// The maximum size for a single Write call is limited by the Noise Protocol
+// specification to 65535 bytes (per-message limit for the 2-byte length prefix).
+// Attempts to write larger amounts will return an error.
+// For automatic fragmentation of large payloads, use the transport-layer
+// implementations (NTCP2, SSU2) which add application-level framing.
 //
 // Thread Safety: This method is safe for concurrent use. Multiple goroutines
 // can call Write simultaneously; calls are serialized via writeMutex to protect
@@ -275,8 +280,17 @@ func (nc *Conn) Close() error {
 
 	nc.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.Close"}).Debug("Closing NoiseConn")
 
+	// Acquire both read and write mutexes to ensure no in-flight operations are
+	// using the cipher states before we zero them (defense-in-depth).
+	// Lock order: readMutex first, then writeMutex, to match potential caller order.
+	nc.readMutex.Lock()
+	nc.writeMutex.Lock()
+
 	// Zero cipher state key material before closing
 	nc.ZeroKeys()
+
+	nc.writeMutex.Unlock()
+	nc.readMutex.Unlock()
 
 	// Close modifier chain to release any resources held by modifiers
 	if chain := nc.config.GetModifierChain(); chain != nil {
