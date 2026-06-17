@@ -249,14 +249,29 @@ func validateBasicParams(network, addr string, config *Config) error {
 	return nil
 }
 
-// validateNTCP2DialParams validates the parameters for dial operations
-func validateNTCP2DialParams(network, addr string, config *Config) error {
+// validateNTCP2Params validates the parameters for NTCP2 operations.
+// requireInitiator controls whether Initiator must be true (for dial) or false (for listen).
+func validateNTCP2Params(network, addr string, config *Config, requireInitiator bool) error {
 	if err := validateBasicParams(network, addr, config); err != nil {
 		return err
 	}
 
-	if err := validateDialConfiguration(config); err != nil {
-		return err
+	// Validate Initiator flag based on operation type
+	if config.Initiator != requireInitiator {
+		op := "dial"
+		if !requireInitiator {
+			op = "listen"
+		}
+		expected := true
+		if !requireInitiator {
+			expected = false
+		}
+		return oops.
+			Code("INVALID_INITIATOR_FLAG").
+			In("ntcp2").
+			With("initiator", config.Initiator).
+			With("expected", expected).
+			Errorf("%s operations require initiator=%v in config", op, expected)
 	}
 
 	// Validate the configuration
@@ -270,49 +285,14 @@ func validateNTCP2DialParams(network, addr string, config *Config) error {
 	return nil
 }
 
-// validateDialConfiguration validates configuration-specific requirements for dial operations.
-func validateDialConfiguration(config *Config) error {
-	if !config.Initiator {
-		return oops.
-			Code("INVALID_INITIATOR_FLAG").
-			In("ntcp2").
-			Errorf("dial operations require initiator=true in config")
-	}
-
-	return nil
+// validateNTCP2DialParams validates the parameters for dial operations
+func validateNTCP2DialParams(network, addr string, config *Config) error {
+	return validateNTCP2Params(network, addr, config, true) // requireInitiator=true
 }
 
 // validateNTCP2ListenParams validates the parameters for listen operations
 func validateNTCP2ListenParams(network, addr string, config *Config) error {
-	if err := validateBasicParams(network, addr, config); err != nil {
-		return err
-	}
-
-	if err := validateListenConfiguration(config); err != nil {
-		return err
-	}
-
-	// Validate the configuration
-	if err := config.Validate(); err != nil {
-		return oops.
-			Code("CONFIG_VALIDATION_FAILED").
-			In("ntcp2").
-			Wrapf(err, "NTCP2 config validation failed")
-	}
-
-	return nil
-}
-
-// validateListenConfiguration validates configuration-specific requirements for listen operations.
-func validateListenConfiguration(config *Config) error {
-	if config.Initiator {
-		return oops.
-			Code("INVALID_INITIATOR_FLAG").
-			In("ntcp2").
-			Errorf("listen operations require initiator=false in config")
-	}
-
-	return nil
+	return validateNTCP2Params(network, addr, config, false) // requireInitiator=false
 }
 
 // createDialAddresses creates the local and remote NTCP2 addresses for dial operations

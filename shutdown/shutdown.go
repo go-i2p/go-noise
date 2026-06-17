@@ -223,10 +223,8 @@ func (sm *ShutdownManager) Shutdown() error {
 // logShutdownInitiation logs the start of the shutdown process with current state.
 // L-3: Acquire RLock before reading map lengths to prevent data race
 func (sm *ShutdownManager) logShutdownInitiation() {
-	sm.mu.RLock()
-	connCount := len(sm.connections)
-	listCount := len(sm.listeners)
-	sm.mu.RUnlock()
+	connCount := sm.connectedCount()
+	listCount := sm.listenerCount()
 
 	sm.logger.WithFields(i2plogger.Fields{
 		"pkg":            "noise",
@@ -282,6 +280,22 @@ func (sm *ShutdownManager) Timeout() time.Duration {
 	return sm.shutdownTimeout
 }
 
+// connectedCount returns the number of registered connections.
+// Thread-safe; acquires read lock.
+func (sm *ShutdownManager) connectedCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.connections)
+}
+
+// listenerCount returns the number of registered listeners.
+// Thread-safe; acquires read lock.
+func (sm *ShutdownManager) listenerCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.listeners)
+}
+
 // ConnectionRegistered reports whether conn is currently tracked by this ShutdownManager.
 func (sm *ShutdownManager) ConnectionRegistered(conn ShutdownConn) bool {
 	sm.mu.RLock()
@@ -298,27 +312,40 @@ func (sm *ShutdownManager) ListenerRegistered(listener ShutdownListener) bool {
 	return ok
 }
 
-// closeListeners closes all registered listeners.
-func (sm *ShutdownManager) closeListeners() error {
-	sm.mu.RLock()
-	listeners := make([]ShutdownListener, 0, len(sm.listeners))
-	for listener := range sm.listeners {
-		listeners = append(listeners, listener)
-	}
-	sm.mu.RUnlock()
-
+// closeAll closes all items in a slice and returns the first error encountered.
+// itemType is used for logging purposes (e.g., "listener" or "connection").
+// logFn is called for each error to produce item-specific log messages.
+func (sm *ShutdownManager) closeAll(items []io.Closer, itemType string, logFn func(io.Closer, error)) error {
 	var firstError error
-	for _, listener := range listeners {
-		if err := listener.Close(); err != nil {
-			sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.closeListeners", "listener_addr": listener.Addr().String()}).WithError(err).
-				Error("error closing listener during shutdown")
+	for _, item := range items {
+		if err := item.Close(); err != nil {
+			logFn(item, err)
 			if firstError == nil {
 				firstError = err
 			}
 		}
 	}
-
 	return firstError
+}
+
+// closeListeners closes all registered listeners.
+func (sm *ShutdownManager) closeListeners() error {
+	sm.mu.RLock()
+	listeners := make([]io.Closer, 0, len(sm.listeners))
+	for listener := range sm.listeners {
+		listeners = append(listeners, listener)
+	}
+	sm.mu.RUnlock()
+
+	return sm.closeAll(listeners, "listener", func(item io.Closer, err error) {
+		listener := item.(ShutdownListener)
+		sm.logger.WithFields(i2plogger.Fields{
+			"pkg":            "noise",
+			"func":           "ShutdownManager.closeListeners",
+			"listener_addr":  listener.Addr().String(),
+			"shutdown_phase": "listener_close",
+		}).WithError(err).Error("error closing listener during shutdown")
+	})
 }
 
 // waitForConnectionsDrain waits for all connections to close gracefully within timeout.
@@ -332,9 +359,7 @@ func (sm *ShutdownManager) waitForConnectionsDrain() error {
 	for {
 		select {
 		case <-timeout.C:
-			sm.mu.RLock()
-			remaining := len(sm.connections)
-			sm.mu.RUnlock()
+			remaining := sm.connectedCount()
 
 			return oops.
 				Code("SHUTDOWN_TIMEOUT").
@@ -345,9 +370,7 @@ func (sm *ShutdownManager) waitForConnectionsDrain() error {
 				Errorf("timeout waiting for connections to drain")
 
 		case <-ticker.C:
-			sm.mu.RLock()
-			connectionCount := len(sm.connections)
-			sm.mu.RUnlock()
+			connectionCount := sm.connectedCount()
 
 			if connectionCount == 0 {
 				return nil
@@ -363,26 +386,20 @@ func (sm *ShutdownManager) waitForConnectionsDrain() error {
 // forceCloseConnections forcefully closes all remaining connections.
 func (sm *ShutdownManager) forceCloseConnections() error {
 	sm.mu.RLock()
-	connections := make([]ShutdownConn, 0, len(sm.connections))
+	connections := make([]io.Closer, 0, len(sm.connections))
 	for conn := range sm.connections {
 		connections = append(connections, conn)
 	}
 	sm.mu.RUnlock()
 
-	var firstError error
-	for _, conn := range connections {
-		if err := conn.Close(); err != nil {
-			sm.logger.WithFields(i2plogger.Fields{
-				"pkg":         "noise",
-				"func":        "ShutdownManager.forceCloseConnections",
-				"local_addr":  conn.LocalAddr().String(),
-				"remote_addr": conn.RemoteAddr().String(),
-			}).WithError(err).Error("error force closing connection during shutdown")
-			if firstError == nil {
-				firstError = err
-			}
-		}
-	}
-
-	return firstError
+	return sm.closeAll(connections, "connection", func(item io.Closer, err error) {
+		conn := item.(ShutdownConn)
+		sm.logger.WithFields(i2plogger.Fields{
+			"pkg":            "noise",
+			"func":           "ShutdownManager.forceCloseConnections",
+			"local_addr":     conn.LocalAddr().String(),
+			"remote_addr":    conn.RemoteAddr().String(),
+			"shutdown_phase": "force_close",
+		}).WithError(err).Error("error force closing connection during shutdown")
+	})
 }

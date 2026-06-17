@@ -118,18 +118,23 @@ func (aom *AESObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase
 	// Per NTCP2 spec: save the last ciphertext block as AES state for message 2.
 	// For outbound encryption, the state is result[16:32] captured AFTER encryption.
 	if phase == handshake.PhaseInitial {
-		// Performance note: This allocates a 16-byte buffer once per handshake.
-		// A micro-optimization would reuse a fixed [16]byte field in the modifier struct.
-		// Not pursued because:
-		//   - Called once per connection (not a hot path)
-		//   - 16 bytes is negligible compared to AES cipher setup and Noise operations
-		//   - Current pattern is clear and matches standard Go copy idiom
-		aom.aesState = make([]byte, IVSize)
-		// Defensive: explicit slice expression would panic on nil, catching bugs early
-		copy(aom.aesState[:], result[IVSize:StaticKeySize])
+		aom.saveAESState(result)
 	}
 
 	return result, nil
+}
+
+// saveAESState extracts bytes [16:32] and saves them to aesState.
+// Performance note: This allocates a 16-byte buffer once per handshake.
+// A micro-optimization would reuse a fixed [16]byte field in the modifier struct.
+// Not pursued because:
+//   - Called once per connection (not a hot path)
+//   - 16 bytes is negligible compared to AES cipher setup and Noise operations
+//   - Current pattern is clear and matches standard Go copy idiom
+func (aom *AESObfuscationModifier) saveAESState(data []byte) {
+	aom.aesState = make([]byte, IVSize)
+	// Defensive: explicit slice expression would panic on nil, catching bugs early
+	copy(aom.aesState[:], data[IVSize:StaticKeySize])
 }
 
 // ModifyInbound removes AES obfuscation from ephemeral keys in handshake messages.
@@ -152,15 +157,7 @@ func (aom *AESObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase,
 	// BEFORE decryption as the AES state for message 2.
 	// The state is data[16:32] (the last ciphertext block of the 32-byte ephemeral key).
 	if phase == handshake.PhaseInitial {
-		// Performance note: This allocates a 16-byte buffer once per handshake.
-		// A micro-optimization would reuse a fixed [16]byte field in the modifier struct.
-		// Not pursued because:
-		//   - Called once per connection (not a hot path)
-		//   - 16 bytes is negligible compared to AES cipher setup and Noise operations
-		//   - Current pattern is clear and matches standard Go copy idiom
-		aom.aesState = make([]byte, IVSize)
-		// Defensive: explicit slice expression would panic on nil, catching bugs early
-		copy(aom.aesState[:], data[IVSize:StaticKeySize])
+		aom.saveAESState(data)
 	}
 
 	var mode cipher.BlockMode

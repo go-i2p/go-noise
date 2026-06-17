@@ -16,16 +16,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTestStaticKey generates a random 32-byte static key for testing.
+func newTestStaticKey(t *testing.T) []byte {
+	t.Helper()
+	staticKey := make([]byte, 32)
+	_, err := rand.Read(staticKey)
+	require.NoError(t, err)
+	return staticKey
+}
+
+// newTestListenerConfig creates a ListenerConfig with the given pattern
+// and a random static key for testing.
+func newTestListenerConfig(t *testing.T, pattern string) *ListenerConfig {
+	t.Helper()
+	return NewListenerConfig(pattern).WithStaticKey(newTestStaticKey(t))
+}
+
 // newTestNoiseListenerFromTCP creates a NoiseListener backed by a real TCP listener
 // with a random static key and the given pattern. Caller must close the returned listener.
 func newTestNoiseListenerFromTCP(t *testing.T, pattern string) *Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	staticKey := make([]byte, 32)
-	_, err = rand.Read(staticKey)
-	require.NoError(t, err)
-	config := NewListenerConfig(pattern).WithStaticKey(staticKey)
+	config := newTestListenerConfig(t, pattern)
 	noiseListener, err := NewNoiseListener(listener, config)
 	require.NoError(t, err)
 	return noiseListener
@@ -35,10 +48,7 @@ func newTestNoiseListenerFromTCP(t *testing.T, pattern string) *Listener {
 // with a random static key and the given pattern.
 func newTestNoiseListenerFromMock(t *testing.T, pattern string, ml *mockListener) *Listener {
 	t.Helper()
-	staticKey := make([]byte, 32)
-	_, err := rand.Read(staticKey)
-	require.NoError(t, err)
-	config := NewListenerConfig(pattern).WithStaticKey(staticKey)
+	config := newTestListenerConfig(t, pattern)
 	noiseListener, err := NewNoiseListener(ml, config)
 	require.NoError(t, err)
 	return noiseListener

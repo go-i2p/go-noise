@@ -172,11 +172,14 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 // FragmentInfo: (fragNum << 1) | isLast
 func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "handleFollowOnFragment", "dataLen": len(data)}).Debug("processing follow-on fragment")
+
+	// Early validation: ensure minimum frame size
 	if len(data) < 5 {
 		h.incrementStat(&h.stats.MessagesDropped)
 		return oops.Errorf("follow-on fragment too short: %d bytes, need at least 5", len(data))
 	}
 
+	// Parse fragment header before acquiring lock
 	fragInfo := data[0]
 	fragmentNum := fragInfo >> 1
 	isLast := (fragInfo & 0x01) != 0

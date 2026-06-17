@@ -180,40 +180,64 @@ func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte
 // Spec ref: ratchet.md §"Key and Tag Set IDs" — tag set ID is incremented when a
 // new forward key is issued; maximum is MaxKeyID (32767).
 
+// applyRatchetKeysInternal performs a DH ratchet step and applies derived keys
+// to the session's receiving or sending ratchet state based on isReceiving.
+// When isReceiving=true, uses receiving chain key and assigns to Recv* fields.
+// When isReceiving=false, uses sending chain key and assigns to symmetric/tag ratchets.
+func applyRatchetKeysInternal(session *Session, isReceiving bool) error {
+	var logFunc string
+	if isReceiving {
+		logFunc = "applyRecvRatchetKeys"
+	} else {
+		logFunc = "applySendRatchetKeys"
+	}
+	log.WithFields(logger.Fields{"pkg": "ratchet", "func": logFunc}).Debug("performing DH ratchet step and applying derived keys")
+
+	sendChainKey, recvChainKey, err := session.DHRatchet.PerformRatchet()
+	if err != nil {
+		if isReceiving {
+			return oops.Wrapf(err, "failed to perform receiving DH ratchet")
+		} else {
+			return oops.Wrapf(err, "failed to perform DH ratchet")
+		}
+	}
+
+	// Select chain key based on direction
+	var chainKey [32]byte
+	if isReceiving {
+		chainKey = recvChainKey
+	} else {
+		chainKey = sendChainKey
+	}
+
+	tagKey, symKey, err := deriveTagAndSymKeysFromChainKey(chainKey)
+	if err != nil {
+		if isReceiving {
+			return oops.Wrapf(err, "failed to derive receiving tag and symmetric keys after DH ratchet")
+		} else {
+			return oops.Wrapf(err, "failed to derive keys after DH ratchet step")
+		}
+	}
+
+	// Assign to appropriate session fields based on direction
+	if isReceiving {
+		session.RecvSymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
+		session.RecvTagRatchet = ratchet.NewTagRatchet(tagKey)
+	} else {
+		session.SymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
+		session.TagRatchet = ratchet.NewTagRatchet(tagKey)
+	}
+	return nil
+}
+
 // applyRecvRatchetKeys performs a DH ratchet step and applies the derived keys
 // to the session's receiving ratchet state.
 func applyRecvRatchetKeys(session *Session) error {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "applyRecvRatchetKeys"}).Debug("performing receiving DH ratchet step and applying derived keys")
-	_, receivingChainKey, err := session.DHRatchet.PerformRatchet()
-	if err != nil {
-		return oops.Wrapf(err, "failed to perform receiving DH ratchet")
-	}
-
-	tagKey, symKey, err := deriveTagAndSymKeysFromChainKey(receivingChainKey)
-	if err != nil {
-		return oops.Wrapf(err, "failed to derive receiving tag and symmetric keys after DH ratchet")
-	}
-
-	session.RecvSymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
-	session.RecvTagRatchet = ratchet.NewTagRatchet(tagKey)
-	return nil
+	return applyRatchetKeysInternal(session, true)
 }
 
 // applySendRatchetKeys performs a DH ratchet step and applies the derived keys
 // to the session's sending ratchet state.
 func applySendRatchetKeys(session *Session) error {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "applySendRatchetKeys"}).Debug("performing sending DH ratchet step and applying derived keys")
-	sendingChainKey, _, err := session.DHRatchet.PerformRatchet()
-	if err != nil {
-		return oops.Wrapf(err, "failed to perform DH ratchet")
-	}
-
-	tagKey, symKey, err := deriveTagAndSymKeysFromChainKey(sendingChainKey)
-	if err != nil {
-		return oops.Wrapf(err, "failed to derive keys after DH ratchet step")
-	}
-
-	session.SymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
-	session.TagRatchet = ratchet.NewTagRatchet(tagKey)
-	return nil
+	return applyRatchetKeysInternal(session, false)
 }

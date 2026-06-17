@@ -78,29 +78,57 @@ func getDefault() *Transport {
 	return defaultInst
 }
 
+// withLock executes fn while holding the Default Transport's mutex.
+// If write is true, uses Write lock; otherwise uses Read lock.
+func withLock(write bool, fn func()) {
+	dt := getDefault()
+	if write {
+		dt.mu.Lock()
+		defer dt.mu.Unlock()
+	} else {
+		dt.mu.RLock()
+		defer dt.mu.RUnlock()
+	}
+	fn()
+}
+
+// withLockResult executes fn while holding the Default Transport's mutex and returns its result.
+// If write is true, uses Write lock; otherwise uses Read lock.
+func withLockResult[T any](write bool, fn func() T) T {
+	dt := getDefault()
+	if write {
+		dt.mu.Lock()
+		defer dt.mu.Unlock()
+	} else {
+		dt.mu.RLock()
+		defer dt.mu.RUnlock()
+	}
+	return fn()
+}
+
 // SetGlobalConnPool sets a custom connection pool on the Default Transport.
 // p may be any implementation of pool.Pool, including *pool.ConnPool.
 //
 // Deprecated: Use Transport.DialWithPool or Transport.DialWithPoolAndHandshake
 // on a dedicated Transport instance instead of mutating global state.
 func SetGlobalConnPool(p pool.Pool) {
-	dt := getDefault()
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-	if dt.pool != nil {
-		dt.pool.Close()
-	}
-	dt.pool = p
+	withLock(true, func() {
+		dt := getDefault()
+		if dt.pool != nil {
+			dt.pool.Close()
+		}
+		dt.pool = p
+	})
 }
 
 // GetGlobalConnPool returns the Default Transport's connection pool.
 //
 // Deprecated: Use a dedicated Transport instance instead of accessing global state.
 func GetGlobalConnPool() pool.Pool {
-	dt := getDefault()
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
-	return dt.pool
+	return withLockResult(false, func() pool.Pool {
+		dt := getDefault()
+		return dt.pool
+	})
 }
 
 // SetGlobalShutdownManager sets a custom shutdown manager on the Default Transport.
@@ -108,23 +136,23 @@ func GetGlobalConnPool() pool.Pool {
 //
 // Deprecated: Use a dedicated Transport instance instead of mutating global state.
 func SetGlobalShutdownManager(sm Shutdowner) {
-	dt := getDefault()
-	dt.mu.Lock()
-	defer dt.mu.Unlock()
-	if dt.sm != nil {
-		dt.sm.Shutdown()
-	}
-	dt.sm = sm
+	withLock(true, func() {
+		dt := getDefault()
+		if dt.sm != nil {
+			dt.sm.Shutdown()
+		}
+		dt.sm = sm
+	})
 }
 
 // GetGlobalShutdownManager returns the Default Transport's shutdown manager.
 //
 // Deprecated: Use a dedicated Transport instance instead of accessing global state.
 func GetGlobalShutdownManager() Shutdowner {
-	dt := getDefault()
-	dt.mu.RLock()
-	defer dt.mu.RUnlock()
-	return dt.sm
+	return withLockResult(false, func() Shutdowner {
+		dt := getDefault()
+		return dt.sm
+	})
 }
 
 // GracefulShutdown initiates graceful shutdown of all Default Transport components.

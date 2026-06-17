@@ -191,6 +191,15 @@ func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 
 // StartReaper launches a background goroutine that periodically removes
 // incomplete fragment sets older than fragmentTimeout.
+// StartReaper launches the fragment cleanup goroutine. Must be called exactly once
+// after DataHandler is initialized. The reaper is stopped via Close(), which ensures
+// synchronization: stopReaper channel signals exit, reaperWG.Wait() guarantees the
+// goroutine has exited before Close() returns. This prevents Close() from returning
+// while the reaper still accesses DataHandler.fragments (BUG-RL-4).
+//
+// INVARIANT: reaperWG.Add(1) is paired with exactly one reaperWG.Done() in the
+// reaper goroutine's defer. This counter is checked in tests to catch accidental
+// duplicate StartReaper() calls.
 func (h *DataHandler) StartReaper() {
 	log.WithFields(logger.Fields{"pkg": "session", "func": "StartReaper", "fragmentTimeout": h.fragmentTimeout}).Debug("launching fragment cleanup goroutine")
 	h.reaperWG.Add(1)

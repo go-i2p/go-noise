@@ -44,14 +44,7 @@ func (sm *SessionManager) removeSessionByPointer(session *Session) {
 	}
 
 	// Clean up all index entries for this session.
-	for _, tag := range session.pendingTags {
-		delete(sm.tagIndex, tag)
-		delete(sm.tagCounterIndex, tag)
-	}
-	if session.nsrTag != nil {
-		delete(sm.nsrTagIndex, *session.nsrTag)
-	}
-	delete(sm.sessions, foundHash)
+	sm.cleanupSessionIndexesLocked(session, foundHash)
 
 	log.WithFields(logger.Fields{
 		"pkg":             "ratchet",
@@ -209,14 +202,7 @@ func (sm *SessionManager) evictLRUSessionLocked() {
 
 	if !first {
 		if evicted, ok := sm.sessions[oldestHash]; ok {
-			for _, tag := range evicted.pendingTags {
-				delete(sm.tagIndex, tag)
-				delete(sm.tagCounterIndex, tag)
-			}
-			if evicted.nsrTag != nil {
-				delete(sm.nsrTagIndex, *evicted.nsrTag)
-			}
-			delete(sm.sessions, oldestHash)
+			sm.cleanupSessionIndexesLocked(evicted, oldestHash)
 			log.WithFields(logger.Fields{
 				"pkg":             "ratchet",
 				"func":            "evictLRUSessionLocked",
@@ -290,14 +276,7 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 	}
 
 	if evicted, ok := sm.sessions[hashToEvict]; ok {
-		for _, tag := range evicted.pendingTags {
-			delete(sm.tagIndex, tag)
-			delete(sm.tagCounterIndex, tag)
-		}
-		if evicted.nsrTag != nil {
-			delete(sm.nsrTagIndex, *evicted.nsrTag)
-		}
-		delete(sm.sessions, hashToEvict)
+		sm.cleanupSessionIndexesLocked(evicted, hashToEvict)
 		log.WithFields(logger.Fields{
 			"pkg":                "ratchet",
 			"func":               "enforcePerPeerQuotaLocked",
@@ -307,4 +286,19 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 			"remaining_for_peer": count - 1,
 		}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
 	}
+}
+
+// cleanupSessionIndexesLocked removes session index entries for tag tracking,
+// NSR tag tracking, and the session itself. Must be called with sm.mu held.
+// This consolidates the repetitive 4-line cleanup pattern used in multiple
+// session removal and eviction code paths.
+func (sm *SessionManager) cleanupSessionIndexesLocked(session *Session, hash [32]byte) {
+	for _, tag := range session.pendingTags {
+		delete(sm.tagIndex, tag)
+		delete(sm.tagCounterIndex, tag)
+	}
+	if session.nsrTag != nil {
+		delete(sm.nsrTagIndex, *session.nsrTag)
+	}
+	delete(sm.sessions, hash)
 }

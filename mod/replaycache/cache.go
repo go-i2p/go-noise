@@ -87,24 +87,9 @@ func New(cfg Config) *TTLCache {
 		nf = time.Now
 	}
 
-	// Default TTL to defaultTTL if not specified or non-positive.
-	// This prevents silent weakening of replay detection (M-2 audit finding).
-	ttl := cfg.TTL
-	if ttl <= 0 {
-		ttl = defaultTTL
-	}
-
-	// Default CleanupInterval to TTL, then to defaultCleanupInterval, so
-	// time.NewTicker in cleanupLoop never panics on an all-non-positive
-	// config (MEDIUM-1). A zero-value Config{} is therefore safe.
+	ttl := resolveTTL(cfg.TTL)
 	cleanupInterval := resolveCleanupInterval(cfg)
-
-	// Default MaxSize to defaultMaxSize if not specified or non-positive.
-	// This prevents silent weakening of replay detection.
-	maxSize := cfg.MaxSize
-	if maxSize <= 0 {
-		maxSize = defaultMaxSize
-	}
+	maxSize := resolveMaxSize(cfg.MaxSize)
 
 	c := &TTLCache{
 		entries:         make(map[[32]byte]*list.Element),
@@ -117,6 +102,26 @@ func New(cfg Config) *TTLCache {
 	}
 	go c.cleanupLoop()
 	return c
+}
+
+// resolveTTL returns a strictly positive TTL for cache entries.
+// If ttl is non-positive, returns defaultTTL.
+// This prevents silent weakening of replay detection (M-2 audit finding).
+func resolveTTL(ttl time.Duration) time.Duration {
+	if ttl > 0 {
+		return ttl
+	}
+	return defaultTTL
+}
+
+// resolveMaxSize returns a strictly positive max cache size.
+// If maxSize is non-positive, returns defaultMaxSize.
+// This prevents silent weakening of replay detection.
+func resolveMaxSize(maxSize int) int {
+	if maxSize > 0 {
+		return maxSize
+	}
+	return defaultMaxSize
 }
 
 // resolveCleanupInterval returns a strictly positive cleanup interval for the

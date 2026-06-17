@@ -158,13 +158,24 @@ func (nc *Config) WithPattern(pattern string) *Config {
 	return nc
 }
 
+// copyKeyBytes makes a copy of a key byte slice, or returns nil if key is nil/empty.
+// This is the canonical way to defensively copy security-sensitive key material
+// during configuration cloning and builder-pattern operations.
+func copyKeyBytes(key []byte) []byte {
+	if len(key) == 0 {
+		return nil
+	}
+	dst := make([]byte, len(key))
+	copy(dst, key)
+	return dst
+}
+
 // WithStaticKey sets the static key for this connection.
 // key must be 32 bytes for Curve25519. Invalid lengths are ignored;
 // call Validate() to check all fields before use.
 func (nc *Config) WithStaticKey(key []byte) *Config {
 	if len(key) == StaticKeySize {
-		nc.StaticKey = make([]byte, StaticKeySize)
-		copy(nc.StaticKey, key)
+		nc.StaticKey = copyKeyBytes(key)
 	}
 	return nc
 }
@@ -185,8 +196,7 @@ func (nc *Config) WithRemoteRouterHash(hash data.Hash) *Config {
 // Invalid lengths are ignored; call Validate() to check all fields before use.
 func (nc *Config) WithRemoteStaticKey(key []byte) *Config {
 	if len(key) == StaticKeySize {
-		nc.RemoteStaticKey = make([]byte, StaticKeySize)
-		copy(nc.RemoteStaticKey, key)
+		nc.RemoteStaticKey = copyKeyBytes(key)
 	}
 	return nc
 }
@@ -556,19 +566,11 @@ func (nc *Config) createPostHandshakeHook() func(*noise.NoiseConn) error {
 func (nc *Config) createBaseConnConfig() *noise.ConnConfig {
 	// When no static key is provided, use nil (not a zero-length slice)
 	// so the upstream library can distinguish "no key" from "empty key".
-	var staticKey []byte
-	if len(nc.StaticKey) > 0 {
-		staticKey = make([]byte, len(nc.StaticKey))
-		copy(staticKey, nc.StaticKey)
-	}
+	staticKey := copyKeyBytes(nc.StaticKey)
 
 	// When no remote static key is provided, use nil so the upstream
 	// library can distinguish "no key" from "empty key".
-	var remoteKey []byte
-	if len(nc.RemoteStaticKey) > 0 {
-		remoteKey = make([]byte, len(nc.RemoteStaticKey))
-		copy(remoteKey, nc.RemoteStaticKey)
-	}
+	remoteKey := copyKeyBytes(nc.RemoteStaticKey)
 
 	return &noise.ConnConfig{
 		Pattern:   nc.Pattern,
@@ -747,18 +749,12 @@ func (nc *Config) Clone() *Config {
 		ReplayDetector:       nc.ReplayDetector, // Shared across clones for responder
 	}
 	clone.BobRouterHash = nc.BobRouterHash
-	if nc.StaticKey != nil {
-		clone.StaticKey = make([]byte, len(nc.StaticKey))
-		copy(clone.StaticKey, nc.StaticKey)
-	}
+	clone.StaticKey = copyKeyBytes(nc.StaticKey)
 	if nc.RemoteRouterHash != nil {
 		h := *nc.RemoteRouterHash
 		clone.RemoteRouterHash = &h
 	}
-	if nc.RemoteStaticKey != nil {
-		clone.RemoteStaticKey = make([]byte, len(nc.RemoteStaticKey))
-		copy(clone.RemoteStaticKey, nc.RemoteStaticKey)
-	}
+	clone.RemoteStaticKey = copyKeyBytes(nc.RemoteStaticKey)
 	if nc.ObfuscationIV != nil {
 		clone.ObfuscationIV = make([]byte, len(nc.ObfuscationIV))
 		copy(clone.ObfuscationIV, nc.ObfuscationIV)

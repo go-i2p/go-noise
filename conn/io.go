@@ -12,20 +12,48 @@ import (
 
 	"github.com/go-i2p/go-noise/handshake"
 	i2plogger "github.com/go-i2p/logger"
+	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
 )
+
+// applyModifierChain passes data through the modifier chain for a given phase.
+// isOutbound determines whether ModifyOutbound or ModifyInbound is called.
+// Logs at debug level if a chain is applied; returns data unchanged if no chain is configured.
+func (nc *Conn) applyModifierChain(isOutbound bool, phase handshake.HandshakePhase, data []byte) ([]byte, error) {
+	chain := nc.config.GetModifierChain()
+	if chain == nil {
+		return data, nil
+	}
+
+	var direction, funcName string
+	if isOutbound {
+		direction = "outbound"
+		funcName = "applyOutbound"
+	} else {
+		direction = "inbound"
+		funcName = "applyInbound"
+	}
+
+	log.WithFields(i2plogger.Fields{
+		"pkg":       "noise",
+		"func":      "NoiseConn." + funcName,
+		"phase":     phase.String(),
+		"data_len":  len(data),
+		"direction": direction,
+	}).Debug("applying modifier chain")
+
+	if isOutbound {
+		return chain.ModifyOutbound(phase, data)
+	}
+	return chain.ModifyInbound(phase, data)
+}
 
 // applyOutboundModifier passes encrypted plaintext through the modifier chain
 // for PhaseData (post-handshake data transport). Called by Write before encryption.
 // Returns data unchanged if no modifier chain is configured.
 // Note: NTCP2 provides a transport-specific override in ntcp2/conn_framing.go.
 func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
-	chain := nc.config.GetModifierChain()
-	if chain == nil {
-		return data, nil
-	}
-	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.applyOutboundModifier", "data_len": len(data)}).Debug("applying PhaseData modifier chain")
-	return chain.ModifyOutbound(handshake.PhaseData, data)
+	return nc.applyModifierChain(true, handshake.PhaseData, data)
 }
 
 // applyInboundModifier passes decrypted plaintext through the modifier chain
@@ -33,93 +61,73 @@ func (nc *Conn) applyOutboundModifier(data []byte) ([]byte, error) {
 // Returns data unchanged if no modifier chain is configured.
 // Note: NTCP2 provides a transport-specific override in ntcp2/conn_framing.go.
 func (nc *Conn) applyInboundModifier(data []byte) ([]byte, error) {
-	chain := nc.config.GetModifierChain()
-	if chain == nil {
-		return data, nil
-	}
-	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.applyInboundModifier", "data_len": len(data)}).Debug("applying PhaseData modifier chain")
-	return chain.ModifyInbound(handshake.PhaseData, data)
+	return nc.applyModifierChain(false, handshake.PhaseData, data)
 }
 
 // applyHandshakeOutbound passes outgoing handshake data through the modifier
 // chain for the given handshake phase. Called by sendNoiseHandshakeMsg after
 // WriteMessage and before writeFramedMessage.
 func (nc *Conn) applyHandshakeOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
-	chain := nc.config.GetModifierChain()
-	if chain == nil {
-		return data, nil
-	}
-	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.applyHandshakeOutbound", "phase": phase.String(), "data_len": len(data)}).Debug("applying modifier chain")
-	return chain.ModifyOutbound(phase, data)
+	return nc.applyModifierChain(true, phase, data)
 }
 
 // applyHandshakeInbound passes incoming handshake data through the modifier
 // chain for the given handshake phase. Called by receiveNoiseHandshakeMsg after
 // readFramedMessage and before ReadMessage.
 func (nc *Conn) applyHandshakeInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
-	chain := nc.config.GetModifierChain()
-	if chain == nil {
-		return data, nil
+	return nc.applyModifierChain(false, phase, data)
+}
+
+// validateConnState validates the connection state before I/O operations.
+// isSend: true for write validation, false for read validation.
+func (nc *Conn) validateConnState(isSend bool) error {
+	if nc.isClosed() {
+		return oops.
+			Code("CONN_CLOSED").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("connection is closed")
 	}
-	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.applyHandshakeInbound", "phase": phase.String(), "data_len": len(data)}).Debug("applying modifier chain")
-	return chain.ModifyInbound(phase, data)
+
+	if !nc.isHandshakeDone() {
+		return oops.
+			Code("HANDSHAKE_NOT_DONE").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("handshake not completed")
+	}
+
+	var cipherState *noise.CipherState
+	var direction string
+	if isSend {
+		cipherState = nc.sendCipherState
+		direction = "send"
+	} else {
+		cipherState = nc.recvCipherState
+		direction = "receive"
+	}
+
+	if cipherState == nil {
+		return oops.
+			Code("NO_CIPHER_STATE").
+			In("noise").
+			With("state", nc.getState().String()).
+			Errorf("%s cipher state not initialized", direction)
+	}
+
+	return nil
 }
 
 // validateReadState validates the connection state before reading.
+// Deprecated: use validateConnState(false) instead.
 func (nc *Conn) validateReadState() error {
-	if nc.isClosed() {
-		return oops.
-			Code("CONN_CLOSED").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("connection is closed")
-	}
-
-	if !nc.isHandshakeDone() {
-		return oops.
-			Code("HANDSHAKE_NOT_DONE").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("handshake not completed")
-	}
-
-	if nc.recvCipherState == nil {
-		return oops.
-			Code("NO_CIPHER_STATE").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("receive cipher state not initialized")
-	}
-
-	return nil
+	return nc.validateConnState(false)
 }
 
 // validateWriteState validates the connection state before writing.
+// Deprecated: use validateConnState(true) instead.
 func (nc *Conn) validateWriteState() error {
-	if nc.isClosed() {
-		return oops.
-			Code("CONN_CLOSED").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("connection is closed")
-	}
-
-	if !nc.isHandshakeDone() {
-		return oops.
-			Code("HANDSHAKE_NOT_DONE").
-			In("noise").
-			With("state", nc.getState().String()).
-			Errorf("handshake not completed")
-	}
-
-	if nc.sendCipherState == nil {
-		return oops.
-			Code("NO_CIPHER_STATE").
-			In("noise").
-			Errorf("send cipher state not initialized")
-	}
-
-	return nil
+	return nc.validateConnState(true)
 }
 
 // configureWriteTimeout sets the write timeout if configured.

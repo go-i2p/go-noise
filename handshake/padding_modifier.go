@@ -38,21 +38,10 @@ type PaddingModifier = GenericPaddingModifier
 // minimum and maximum padding sizes.
 func NewGenericPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error) {
 	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewGenericPaddingModifier", "name": name, "min": minPadding, "max": maxPadding}).Debug("Creating generic padding modifier")
-	if minPadding < 0 {
-		return nil, oops.
-			Code("INVALID_PADDING").
-			In("handshake").
-			With("min_padding", minPadding).
-			Errorf("minimum padding cannot be negative")
-	}
 
-	if maxPadding < minPadding {
-		return nil, oops.
-			Code("INVALID_PADDING").
-			In("handshake").
-			With("min_padding", minPadding).
-			With("max_padding", maxPadding).
-			Errorf("maximum padding cannot be less than minimum padding")
+	// Validate padding parameters against I2P spec limits (paddingRatio = 0.0 for modifier only).
+	if err := ValidatePaddingParams("handshake", minPadding, maxPadding, 0.0); err != nil {
+		return nil, err
 	}
 
 	return &GenericPaddingModifier{

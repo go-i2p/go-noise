@@ -92,18 +92,10 @@ func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 	// initiator pinned for N × HandshakeTimeout instead of 1 × HandshakeTimeout.
 	//
 	// LEAK-2 / TIMEOUT-1: If HandshakeTimeout is zero and the caller's context
-	// has no deadline, there is no bound on the handshake at all — a stalling
-	// peer holds the goroutine (and the associated connection slot) indefinitely.
-	// Apply a default so the goroutine is always bounded.
-	timeout := h.config.HandshakeTimeout
-	if timeout <= 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			timeout = defaultHandshakeTimeout
-		}
-	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
+	// Ensure a single deadline for the entire initiator handshake.
+	var cancel context.CancelFunc
+	ctx, cancel = h.ensureHandshakeDeadline(ctx)
+	if cancel != nil {
 		defer cancel()
 	}
 	sessionRequest, err := h.sendSessionRequest()
@@ -218,21 +210,8 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 
 // installSessCreateHeaderKey installs the SessCreateHeader key into the
 // header protector, if available.
-// installSessCreateHeaderKey installs the SessCreateHeader key into the
-// header protector, if available.
 func (h *SSU2Conn) installSessCreateHeaderKey() error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "installSessCreateHeaderKey"}).Debug("Installing SessCreateHeader key")
-	if h.headerProtector == nil {
-		return nil
-	}
-	k := h.handshakeHandler.SessCreateHeaderKey()
-	if len(k) == 0 {
-		return nil
-	}
-	return oops.Wrapf(
-		h.headerProtector.SetSessCreateHeaderKey(k),
-		"failed to set SessCreateHeader key",
-	)
+	return h.installHeaderKey(h.handshakeHandler.SessCreateHeaderKey, "SessCreateHeaderKey")
 }
 
 // processSessionCreated validates and processes the SessionCreated response,
@@ -258,21 +237,8 @@ func (h *SSU2Conn) processSessionCreated(response *SSU2Packet) error {
 
 // installSessionConfirmedHeaderKey installs the SessionConfirmed header key
 // into the header protector, if available.
-// installSessionConfirmedHeaderKey installs the SessionConfirmed header key
-// into the header protector, if available.
 func (h *SSU2Conn) installSessionConfirmedHeaderKey() error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "installSessionConfirmedHeaderKey"}).Debug("Installing SessionConfirmed header key")
-	if h.headerProtector == nil {
-		return nil
-	}
-	k := h.handshakeHandler.SessionConfirmedHeaderKey()
-	if len(k) == 0 {
-		return nil
-	}
-	return oops.Wrapf(
-		h.headerProtector.SetSessionConfirmedHeaderKey(k),
-		"failed to set SessionConfirmed header key",
-	)
+	return h.installHeaderKey(h.handshakeHandler.SessionConfirmedHeaderKey, "SessionConfirmedHeaderKey")
 }
 
 // sendSessionConfirmed creates and sends SessionConfirmed fragments.
@@ -308,18 +274,9 @@ func (h *SSU2Conn) handshakeResponder(ctx context.Context) error {
 	// Each receiveHandshakeWithRetransmit call would otherwise start a fresh
 	// HandshakeTimeout window; a stalling initiator can extend the total window
 	// to N × HandshakeTimeout without this guard.
-	//
-	// LEAK-2 / TIMEOUT-1: mirror the initiator fix — apply a default bound when
-	// neither HandshakeTimeout nor a ctx deadline is set.
-	timeoutR := h.config.HandshakeTimeout
-	if timeoutR <= 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			timeoutR = defaultHandshakeTimeout
-		}
-	}
-	if timeoutR > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeoutR)
+	var cancel context.CancelFunc
+	ctx, cancel = h.ensureHandshakeDeadline(ctx)
+	if cancel != nil {
 		defer cancel()
 	}
 	initiatorConnID, err := h.receiveSessionRequest(ctx)
@@ -808,4 +765,49 @@ func sortFragmentsByIndex(fragments []*SSU2Packet) {
 			}
 		}
 	}
+}
+
+// installHeaderKey installs a derived header key into the header protector,
+// if available. Consolidates nil-check, key getter call, empty-key check,
+// and error wrapping for key installation.
+func (h *SSU2Conn) installHeaderKey(keyGetter func() []byte, keyType string) error {
+	log.WithFields(logger.Fields{"pkg": "session", "func": "installHeaderKey", "key_type": keyType}).Debug("Installing header key")
+	if h.headerProtector == nil {
+		return nil
+	}
+	k := keyGetter()
+	if len(k) == 0 {
+		return nil
+	}
+	switch keyType {
+	case "SessCreateHeaderKey":
+		return oops.Wrapf(
+			h.headerProtector.SetSessCreateHeaderKey(k),
+			"failed to set %s", keyType,
+		)
+	case "SessionConfirmedHeaderKey":
+		return oops.Wrapf(
+			h.headerProtector.SetSessionConfirmedHeaderKey(k),
+			"failed to set %s", keyType,
+		)
+	default:
+		return oops.Errorf("unknown key type: %s", keyType)
+	}
+}
+
+// ensureHandshakeDeadline wraps the context with a handshake deadline if needed.
+// If config.HandshakeTimeout is set, uses it; otherwise checks for existing deadline
+// on ctx; if neither, applies defaultHandshakeTimeout. Returns (ctx, cancel) where
+// cancel may be nil if no new deadline was added.
+func (h *SSU2Conn) ensureHandshakeDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := h.config.HandshakeTimeout
+	if timeout <= 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			timeout = defaultHandshakeTimeout
+		}
+	}
+	if timeout > 0 {
+		return context.WithTimeout(ctx, timeout)
+	}
+	return ctx, nil
 }

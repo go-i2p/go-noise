@@ -468,23 +468,31 @@ func (nl *Listener) createAcceptConnConfig() *conn.ConnConfig {
 									WithReadTimeout(nl.config.ReadTimeout).
 									WithWriteTimeout(nl.config.WriteTimeout)
 
-	if len(nl.config.Modifiers) > 0 {
-		connConfig = connConfig.WithModifiers(nl.cloneModifiers()...)
-	}
-	if nl.config.PostHandshakeHook != nil {
-		connConfig.PostHandshakeHook = nl.config.PostHandshakeHook
-	}
-	if len(nl.config.AdditionalSymmetricKeyLabels) > 0 {
-		connConfig.AdditionalSymmetricKeyLabels = nl.config.AdditionalSymmetricKeyLabels
-	}
-	if nl.config.HandshakeRetries > 0 {
-		connConfig = connConfig.WithHandshakeRetries(nl.config.HandshakeRetries)
-	}
-	if nl.config.RetryBackoff > 0 {
-		connConfig = connConfig.WithRetryBackoff(nl.config.RetryBackoff)
-	}
+	connConfig = nl.applyOptionalConnConfigSettings(connConfig)
 
 	return connConfig
+}
+
+// applyOptionalConnConfigSettings applies optional configuration settings to a
+// ConnConfig that may or may not have values, consolidating conditional chains.
+func (nl *Listener) applyOptionalConnConfigSettings(cfg *conn.ConnConfig) *conn.ConnConfig {
+	if len(nl.config.Modifiers) > 0 {
+		cfg = cfg.WithModifiers(nl.cloneModifiers()...)
+	}
+	if nl.config.PostHandshakeHook != nil {
+		cfg.PostHandshakeHook = nl.config.PostHandshakeHook
+	}
+	if len(nl.config.AdditionalSymmetricKeyLabels) > 0 {
+		cfg.AdditionalSymmetricKeyLabels = nl.config.AdditionalSymmetricKeyLabels
+	}
+	if nl.config.HandshakeRetries > 0 {
+		cfg = cfg.WithHandshakeRetries(nl.config.HandshakeRetries)
+	}
+	if nl.config.RetryBackoff > 0 {
+		cfg = cfg.WithRetryBackoff(nl.config.RetryBackoff)
+	}
+
+	return cfg
 }
 
 // cloneModifiers returns a per-connection copy of the listener's configured

@@ -138,11 +138,18 @@ func (pe *PaddingEngine) EstimatePaddingSize(dataLen int) int {
 }
 
 // AddCleartextPadding appends cryptographically random bytes after the data.
-func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]byte, error) {
-	result := make([]byte, len(data)+paddingSize)
+// addPaddingCore is the shared core logic for adding padding to data.
+// header is an optional byte slice prepended to the padding data.
+// If header is nil, padding is appended directly. If header is provided,
+// it is included before the padding data, and the header must be pre-filled
+// by the caller.
+func (pe *PaddingEngine) addPaddingCore(data, header []byte, paddingSize int) ([]byte, error) {
+	totalSize := len(data) + len(header) + paddingSize
+	result := make([]byte, totalSize)
 	copy(result, data)
+	copy(result[len(data):], header)
 
-	paddingData := result[len(data):]
+	paddingData := result[len(data)+len(header):]
 	if pe.Config.TestMode {
 		for i := 0; i < paddingSize; i++ {
 			paddingData[i] = byte((i + len(data)) % 256)
@@ -160,32 +167,19 @@ func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]by
 	return result, nil
 }
 
+// AddCleartextPadding appends random padding directly to the data.
+func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]byte, error) {
+	return pe.addPaddingCore(data, nil, paddingSize)
+}
+
 // AddAEADPadding appends a padding block in I2P format: [type:1][size:2][random padding].
 func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, error) {
-	blockSize := I2PBlockHeaderSize + paddingSize
-	result := make([]byte, len(data)+blockSize)
-	copy(result, data)
+	// Build I2P block header: [type:1][size:2]
+	header := make([]byte, I2PBlockHeaderSize)
+	header[0] = I2PPaddingBlockType
+	binary.BigEndian.PutUint16(header[1:], uint16(paddingSize))
 
-	offset := len(data)
-	result[offset] = I2PPaddingBlockType
-	binary.BigEndian.PutUint16(result[offset+1:], uint16(paddingSize))
-
-	paddingData := result[offset+3:]
-	if pe.Config.TestMode {
-		for i := 0; i < paddingSize; i++ {
-			paddingData[i] = byte((i + len(data)) % 256)
-		}
-	} else {
-		if _, err := rand.Read(paddingData); err != nil {
-			return nil, oops.
-				Code("AEAD_PADDING_GENERATION_FAILED").
-				In(pe.Config.Domain).
-				With("padding_size", paddingSize).
-				Wrapf(err, "failed to generate secure random AEAD padding")
-		}
-	}
-
-	return result, nil
+	return pe.addPaddingCore(data, header, paddingSize)
 }
 
 // RemoveTrailingAEADPadding removes a trailing I2P padding block (type 254)
