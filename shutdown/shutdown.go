@@ -103,21 +103,7 @@ func NewShutdownManager(timeout time.Duration) *ShutdownManager {
 // conn may be any type satisfying ShutdownConn, including *NoiseConn,
 // *ntcp2.NTCP2Conn, and *ssu2.SSU2Conn.
 func (sm *ShutdownManager) RegisterConnection(conn ShutdownConn) {
-	if conn == nil {
-		return
-	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	sm.connections[conn] = struct{}{}
-	sm.logger.WithFields(i2plogger.Fields{
-		"pkg":         "noise",
-		"func":        "ShutdownManager.RegisterConnection",
-		"local_addr":  conn.LocalAddr().String(),
-		"remote_addr": conn.RemoteAddr().String(),
-		"total_conns": len(sm.connections),
-	}).Debug("registered connection for shutdown management")
+	sm.registerConnection(conn, true)
 }
 
 // registerConnection is a helper to register or unregister a connection.
@@ -160,25 +146,17 @@ func (sm *ShutdownManager) UnregisterConnection(conn ShutdownConn) {
 // listener may be any type satisfying ShutdownListener, including *NoiseListener,
 // *ntcp2.NTCP2Listener, and *ssu2.SSU2Listener.
 func (sm *ShutdownManager) RegisterListener(listener ShutdownListener) {
-	if listener == nil {
-		return
-	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	sm.listeners[listener] = struct{}{}
-	sm.logger.WithFields(i2plogger.Fields{
-		"pkg":             "noise",
-		"func":            "ShutdownManager.RegisterListener",
-		"listener_addr":   listener.Addr().String(),
-		"total_listeners": len(sm.listeners),
-	}).Debug("registered listener for shutdown management")
+	sm.registerListener(listener, true)
 }
 
 // UnregisterListener removes a listener from shutdown management.
 // This should be called when a listener is closed normally.
 func (sm *ShutdownManager) UnregisterListener(listener ShutdownListener) {
+	sm.registerListener(listener, false)
+}
+
+// registerListener is a helper to register or unregister a listener.
+func (sm *ShutdownManager) registerListener(listener ShutdownListener, register bool) {
 	if listener == nil {
 		return
 	}
@@ -186,13 +164,23 @@ func (sm *ShutdownManager) UnregisterListener(listener ShutdownListener) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	delete(sm.listeners, listener)
+	var op, action string
+	if register {
+		sm.listeners[listener] = struct{}{}
+		op = "RegisterListener"
+		action = "registered"
+	} else {
+		delete(sm.listeners, listener)
+		op = "UnregisterListener"
+		action = "unregistered"
+	}
+
 	sm.logger.WithFields(i2plogger.Fields{
 		"pkg":             "noise",
-		"func":            "ShutdownManager.UnregisterListener",
+		"func":            "ShutdownManager." + op,
 		"listener_addr":   listener.Addr().String(),
 		"total_listeners": len(sm.listeners),
-	}).Debug("unregistered listener from shutdown management")
+	}).Debug(action + " listener from shutdown management")
 }
 
 // Context returns the shutdown context for monitoring shutdown signals.

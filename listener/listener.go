@@ -304,157 +304,158 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			Errorf("listener is closed")
 	}
 
-	// Acquire semaphore slot if MaxConnections is configured (M-6)
-	// This blocks if the limit is reached, providing backpressure.
-	if nl.maxConnSemaphore != nil {
-		nl.maxConnSemaphore <- struct{}{}
+	slotAcquired := nl.acquireConnectionSlot()
+	releaseSlot := slotAcquired
+	defer func() {
+		if releaseSlot {
+			<-nl.maxConnSemaphore
+		}
+	}()
+
+	underlying, err := nl.acceptWithRetry()
+	if err != nil {
+		return nil, err
 	}
 
-	// Flag to track if we successfully acquired a semaphore slot
-	// If we acquired it but then fail before returning, we need to release it
-	slotAcquired := nl.maxConnSemaphore != nil
+	if err := nl.setHandshakeDeadline(underlying); err != nil {
+		underlying.Close()
+		return nil, err
+	}
 
-	// Retry loop for handling transient accept errors with exponential backoff
+	noiseConn, err := nl.createNoiseConn(underlying)
+	if err != nil {
+		underlying.Close()
+		return nil, err
+	}
+
+	nl.logger.WithFields(i2plogger.Fields{
+		"pkg":           "noise",
+		"func":          "NoiseListener.Accept",
+		"listener_addr": nl.addr.String(),
+		"remote_addr":   underlying.RemoteAddr().String(),
+	}).Debug("accepted new noise connection")
+
+	if slotAcquired {
+		releaseSlot = false
+		return newSemaphoreReleaseWrapper(noiseConn, nl.maxConnSemaphore), nil
+	}
+
+	return noiseConn, nil
+}
+
+func (nl *Listener) acquireConnectionSlot() bool {
+	if nl.maxConnSemaphore == nil {
+		return false
+	}
+
+	nl.maxConnSemaphore <- struct{}{}
+	return true
+}
+
+func (nl *Listener) acceptWithRetry() (net.Conn, error) {
 	for {
-		// Accept the underlying connection — net.TCPListener.Accept() is
-		// concurrency-safe, so no mutex is needed here.
 		underlying, err := nl.underlying.Accept()
 		if err == nil {
-			// Success: reset consecutive transient error counter
 			nl.transientErrorMutex.Lock()
 			nl.consecutiveTransientErrors = 0
 			nl.transientErrorMutex.Unlock()
-
-			// M-8: Set a handshake deadline on the underlying connection to prevent
-			// a slow or silent peer from holding a goroutine indefinitely.
-			// Use the configured HandshakeTimeout as the deadline duration.
-			if nl.config.HandshakeTimeout > 0 {
-				if err := underlying.SetDeadline(time.Now().Add(nl.config.HandshakeTimeout)); err != nil {
-					if slotAcquired {
-						<-nl.maxConnSemaphore // Release semaphore on deadline failure (M-6)
-						slotAcquired = false
-					}
-					underlying.Close() // Clean up the underlying connection
-					return nil, oops.
-						Code("SET_DEADLINE_FAILED").
-						In("noise").
-						With("listener_addr", nl.addr.String()).
-						With("remote_addr", underlying.RemoteAddr().String()).
-						Wrapf(err, "failed to set handshake deadline")
-				}
-			}
-
-			// Create connection config for the accepted connection (as responder),
-			// propagating modifiers, post-handshake hook, and ASK labels from
-			// the listener config.
-			connConfig := nl.createAcceptConnConfig()
-
-			// Wrap in NoiseConn
-			noiseConn, err := conn.NewNoiseConn(underlying, connConfig)
-			if err != nil {
-				if slotAcquired {
-					<-nl.maxConnSemaphore // Release semaphore on wrap failure (M-6)
-					slotAcquired = false
-				}
-				underlying.Close() // Clean up the underlying connection
-				return nil, oops.
-					Code("WRAP_FAILED").
-					In("noise").
-					With("listener_addr", nl.addr.String()).
-					With("remote_addr", underlying.RemoteAddr().String()).
-					Wrapf(err, "failed to create noise connection")
-			}
-
-			nl.logger.WithFields(i2plogger.Fields{
-				"pkg":           "noise",
-				"func":          "NoiseListener.Accept",
-				"listener_addr": nl.addr.String(),
-				"remote_addr":   underlying.RemoteAddr().String(),
-			}).Debug("accepted new noise connection")
-
-			// If we acquired a semaphore slot, wrap the connection to release it on Close() (M-6)
-			if slotAcquired {
-				return newSemaphoreReleaseWrapper(noiseConn, nl.maxConnSemaphore), nil
-			}
-			return noiseConn, nil
+			return underlying, nil
 		}
 
-		// Accept error: check if it's a transient error and if we should retry
-		isTransient := false
-		if netErr, ok := err.(net.Error); ok {
-			isTransient = netErr.Temporary()
+		retry, backoffDuration, returnErr := nl.handleTransientError(err)
+		if !retry {
+			return nil, returnErr
 		}
 
-		// If it's not a transient error, release semaphore if acquired and return error (M-6)
-		if !isTransient {
-			if slotAcquired {
-				<-nl.maxConnSemaphore
-				slotAcquired = false
-			}
-			return nil, oops.
-				Code("ACCEPT_FAILED").
-				In("noise").
-				With("listener_addr", nl.addr.String()).
-				Wrapf(err, "failed to accept underlying connection")
-		}
-
-		// Handle transient error: update counter and check if we should retry
-		nl.transientErrorMutex.Lock()
-		nl.consecutiveTransientErrors++
-		errorCount := nl.consecutiveTransientErrors
-		nl.transientErrorMutex.Unlock()
-
-		// If we've exceeded max transient errors, release semaphore and return error (M-6)
-		if nl.config.MaxAcceptErrors > 0 && errorCount > nl.config.MaxAcceptErrors {
-			if slotAcquired {
-				<-nl.maxConnSemaphore
-				slotAcquired = false
-			}
-			return nil, oops.
-				Code("ACCEPT_FAILED_MAX_TRANSIENT").
-				In("noise").
-				With("listener_addr", nl.addr.String()).
-				With("consecutive_errors", errorCount).
-				With("max_errors", nl.config.MaxAcceptErrors).
-				Wrapf(err, "exceeded maximum consecutive transient accept errors")
-		}
-
-		// If max errors is 0 (disabled), release semaphore and return immediately (M-6)
-		if nl.config.MaxAcceptErrors == 0 {
-			if slotAcquired {
-				<-nl.maxConnSemaphore
-				slotAcquired = false
-			}
-			return nil, oops.
-				Code("ACCEPT_FAILED").
-				In("noise").
-				With("listener_addr", nl.addr.String()).
-				Wrapf(err, "failed to accept underlying connection (transient error, retries disabled)")
-		}
-
-		// Calculate exponential backoff: base^count, capped at 10 seconds
-		backoffDuration := nl.config.RetryBackoff
-		for i := 1; i < errorCount; i++ {
-			backoffDuration *= 2
-			if backoffDuration > 10*time.Second {
-				backoffDuration = 10 * time.Second
-				break
-			}
-		}
-
-		nl.logger.WithFields(i2plogger.Fields{
-			"pkg":                "noise",
-			"func":               "NoiseListener.Accept",
-			"listener_addr":      nl.addr.String(),
-			"consecutive_errors": errorCount,
-			"max_errors":         nl.config.MaxAcceptErrors,
-			"backoff_duration":   backoffDuration.String(),
-			"transient_error":    err.Error(),
-		}).Debug("transient accept error, retrying with backoff")
-
-		// Sleep before retrying
 		time.Sleep(backoffDuration)
 	}
+}
+
+func (nl *Listener) handleTransientError(err error) (bool, time.Duration, error) {
+	if netErr, ok := err.(net.Error); !ok || !netErr.Temporary() {
+		return false, 0, oops.
+			Code("ACCEPT_FAILED").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			Wrapf(err, "failed to accept underlying connection")
+	}
+
+	nl.transientErrorMutex.Lock()
+	nl.consecutiveTransientErrors++
+	errorCount := nl.consecutiveTransientErrors
+	nl.transientErrorMutex.Unlock()
+
+	if nl.config.MaxAcceptErrors > 0 && errorCount > nl.config.MaxAcceptErrors {
+		return false, 0, oops.
+			Code("ACCEPT_FAILED_MAX_TRANSIENT").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			With("consecutive_errors", errorCount).
+			With("max_errors", nl.config.MaxAcceptErrors).
+			Wrapf(err, "exceeded maximum consecutive transient accept errors")
+	}
+
+	if nl.config.MaxAcceptErrors == 0 {
+		return false, 0, oops.
+			Code("ACCEPT_FAILED").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			Wrapf(err, "failed to accept underlying connection (transient error, retries disabled)")
+	}
+
+	backoffDuration := nl.config.RetryBackoff
+	for i := 1; i < errorCount; i++ {
+		backoffDuration *= 2
+		if backoffDuration > 10*time.Second {
+			backoffDuration = 10 * time.Second
+			break
+		}
+	}
+
+	nl.logger.WithFields(i2plogger.Fields{
+		"pkg":                "noise",
+		"func":               "NoiseListener.handleTransientError",
+		"listener_addr":      nl.addr.String(),
+		"consecutive_errors": errorCount,
+		"max_errors":         nl.config.MaxAcceptErrors,
+		"backoff_duration":   backoffDuration.String(),
+		"transient_error":    err.Error(),
+	}).Debug("transient accept error, retrying with backoff")
+
+	return true, backoffDuration, nil
+}
+
+func (nl *Listener) setHandshakeDeadline(underlying net.Conn) error {
+	if nl.config.HandshakeTimeout <= 0 {
+		return nil
+	}
+
+	if err := underlying.SetDeadline(time.Now().Add(nl.config.HandshakeTimeout)); err != nil {
+		return oops.
+			Code("SET_DEADLINE_FAILED").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			With("remote_addr", underlying.RemoteAddr().String()).
+			Wrapf(err, "failed to set handshake deadline")
+	}
+
+	return nil
+}
+
+func (nl *Listener) createNoiseConn(underlying net.Conn) (*conn.Conn, error) {
+	connConfig := nl.createAcceptConnConfig()
+
+	noiseConn, err := conn.NewNoiseConn(underlying, connConfig)
+	if err != nil {
+		return nil, oops.
+			Code("WRAP_FAILED").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			With("remote_addr", underlying.RemoteAddr().String()).
+			Wrapf(err, "failed to create noise connection")
+	}
+
+	return noiseConn, nil
 }
 
 // createAcceptConnConfig builds a ConnConfig for an accepted (responder)

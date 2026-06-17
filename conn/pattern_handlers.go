@@ -40,54 +40,56 @@ var initiatorHandlers = buildInitiatorHandlers()
 // Built by init() to reduce redundancy across the three pattern type categories.
 var responderHandlers = buildResponderHandlers()
 
+type connPatternMethod func(*Conn, context.Context, string) error
+
+func addPatternGroupHandlers(handlers map[string]PatternHandlerFunc, patterns []string, method connPatternMethod) {
+	for _, pattern := range patterns {
+		p := pattern // capture loop variable
+		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
+			return method(nc, ctx, p)
+		})
+	}
+}
+
+func buildHandlers(isInitiator bool) map[string]PatternHandlerFunc {
+	handlers := make(map[string]PatternHandlerFunc)
+
+	onewayMethod := func(nc *Conn, ctx context.Context, pattern string) error {
+		if isInitiator {
+			return nc.performOnewayInitiator(ctx, pattern)
+		}
+		return nc.performOnewayResponder(ctx, pattern)
+	}
+	twoMessageMethod := func(nc *Conn, ctx context.Context, pattern string) error {
+		if isInitiator {
+			return nc.performTwoMsgInitiator(ctx, pattern)
+		}
+		return nc.performTwoMsgResponder(ctx, pattern)
+	}
+	threeMessageMethod := func(nc *Conn, ctx context.Context, pattern string) error {
+		if isInitiator {
+			return nc.performThreeMsgInitiator(ctx, pattern)
+		}
+		return nc.performThreeMsgResponder(ctx, pattern)
+	}
+
+	addPatternGroupHandlers(handlers, onewayPatterns, onewayMethod)
+	addPatternGroupHandlers(handlers, twoMessagePatterns, twoMessageMethod)
+	addPatternGroupHandlers(handlers, threeMessagePatterns, threeMessageMethod)
+
+	return handlers
+}
+
 // buildInitiatorHandlers constructs the initiator handler map from pattern groups,
 // reducing code duplication versus explicit map literals.
 func buildInitiatorHandlers() map[string]PatternHandlerFunc {
-	handlers := make(map[string]PatternHandlerFunc)
-	for _, pattern := range onewayPatterns {
-		p := pattern // capture loop variable
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performOnewayInitiator(ctx, p)
-		})
-	}
-	for _, pattern := range twoMessagePatterns {
-		p := pattern
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performTwoMsgInitiator(ctx, p)
-		})
-	}
-	for _, pattern := range threeMessagePatterns {
-		p := pattern
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performThreeMsgInitiator(ctx, p)
-		})
-	}
-	return handlers
+	return buildHandlers(true)
 }
 
 // buildResponderHandlers constructs the responder handler map from pattern groups,
 // reducing code duplication versus explicit map literals.
 func buildResponderHandlers() map[string]PatternHandlerFunc {
-	handlers := make(map[string]PatternHandlerFunc)
-	for _, pattern := range onewayPatterns {
-		p := pattern // capture loop variable
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performOnewayResponder(ctx, p)
-		})
-	}
-	for _, pattern := range twoMessagePatterns {
-		p := pattern
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performTwoMsgResponder(ctx, p)
-		})
-	}
-	for _, pattern := range threeMessagePatterns {
-		p := pattern
-		handlers[p] = wrapConnHandler(func(nc *Conn, ctx context.Context) error {
-			return nc.performThreeMsgResponder(ctx, p)
-		})
-	}
-	return handlers
+	return buildHandlers(false)
 }
 
 // wrapConnHandler adapts a *Conn method into a PatternHandlerFunc.

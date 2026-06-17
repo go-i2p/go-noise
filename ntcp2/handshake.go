@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -413,17 +414,28 @@ func warnMissingReplayDetector() {
 
 func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
 	raw := nc.Underlying()
+	m3p2Len, err := handleResponderMsg1(cfg, nc, raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := handleResponderMsg2(nc, raw); err != nil {
+		return nil, err
+	}
+	return handleResponderMsg3(nc, raw, m3p2Len)
+}
+
+func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16, error) {
 
 	// === Message 1 (Alice -> Bob) ============================================
 	buf1 := make([]byte, msg1Size)
 	if _, err := io.ReadFull(raw, buf1); err != nil {
-		return nil, oops.Code("MSG1_READ_FAILED").In("ntcp2").
+		return 0, oops.Code("MSG1_READ_FAILED").In("ntcp2").
 			Wrapf(err, "failed to read NTCP2 message 1")
 	}
 	aliceOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseInitial, buf1)
 	if err != nil {
 		dumpInboundMsg1IfEnabled(cfg, raw, buf1, nil, err)
-		return nil, oops.Code("MSG1_PROCESS_FAILED").In("ntcp2").
+		return 0, oops.Code("MSG1_PROCESS_FAILED").In("ntcp2").
 			Wrapf(err, "failed to process NTCP2 message 1")
 	}
 	dumpInboundMsg1IfEnabled(cfg, raw, buf1, aliceOpts, nil)
@@ -439,7 +451,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 		var ephemeralKey [32]byte
 		copy(ephemeralKey[:], buf1[:32])
 		if cfg.ReplayDetector.CheckAndAdd(ephemeralKey) {
-			return nil, oops.
+			return 0, oops.
 				Code("MSG1_REPLAY").
 				In("ntcp2").
 				With("remote", raw.RemoteAddr().String()).
@@ -456,7 +468,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 
 	// Parse Alice's options to extract padLen (bytes 2-3) and m3p2Len (bytes 4-5).
 	if len(aliceOpts) < ntcp2OptionsSize {
-		return nil, oops.Code("MSG1_OPTIONS_TOO_SHORT").In("ntcp2").
+		return 0, oops.Code("MSG1_OPTIONS_TOO_SHORT").In("ntcp2").
 			Errorf("message 1 options too short: got %d, need %d", len(aliceOpts), ntcp2OptionsSize)
 	}
 	alicePadLen := int(binary.BigEndian.Uint16(aliceOpts[2:4]))
@@ -467,7 +479,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	// a conservative limit to prevent an attacker from forcing the responder
 	// to allocate 64 KiB per connection and blocking on io.ReadFull.
 	if alicePadLen > MaxNTCP2HandshakePadding {
-		return nil, oops.
+		return 0, oops.
 			Code("MSG1_PADDING_TOO_LARGE").
 			In("ntcp2").
 			With("padLen", alicePadLen).
@@ -480,7 +492,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	// limit to prevent an attacker from forcing the responder to allocate
 	// excessive memory (up to 64 KiB with uint16 max) per connection.
 	if m3p2Len > MaxNTCP2Message3Part2Len {
-		return nil, oops.
+		return 0, oops.
 			Code("MSG3_PART2_TOO_LARGE").
 			In("ntcp2").
 			With("m3p2Len", m3p2Len).
@@ -494,28 +506,33 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	if alicePadLen > 0 {
 		pad := make([]byte, alicePadLen)
 		if _, err := io.ReadFull(raw, pad); err != nil {
-			return nil, oops.Code("MSG1_PAD_READ_FAILED").In("ntcp2").
+			return 0, oops.Code("MSG1_PAD_READ_FAILED").In("ntcp2").
 				Wrapf(err, "failed to read %d cleartext padding bytes after message 1", alicePadLen)
 		}
 		nc.MixHashData(pad)
 	}
 
+	return m3p2Len, nil
+}
+
+func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
+
 	// === Message 2 (Bob -> Alice) ============================================
 	opts2, bobPadLen, err := buildMessage2Options()
 	if err != nil {
-		return nil, err // already wrapped by buildMessage2Options
+		return err // already wrapped by buildMessage2Options
 	}
 	msg2, err := nc.WriteHandshakeMsgToBytes(handshake.PhaseExchange, opts2)
 	if err != nil {
-		return nil, oops.Code("MSG2_WRITE_FAILED").In("ntcp2").
+		return oops.Code("MSG2_WRITE_FAILED").In("ntcp2").
 			Wrapf(err, "failed to build NTCP2 message 2")
 	}
 	if len(msg2) != msg2Size {
-		return nil, oops.Code("MSG2_SIZE_MISMATCH").In("ntcp2").
+		return oops.Code("MSG2_SIZE_MISMATCH").In("ntcp2").
 			Errorf("expected message 2 to be %d bytes, got %d", msg2Size, len(msg2))
 	}
 	if _, err := raw.Write(msg2); err != nil {
-		return nil, oops.Code("MSG2_SEND_FAILED").In("ntcp2").
+		return oops.Code("MSG2_SEND_FAILED").In("ntcp2").
 			Wrapf(err, "failed to send NTCP2 message 2")
 	}
 
@@ -525,15 +542,20 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	if bobPadLen > 0 {
 		pad, err := cryptorand.RandomBytes(bobPadLen)
 		if err != nil {
-			return nil, oops.Code("MSG2_PAD_GEN_FAILED").In("ntcp2").
+			return oops.Code("MSG2_PAD_GEN_FAILED").In("ntcp2").
 				Wrapf(err, "failed to generate %d padding bytes for message 2", bobPadLen)
 		}
 		if _, err := raw.Write(pad); err != nil {
-			return nil, oops.Code("MSG2_PAD_SEND_FAILED").In("ntcp2").
+			return oops.Code("MSG2_PAD_SEND_FAILED").In("ntcp2").
 				Wrapf(err, "failed to send %d padding bytes after message 2", bobPadLen)
 		}
 		nc.MixHashData(pad)
 	}
+
+	return nil
+}
+
+func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]byte, error) {
 
 	// === Message 3 (Alice -> Bob) ============================================
 	msg3Len := msg3Part1Size + int(m3p2Len)
@@ -573,22 +595,11 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 // The actual padding bytes are generated separately by the caller and sent
 // after the 64-byte AEAD frame.
 func buildMessage2Options() ([]byte, int, error) {
-	// Generate random padding length [0, 223] per i2pd distribution.
-	// i2pd's CreateSessionCreatedMessage uses rand()%(287-64) which is 0-222,
-	// but the spec says 0-223, so we use 223 as the max.
-	const maxPadLen = 223 // per NTCP2 spec §4.3
-	padLen, err := randomPaddingLength(maxPadLen)
+	opts, padLen, err := buildOptionsBlock(false)
 	if err != nil {
 		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
 			Wrapf(err, "failed to generate random padding length for message 2")
 	}
-
-	opts := make([]byte, ntcp2OptionsSize)
-	// opts[0:2] = Reserved = 0 (Message 2 has no id/ver)
-	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
-	// opts[4:8] = Reserved = 0
-	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
-	// opts[12:16] = Reserved = 0
 	return opts, padLen, nil
 }
 
@@ -611,23 +622,34 @@ func buildMessage2Options() ([]byte, int, error) {
 // The actual padding bytes are generated separately by the caller and sent
 // after the 64-byte AEAD frame.
 func buildMessage1Options(m3p2Len uint16) ([]byte, int, error) {
-	// Generate random padding length [0, 223] per i2pd distribution.
-	// Use rejection sampling from a single random byte to ensure uniform distribution.
-	const maxPadLen = 223 // per NTCP2 spec §4.3 and i2pd CreateSessionRequestMessage
-	padLen, err := randomPaddingLength(maxPadLen)
+	opts, padLen, err := buildOptionsBlock(true)
 	if err != nil {
 		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
 			Wrapf(err, "failed to generate random padding length for message 1")
 	}
 
-	opts := make([]byte, ntcp2OptionsSize)
-	opts[0] = ntcp2NetID
-	opts[1] = ntcp2Ver
-	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
 	binary.BigEndian.PutUint16(opts[4:6], m3p2Len)
 	// opts[6:8] = Rsvd = 0
+	return opts, padLen, nil
+}
+
+func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
+	// Generate random padding length [0, 223] per i2pd distribution.
+	// Use rejection sampling from a single random byte to ensure uniform distribution.
+	const maxPadLen = 223 // per NTCP2 spec §4.3
+	padLen, err := randomPaddingLength(maxPadLen)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	opts := make([]byte, ntcp2OptionsSize)
+	if withIDVer {
+		opts[0] = ntcp2NetID
+		opts[1] = ntcp2Ver
+	}
+	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
 	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
-	// opts[12:16] = Reserved = 0
+
 	return opts, padLen, nil
 }
 
