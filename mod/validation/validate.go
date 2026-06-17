@@ -14,16 +14,34 @@ import (
 	"github.com/samber/oops"
 )
 
-// ValidatePattern checks that a Noise protocol pattern is non-empty.
-func ValidatePattern(pattern, pkg string) error {
-	log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "ValidatePattern", "pattern": pattern, "calling_pkg": pkg}).Debug("Validating pattern")
-	if pattern == "" {
-		return oops.
-			Code("INVALID_PATTERN").
-			In(pkg).
-			Errorf("noise pattern is required")
+// validateField centralizes the common validation pattern:
+// log call context, check an invalid predicate, then build a typed oops error.
+func validateField(funcName string, fields logger.Fields, invalid bool, errBuilder func() error) error {
+	baseFields := logger.Fields{"pkg": "mod/validation", "func": funcName}
+	for k, v := range fields {
+		baseFields[k] = v
+	}
+
+	log.WithFields(baseFields).Debug("Validating field")
+	if invalid {
+		return errBuilder()
 	}
 	return nil
+}
+
+// ValidatePattern checks that a Noise protocol pattern is non-empty.
+func ValidatePattern(pattern, pkg string) error {
+	return validateField(
+		"ValidatePattern",
+		logger.Fields{"pattern": pattern, "calling_pkg": pkg},
+		pattern == "",
+		func() error {
+			return oops.
+				Code("INVALID_PATTERN").
+				In(pkg).
+				Errorf("noise pattern is required")
+		},
+	)
 }
 
 // ValidateHandshakeTimeout checks that the handshake timeout is positive.
@@ -50,15 +68,18 @@ func ValidateKeySize(key []byte, expectedSize int) bool {
 
 // ValidateKeyLength checks that a key is either empty or exactly 32 bytes.
 func ValidateKeyLength(key []byte, name, pkg string) error {
-	log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "ValidateKeyLength", "key_name": name, "key_len": len(key), "calling_pkg": pkg}).Debug("Validating key length")
-	if len(key) > 0 && len(key) != 32 {
-		return oops.
-			Code("INVALID_KEY_LENGTH").
-			In(pkg).
-			With("key_length", len(key)).
-			Errorf("%s must be 32 bytes for Curve25519", name)
-	}
-	return nil
+	return validateField(
+		"ValidateKeyLength",
+		logger.Fields{"key_name": name, "key_len": len(key), "calling_pkg": pkg},
+		len(key) > 0 && len(key) != 32,
+		func() error {
+			return oops.
+				Code("INVALID_KEY_LENGTH").
+				In(pkg).
+				With("key_length", len(key)).
+				Errorf("%s must be 32 bytes for Curve25519", name)
+		},
+	)
 }
 
 // RunValidators executes a sequence of validation functions, returning the
@@ -106,17 +127,33 @@ func ValidateTransportConfig(timeout time.Duration, retries int, backoff time.Du
 // ValidateNetworkAddr checks that the network and address strings are non-empty.
 // This is the canonical check shared by the root noise package, ntcp2, and ssu2.
 func ValidateNetworkAddr(network, addr, pkg string) error {
-	if network == "" {
-		return oops.
-			Code("INVALID_NETWORK").
-			In(pkg).
-			Errorf("network cannot be empty")
+	if err := validateField(
+		"ValidateNetworkAddr",
+		logger.Fields{"network": network, "addr": addr, "calling_pkg": pkg},
+		network == "",
+		func() error {
+			return oops.
+				Code("INVALID_NETWORK").
+				In(pkg).
+				Errorf("network cannot be empty")
+		},
+	); err != nil {
+		return err
 	}
-	if addr == "" {
-		return oops.
-			Code("INVALID_ADDRESS").
-			In(pkg).
-			Errorf("address cannot be empty")
+
+	if err := validateField(
+		"ValidateNetworkAddr",
+		logger.Fields{"network": network, "addr": addr, "calling_pkg": pkg},
+		addr == "",
+		func() error {
+			return oops.
+				Code("INVALID_ADDRESS").
+				In(pkg).
+				Errorf("address cannot be empty")
+		},
+	); err != nil {
+		return err
 	}
+
 	return nil
 }

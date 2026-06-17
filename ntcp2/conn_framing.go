@@ -416,50 +416,7 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 		return 0, err
 	}
 
-	// Warn-level diagnostic breadcrumb for the first 3 outbound frames per
-	// session. Captures the full pipeline state needed to diagnose silent
-	// peer EOFs after handshake — see PROMPT.md "Suspect 1" for context.
-	// Bounded log volume: only fires while writeNonce < 3.
-	//
-	// Activation: requires NTCP2_DUMP_MSG1=N environment variable to reduce
-	// allocation pressure on short-lived connections during DHT churn.
-	if nc.writeNonce < 3 && slm != nil && msg1WireDumpRemaining.Load() > 0 {
-		ivAfter := slm.PeekOutboundIV()
-		nc.logger.Trace(
-			"NTCP2 outbound frame diagnostic",
-			"frame_index", nc.writeNonce,
-			"plaintext_len", len(b),
-			"padded_plaintext_len", len(toEncrypt),
-			"ciphertext_len", len(encrypted),
-			"wire_frame_len", len(frame),
-			"wire_bytes_written", bytesWritten,
-			"obfuscated_length_be_hex", fmt.Sprintf("%02x%02x", frame[0], frame[1]),
-			"siphash_mask_hex", fmt.Sprintf("%04x", mask),
-			"siphash_iv_before_hex", fmt.Sprintf("%016x", ivBefore),
-			"siphash_iv_after_hex", fmt.Sprintf("%016x", ivAfter),
-		)
-
-		// One-shot plaintext block layout dump for frame 0 only. Plaintext
-		// hex dumps are moved to Trace level for anonymity and should never
-		// be logged in production (DEBUG_I2P should be kept off).
-		if nc.writeNonce == 0 {
-			rawCap := len(b)
-			if rawCap > 64 {
-				rawCap = 64
-			}
-			padCap := len(toEncrypt)
-			if padCap > 96 {
-				padCap = 96
-			}
-			nc.logger.Trace(
-				"NTCP2 outbound frame#0 plaintext dump",
-				"raw_plaintext_len", len(b),
-				"padded_plaintext_len", len(toEncrypt),
-				"raw_plaintext_head_hex", hex.EncodeToString(b[:rawCap]),
-				"padded_plaintext_head_hex", hex.EncodeToString(toEncrypt[:padCap]),
-			)
-		}
-	}
+	nc.logDiagnosticFrame(slm, b, toEncrypt, encrypted, frame, bytesWritten, mask, ivBefore)
 
 	nc.writeNonce++
 
@@ -471,6 +428,63 @@ func (nc *Conn) writeSingleFrame(b []byte) (int, error) {
 		"remote_addr", nc.remoteAddr.String())
 
 	return len(b), nil
+}
+
+// logDiagnosticFrame emits bounded Trace-level diagnostics for early outbound
+// frames when debug wire-dump mode is enabled.
+func (nc *Conn) logDiagnosticFrame(
+	slm *SipHashLengthModifier,
+	rawPlaintext []byte,
+	paddedPlaintext []byte,
+	encrypted []byte,
+	frame []byte,
+	bytesWritten int,
+	mask uint16,
+	ivBefore uint64,
+) {
+	// Captures the full pipeline state needed to diagnose silent peer EOFs
+	// after handshake. Bounded volume: only first 3 frames per session.
+	if nc.writeNonce >= 3 || slm == nil || msg1WireDumpRemaining.Load() <= 0 {
+		return
+	}
+
+	ivAfter := slm.PeekOutboundIV()
+	nc.logger.Trace(
+		"NTCP2 outbound frame diagnostic",
+		"frame_index", nc.writeNonce,
+		"plaintext_len", len(rawPlaintext),
+		"padded_plaintext_len", len(paddedPlaintext),
+		"ciphertext_len", len(encrypted),
+		"wire_frame_len", len(frame),
+		"wire_bytes_written", bytesWritten,
+		"obfuscated_length_be_hex", fmt.Sprintf("%02x%02x", frame[0], frame[1]),
+		"siphash_mask_hex", fmt.Sprintf("%04x", mask),
+		"siphash_iv_before_hex", fmt.Sprintf("%016x", ivBefore),
+		"siphash_iv_after_hex", fmt.Sprintf("%016x", ivAfter),
+	)
+
+	// One-shot plaintext block layout dump for frame 0 only. Plaintext
+	// dumps stay Trace-level and should not be enabled in production.
+	if nc.writeNonce != 0 {
+		return
+	}
+
+	rawCap := len(rawPlaintext)
+	if rawCap > 64 {
+		rawCap = 64
+	}
+	padCap := len(paddedPlaintext)
+	if padCap > 96 {
+		padCap = 96
+	}
+
+	nc.logger.Trace(
+		"NTCP2 outbound frame#0 plaintext dump",
+		"raw_plaintext_len", len(rawPlaintext),
+		"padded_plaintext_len", len(paddedPlaintext),
+		"raw_plaintext_head_hex", hex.EncodeToString(rawPlaintext[:rawCap]),
+		"padded_plaintext_head_hex", hex.EncodeToString(paddedPlaintext[:padCap]),
+	)
 }
 
 // encryptFrame encrypts plaintext and validates the resulting ciphertext size

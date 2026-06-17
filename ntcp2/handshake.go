@@ -286,60 +286,9 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 // msg2, then MixHashes Bob's cleartext padding into the handshake state.
 func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 	raw := nc.Underlying()
-	// Split the read into a 1-byte probe + the remaining 63 bytes so we can
-	// distinguish "peer rejected msg1 (closed before writing any byte)" from
-	// "peer started msg2 then aborted (partial write)". This is critical
-	// interop diagnostic info: the first case points at TCP-reachability or
-	// msg1-AEAD problems, the second at msg2 framing on the responder side.
-	buf2 := make([]byte, msg2Size)
-	n1, err := io.ReadFull(raw, buf2[:1])
+	bobOpts, bobPadLen, err := readMessage2WithPadding(cfg, raw, nc)
 	if err != nil {
-		classifyMsg2ReadFailure(cfg, raw, 0, err)
-		return oops.Code("MSG2_NO_BYTES").In("ntcp2").
-			With("bytes_read", 0).
-			Wrapf(err, "peer closed connection without sending any msg2 bytes (msg1 likely rejected)")
-	}
-	if n2, err := io.ReadFull(raw, buf2[1:]); err != nil {
-		classifyMsg2ReadFailure(cfg, raw, n1+n2, err)
-		return oops.Code("MSG2_PARTIAL").In("ntcp2").
-			With("bytes_read", n1+n2).
-			With("bytes_expected", msg2Size).
-			Wrapf(err, "peer started msg2 but closed after %d bytes", n1+n2)
-	}
-	bobOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseExchange, buf2)
-	if err != nil {
-		return oops.Code("MSG2_PROCESS_FAILED").In("ntcp2").
-			Wrapf(err, "failed to process NTCP2 message 2")
-	}
-	// Read and MixHash Bob's cleartext padding (bytes 2-3 of his options = padLen).
-	// i2pd ALWAYS sends a random number of padding bytes (0..222) after msg2 and
-	// MixHashes them into h before decrypting m3p1. We MUST mirror that or
-	// m3p1 AEAD verification on i2pd's side fails, causing silent terminate.
-	var bobPadLen int
-	if len(bobOpts) >= ntcp2OptionsSize {
-		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
-
-		// Validate bobPadLen to prevent unbounded allocation DoS.
-		// Per spec §4.3, padding is "0..223 bytes" in practice. We enforce
-		// a conservative limit to prevent a malicious responder from forcing
-		// the initiator to allocate 64 KiB per connection and blocking on io.ReadFull.
-		if bobPadLen > MaxNTCP2HandshakePadding {
-			return oops.
-				Code("MSG2_PADDING_TOO_LARGE").
-				In("ntcp2").
-				With("padLen", bobPadLen).
-				With("max", MaxNTCP2HandshakePadding).
-				Errorf("message 2 padding too large: %d > %d", bobPadLen, MaxNTCP2HandshakePadding)
-		}
-
-		if bobPadLen > 0 {
-			pad := make([]byte, bobPadLen)
-			if _, err := io.ReadFull(raw, pad); err != nil {
-				return oops.Code("MSG2_PAD_READ_FAILED").In("ntcp2").
-					Wrapf(err, "failed to read %d cleartext padding bytes after message 2", bobPadLen)
-			}
-			nc.MixHashData(pad)
-		}
+		return err
 	}
 	// Debug-level breadcrumb for interop diagnostics. Redacted for anonymity.
 	log.WithFields(logger.Fields{
@@ -350,6 +299,62 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 		"bob_opts_len": len(bobOpts),
 	}).Debug("NTCP2 msg2 processed; bob padlen extracted")
 	return nil
+}
+
+// readMessage2WithPadding reads NTCP2 message 2 using a 1-byte probe plus
+// remainder read (for precise diagnostics), processes the handshake frame,
+// then reads/MixHashes Bob's cleartext padding bytes.
+func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn) ([]byte, int, error) {
+	// Split the read into a 1-byte probe + the remaining 63 bytes so we can
+	// distinguish "peer rejected msg1 (closed before writing any byte)" from
+	// "peer started msg2 then aborted (partial write)".
+	buf2 := make([]byte, msg2Size)
+	n1, err := io.ReadFull(raw, buf2[:1])
+	if err != nil {
+		classifyMsg2ReadFailure(cfg, raw, 0, err)
+		return nil, 0, oops.Code("MSG2_NO_BYTES").In("ntcp2").
+			With("bytes_read", 0).
+			Wrapf(err, "peer closed connection without sending any msg2 bytes (msg1 likely rejected)")
+	}
+	if n2, err := io.ReadFull(raw, buf2[1:]); err != nil {
+		classifyMsg2ReadFailure(cfg, raw, n1+n2, err)
+		return nil, 0, oops.Code("MSG2_PARTIAL").In("ntcp2").
+			With("bytes_read", n1+n2).
+			With("bytes_expected", msg2Size).
+			Wrapf(err, "peer started msg2 but closed after %d bytes", n1+n2)
+	}
+
+	bobOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseExchange, buf2)
+	if err != nil {
+		return nil, 0, oops.Code("MSG2_PROCESS_FAILED").In("ntcp2").
+			Wrapf(err, "failed to process NTCP2 message 2")
+	}
+
+	// Read and MixHash Bob's cleartext padding (bytes 2-3 of his options = padLen).
+	bobPadLen := 0
+	if len(bobOpts) >= ntcp2OptionsSize {
+		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
+
+		if bobPadLen > MaxNTCP2HandshakePadding {
+			return nil, 0, oops.
+				Code("MSG2_PADDING_TOO_LARGE").
+				In("ntcp2").
+				With("padLen", bobPadLen).
+				With("max", MaxNTCP2HandshakePadding).
+				Errorf("message 2 padding too large: %d > %d", bobPadLen, MaxNTCP2HandshakePadding)
+		}
+
+		if bobPadLen > 0 {
+			pad := make([]byte, bobPadLen)
+			if _, err := io.ReadFull(raw, pad); err != nil {
+				return nil, 0, oops.Code("MSG2_PAD_READ_FAILED").In("ntcp2").
+					Wrapf(err, "failed to read %d cleartext padding bytes after message 2", bobPadLen)
+			}
+			nc.MixHashData(pad)
+		}
+	}
+
+	return bobOpts, bobPadLen, nil
 }
 
 // sendInitiatorMsg3 builds and sends the NTCP2 message 3 (RouterInfo framing step).

@@ -21,6 +21,11 @@ var (
 	_ BuildReplyEncryptor = (*BuildReplyCrypto)(nil)
 )
 
+const (
+	buildRecordPlaintextSize  = 528
+	buildRecordCiphertextSize = 544 // 528 bytes ciphertext + 16-byte Poly1305 tag
+)
+
 // BuildReplyCrypto handles symmetric encryption and decryption of tunnel build
 // reply records using ChaCha20-Poly1305 (I2P 0.9.44+).
 //
@@ -80,8 +85,8 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 	replyKey [32]byte,
 	replyIV [16]byte,
 ) ([]byte, error) {
-	if len(cleartext) != 528 {
-		return nil, oops.Errorf("invalid cleartext size: expected 528 bytes, got %d", len(cleartext))
+	if len(cleartext) != buildRecordPlaintextSize {
+		return nil, oops.Errorf("invalid cleartext size: expected %d bytes, got %d", buildRecordPlaintextSize, len(cleartext))
 	}
 
 	encrypted, err := c.encryptChaCha20Poly1305(cleartext, replyKey, replyIV)
@@ -109,8 +114,8 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 	replyKey [32]byte,
 	replyIV [16]byte,
 ) ([]byte, error) {
-	if len(encryptedData) != 544 {
-		return nil, oops.Errorf("invalid encrypted data size: expected 544 bytes, got %d", len(encryptedData))
+	if len(encryptedData) != buildRecordCiphertextSize {
+		return nil, oops.Errorf("invalid encrypted data size: expected %d bytes, got %d", buildRecordCiphertextSize, len(encryptedData))
 	}
 
 	cleartext, err := c.decryptChaCha20Poly1305(encryptedData, replyKey, replyIV)
@@ -118,8 +123,8 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 decryption failed")
 	}
 
-	if len(cleartext) != 528 {
-		return nil, oops.Errorf("invalid decrypted data size: expected 528 bytes, got %d", len(cleartext))
+	if len(cleartext) != buildRecordPlaintextSize {
+		return nil, oops.Errorf("invalid decrypted data size: expected %d bytes, got %d", buildRecordPlaintextSize, len(cleartext))
 	}
 
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "DecryptReplyRecord"}).Debug("Decrypted build response record")
@@ -197,11 +202,7 @@ func (c *BuildReplyCrypto) encryptChaCha20Poly1305(
 	iv [16]byte,
 ) ([]byte, error) {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "encryptChaCha20Poly1305", "plaintext_len": len(plaintext)}).Debug("Encrypting with ChaCha20-Poly1305")
-	if len(plaintext) != 528 {
-		return nil, oops.Errorf("plaintext must be 528 bytes, got %d", len(plaintext))
-	}
-
-	aead, nonce, err := newChaCha20Poly1305(key, iv)
+	aead, nonce, err := prepareChaCha20Poly1305Input(plaintext, buildRecordPlaintextSize, "plaintext", key, iv)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +217,7 @@ func (c *BuildReplyCrypto) encryptChaCha20Poly1305(
 	copy(result, ct)
 	copy(result[len(ct):], tag[:])
 
-	if len(result) != 544 {
+	if len(result) != buildRecordCiphertextSize {
 		return nil, oops.Errorf("unexpected ciphertext length: %d", len(result))
 	}
 
@@ -230,27 +231,36 @@ func (c *BuildReplyCrypto) decryptChaCha20Poly1305(
 	iv [16]byte,
 ) ([]byte, error) {
 	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "decryptChaCha20Poly1305", "ciphertext_len": len(ciphertext)}).Debug("Decrypting with ChaCha20-Poly1305")
-	if len(ciphertext) != 544 {
-		return nil, oops.Errorf("ciphertext must be 544 bytes (528 + 16 tag), got %d", len(ciphertext))
-	}
-
-	aead, nonce, err := newChaCha20Poly1305(key, iv)
+	aead, nonce, err := prepareChaCha20Poly1305Input(ciphertext, buildRecordCiphertextSize, "ciphertext", key, iv)
 	if err != nil {
 		return nil, err
 	}
 
 	// Split into ciphertext (first 528 bytes) and tag (last 16 bytes)
-	ct := ciphertext[:528]
-	tag := ciphertext[528:]
+	ct := ciphertext[:buildRecordPlaintextSize]
+	tag := ciphertext[buildRecordPlaintextSize:]
 
 	plaintext, err := aead.Decrypt(ct, tag, nil, nonce)
 	if err != nil {
 		return nil, oops.Wrapf(err, "decryption failed (authentication error)")
 	}
 
-	if len(plaintext) != 528 {
+	if len(plaintext) != buildRecordPlaintextSize {
 		return nil, oops.Errorf("unexpected plaintext length: %d", len(plaintext))
 	}
 
 	return plaintext, nil
+}
+
+func prepareChaCha20Poly1305Input(input []byte, expectedLen int, inputName string, key [32]byte, iv [16]byte) (*chacha20poly1305.AEAD, []byte, error) {
+	if len(input) != expectedLen {
+		return nil, nil, oops.Errorf("%s must be %d bytes, got %d", inputName, expectedLen, len(input))
+	}
+
+	aead, nonce, err := newChaCha20Poly1305(key, iv)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return aead, nonce, nil
 }

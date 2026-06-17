@@ -326,8 +326,7 @@ func (nc *Config) WithFrameSettings(maxSize int, paddingEnabled bool, minPadding
 // Validate checks if the configuration is valid for NTCP2.
 func (nc *Config) Validate() error {
 	return validation.RunValidators(
-		nc.validateBasicConfiguration,
-		nc.validateCryptographicParameters,
+		nc.validateCoreConfiguration,
 		// Inline timeout configuration validation; see BaseHandshakeConfig documentation.
 		func() error {
 			return validation.ValidateTransportConfig(nc.HandshakeTimeout, nc.HandshakeRetries, nc.RetryBackoff, "ntcp2")
@@ -337,21 +336,15 @@ func (nc *Config) Validate() error {
 	)
 }
 
-// validateBasicConfiguration checks pattern and router hash requirements.
-func (nc *Config) validateBasicConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateBasicConfiguration"}).Debug("Validating NTCP2 basic configuration")
+// validateCoreConfiguration checks pattern and cryptographic/session parameters.
+func (nc *Config) validateCoreConfiguration() error {
+	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateCoreConfiguration"}).Debug("Validating NTCP2 core configuration")
 	if err := validation.ValidatePattern(nc.Pattern, "ntcp2"); err != nil {
 		return err
 	}
 
 	// BobRouterHash validation is implicit via data.Hash type (always 32 bytes).
 
-	return nil
-}
-
-// validateCryptographicParameters checks static keys, remote hashes, and obfuscation settings.
-func (nc *Config) validateCryptographicParameters() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateCryptographicParameters"}).Debug("Validating NTCP2 cryptographic parameters")
 	if err := validation.ValidateKeyLength(nc.StaticKey, "static key", "ntcp2"); err != nil {
 		return err
 	}
@@ -600,30 +593,31 @@ func (nc *Config) setupNTCP2Modifiers() ([]handshake.HandshakeModifier, error) {
 	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.setupNTCP2Modifiers"}).Debug("Setting up NTCP2-specific modifiers")
 	var modifiers []handshake.HandshakeModifier
 
-	aesModifier, err := nc.createAESModifierIfEnabled()
-	if err != nil {
-		return nil, err
-	}
-	if aesModifier != nil {
-		modifiers = append(modifiers, aesModifier)
+	factories := []func() (handshake.HandshakeModifier, error){
+		nc.createAESModifierIfEnabled,
+		func() (handshake.HandshakeModifier, error) {
+			// Add placeholder to the handshake modifier list (no-op for non-PhaseFinal).
+			// Do NOT store as nc.sipHashModifier — that is set by the post-handshake
+			// hook with proper per-direction keys. Storing the zero-key placeholder
+			// would expose a predictable modifier via SipHashModifier() before the
+			// handshake completes.
+			sip := nc.createSipHashModifierIfEnabled()
+			if sip == nil {
+				return nil, nil
+			}
+			return sip, nil
+		},
+		nc.createPaddingModifierIfEnabled,
 	}
 
-	sipModifier := nc.createSipHashModifierIfEnabled()
-	if sipModifier != nil {
-		// Add placeholder to the handshake modifier list (no-op for non-PhaseFinal).
-		// Do NOT store as nc.sipHashModifier — that is set by the post-handshake
-		// hook with proper per-direction keys. Storing the zero-key placeholder
-		// would expose a predictable modifier via SipHashModifier() before the
-		// handshake completes.
-		modifiers = append(modifiers, sipModifier)
-	}
-
-	paddingModifier, err := nc.createPaddingModifierIfEnabled()
-	if err != nil {
-		return nil, err
-	}
-	if paddingModifier != nil {
-		modifiers = append(modifiers, paddingModifier)
+	for _, factory := range factories {
+		mod, err := factory()
+		if err != nil {
+			return nil, err
+		}
+		if mod != nil {
+			modifiers = append(modifiers, mod)
+		}
 	}
 
 	modifiers = append(modifiers, nc.Modifiers...)
