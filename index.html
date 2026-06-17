@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 441 commits
+        📝 453 commits
          • 📜 License
       </div>
     </div>
@@ -48,9 +48,9 @@
         
           <li><a href="docs/DOC.html">noise</a></li>
         
-          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
-        
           <li><a href="docs/ntcp2/DOC.html">ntcp2</a></li>
+        
+          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
         
           <li><a href="docs/examples/ntcp2-config/DOC.html">ntcp2-config</a></li>
         
@@ -84,12 +84,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>441 commits</span>
+          <span>📝</span> <span>453 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: June 11, 2026</span>
+          <span>📅</span> <span>Last updated: June 16, 2026</span>
         </div>
         
         
@@ -139,8 +139,15 @@ It is currently slightly jumbled with <code>go-i2p/crypto</code> on the lower le
 <ul>
 <li><strong>Configurable Noise Patterns</strong>: Support for all standard Noise Protocol patterns<br>
 </li>
-<li><strong>net.Conn Interface</strong>: The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully. NTCP2 connections (<code>ntcp2/conn.go</code>) implement <code>net.Conn</code>. SSU2 connections (<code>ssu2/session/conn.go</code>) also implement the full <code>net.Conn</code> interface: <code>Read</code> returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer) and <code>Write</code> auto-fragments. A callback-based message path is additionally available via <code>DataHandler.MessageChan()</code> — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.<br>
+<li><strong>net.Conn Interface</strong>:
+
+<ul>
+<li>The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully but is subject to the Noise Protocol specification limit of 65535 bytes per write (from the 2-byte length prefix). For automatic transparent fragmentation of larger payloads, use the transport-layer implementations below.</li>
+<li>NTCP2 connections (<code>ntcp2/conn.go</code>) implement <code>net.Conn</code> with <code>Write</code> auto-fragmentation for payloads larger than the frame size.</li>
+<li>SSU2 connections (<code>ssu2/session/conn.go</code>) implement <code>net.Conn</code> with <code>Write</code> auto-fragmentation.</li>
+<li>All implementations: <code>Read</code> returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer). A callback-based message path is additionally available via <code>DataHandler.MessageChan()</code> — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.<br>
 </li>
+</ul></li>
 <li><strong>Error Handling</strong>: Contextual error information using samber/oops<br>
 </li>
 <li><strong>Thread-Safe</strong>: Concurrent connection handling with synchronization - Read/Write operations can be called concurrently, Close() is idempotent, and state access is atomic<br>
@@ -423,6 +430,28 @@ WARNFAIL_I2P=true go test -count=1 \
 <li>Error handling scenarios across all components</li>
 </ul>
 
+<h3 id="test-organization">Test Organization</h3>
+
+<p>The test suite is organized into two levels:</p>
+
+<ul>
+<li><p><strong>Per-package tests</strong> (<code>*_test.go</code> files): Unit and integration tests live alongside their source code. Each package includes focused tests for its own functionality.</p>
+
+<ul>
+<li><code>conn_test.go</code>, <code>handshake_test.go</code>, etc. test their respective packages in isolation</li>
+<li>Some packages include integration tests (e.g., <code>conn/integration_test.go</code>, <code>ntcp2/e2e_integration_test.go</code>) for testing cross-package interaction</li>
+</ul></li>
+
+<li><p><strong><code>tests/</code> directory</strong>: Cross-package and performance tests that depend on multiple modules:</p>
+
+<ul>
+<li><code>tests/integration/</code>: Integration tests exercising the pool, config, and connection layers together</li>
+<li><code>tests/benchmarks/</code>: Performance benchmarks for measuring throughput and memory usage of pooling and connection operations</li>
+</ul></li>
+</ul>
+
+<p>The <code>tests/</code> directory layout keeps cross-cutting concerns separate from individual package tests, improving test organization when a test depends on multiple components that don&rsquo;t belong in any single package.</p>
+
 <h2 id="contributing">Contributing</h2>
 
 <p>This library follows Go best practices:</p>
@@ -461,7 +490,7 @@ WARNFAIL_I2P=true go test -count=1 \
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                441 commits
+                453 commits
               </div>
             </div>
           </div>
@@ -473,7 +502,7 @@ WARNFAIL_I2P=true go test -count=1 \
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-06-17 00:20:47 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-06-17 01:21:47 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
