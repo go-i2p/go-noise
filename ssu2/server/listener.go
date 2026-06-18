@@ -529,6 +529,18 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 		return nil
 	}
 
+	return l.handleSessionRequestTokenError(err, packet, remoteAddr)
+}
+
+// ERROR-1: When RequireRetry is false, tokens are completely optional.
+// A token that is present-but-invalid must be treated the same as an absent
+// token (i.e., allow the session) because the operator has explicitly opted out
+// of token enforcement. Previously the code rejected invalid tokens even with
+// RequireRetry=false, which is STRICTER than the case of no token at all —
+// an inverted and counterintuitive policy. Now an invalid/expired token is
+// only fatal when RequireRetry=true.
+
+func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
 	if errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
 		if retryErr := l.processTokenRequest(packet, remoteAddr); retryErr != nil {
 			return oops.Wrapf(retryErr, "failed to send Retry")
@@ -539,13 +551,6 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 			Errorf("sent Retry to %s, awaiting re-request with token", remoteAddr)
 	}
 
-	// ERROR-1: When RequireRetry is false, tokens are completely optional.
-	// A token that is present-but-invalid must be treated the same as an absent
-	// token (i.e., allow the session) because the operator has explicitly opted out
-	// of token enforcement. Previously the code rejected invalid tokens even with
-	// RequireRetry=false, which is STRICTER than the case of no token at all —
-	// an inverted and counterintuitive policy. Now an invalid/expired token is
-	// only fatal when RequireRetry=true.
 	if !errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
 		return oops.
 			Code("TOKEN_VALIDATION_FAILED").
