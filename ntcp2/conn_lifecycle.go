@@ -1,11 +1,10 @@
 package ntcp2
 
 import (
-	"encoding/binary"
 	"net"
 	"time"
 
-	"github.com/go-i2p/crypto/rand"
+	"github.com/go-i2p/go-noise/internal/cryptorand"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -27,8 +26,6 @@ func (nc *Conn) guardNonce(nonce uint64, direction string) error {
 	return nil
 }
 
-
-
 // handleAEADError implements probing-resistance behaviour on AEAD authentication
 // failure. Per the NTCP2 spec, the receiver should:
 //  1. Read a random number of junk bytes for a random duration.
@@ -41,14 +38,14 @@ func (nc *Conn) handleAEADError(underlying net.Conn) {
 	flog("NTCP2Conn.handleAEADError").Warn("AEAD error detected, applying probing-resistance behaviour")
 	nc.broken.Store(true)
 
-	// Generate a random byte count (0–AEADErrorMaxJunkBytes) to read before returning.
-	// Use crypto/rand with rejection sampling to avoid modulo bias.
-	var rndBuf [2]byte
-	if _, err := rand.Read(rndBuf[:]); err != nil {
+	// Generate a random byte count in [0, AEADErrorMaxJunkBytes) to read before
+	// returning. RandInRange uses rejection sampling so there is no modulo bias.
+	junkLenRand, err := cryptorand.RandInRange(0, int64(AEADErrorMaxJunkBytes-1))
+	if err != nil {
 		nc.sendTCPRST(underlying)
 		return // best effort
 	}
-	junkLen := int(binary.BigEndian.Uint16(rndBuf[:]) & (AEADErrorMaxJunkBytes - 1))
+	junkLen := int(junkLenRand)
 	if junkLen > 0 {
 		// Randomize the timeout duration within [AEADErrorTimeoutMin, AEADErrorTimeoutMax]
 		// to avoid creating a timing fingerprint (per spec: "random timeout").
@@ -76,14 +73,12 @@ func (nc *Conn) handleAEADError(underlying net.Conn) {
 // a timing fingerprint that would allow an attacker to identify AEAD failures.
 func randomAEADTimeout() time.Duration {
 	spread := AEADErrorTimeoutMax - AEADErrorTimeoutMin
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
+	n, err := cryptorand.RandInRange(0, int64(spread))
+	if err != nil {
 		// Fallback to midpoint on entropy failure (best effort)
 		return AEADErrorTimeoutMin + spread/2
 	}
-	n := binary.BigEndian.Uint64(buf[:])
-	offset := time.Duration(n % uint64(spread+1))
-	return AEADErrorTimeoutMin + offset
+	return AEADErrorTimeoutMin + time.Duration(n)
 }
 
 // sendTCPRST sends a TCP RST by setting SO_LINGER to 0 (immediate close without
