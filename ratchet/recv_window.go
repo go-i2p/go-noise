@@ -31,6 +31,17 @@ func fillRecvKeyCache(session *Session, upTo uint32) error {
 	return nil
 }
 
+// zeroAndClearMap zeroes the 32-byte value for every key in m, then returns a
+// fresh empty map. Used to securely discard pre-derived ratchet key caches while
+// preventing recovery from memory dumps (forward-secrecy requirement).
+func zeroAndClearMap(m map[uint32][32]byte) map[uint32][32]byte {
+	for counter := range m {
+		var zeroKey [32]byte
+		m[counter] = zeroKey
+	}
+	return make(map[uint32][32]byte)
+}
+
 // resetRecvWindow reinitialises the receive-window fields after an NSR replaces
 // the session ratchet state.  Must be called with session.mu held.
 func resetRecvWindow(session *Session) {
@@ -38,15 +49,7 @@ func resetRecvWindow(session *Session) {
 	session.recvWindowBase = 1
 	session.recvFillMark = 1
 	session.nextRecvTagCounter = 1
-	// Zero all pre-derived keys in the old cache before discarding to prevent
-	// recovery from memory dumps. The ratchet's forward secrecy guarantees rely
-	// on securely destroying keys after use.
-	for counter := range session.recvKeyCache {
-		var zeroKey [32]byte
-		session.recvKeyCache[counter] = zeroKey
-	}
-	// Clear the old key cache so stale keys cannot be replayed.
-	session.recvKeyCache = make(map[uint32][32]byte)
+	session.recvKeyCache = zeroAndClearMap(session.recvKeyCache)
 }
 
 // trimRecvWindowByPN removes pre-derived message keys from the receive window
@@ -73,6 +76,6 @@ func trimRecvWindowByPN(session *Session, pn uint16) {
 	}
 
 	if trimmed > 0 {
-		flog("trimRecvWindowByPN", logger.Fields{"pn":      pn, "trimmed": trimmed}).Debug("Trimmed stale recv window keys above PN")
+		flog("trimRecvWindowByPN", logger.Fields{"pn": pn, "trimmed": trimmed}).Debug("Trimmed stale recv window keys above PN")
 	}
 }

@@ -62,17 +62,22 @@ func (sm *SessionManager) validateNSDateTimeFreshness(payload []byte) error {
 	if err != nil {
 		return oops.Wrapf(err, "NS DateTime block is malformed")
 	}
-	elapsed := nowFunc().Sub(msgTime)
-	if elapsed > sm.nsMaxPastAge {
+	return checkTimeWindow(nowFunc().Sub(msgTime), sm.nsMaxPastAge, sm.nsMaxFutureAge)
+}
+
+// checkTimeWindow returns an error when elapsed falls outside the acceptable
+// freshness bounds. elapsed = now − msgTime (positive = message is in the past).
+func checkTimeWindow(elapsed, pastAge, futureAge time.Duration) error {
+	if elapsed > pastAge {
 		return oops.Errorf(
 			"NS DateTime block fails freshness check: message is %v old, max past age is %v (stale or replay)",
-			elapsed, sm.nsMaxPastAge,
+			elapsed, pastAge,
 		)
 	}
-	if elapsed < -sm.nsMaxFutureAge {
+	if elapsed < -futureAge {
 		return oops.Errorf(
 			"NS DateTime block fails freshness check: message is %v in the future, max future skew is %v",
-			-elapsed, sm.nsMaxFutureAge,
+			-elapsed, futureAge,
 		)
 	}
 	return nil

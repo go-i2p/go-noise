@@ -78,17 +78,21 @@ func (m *ConnectionMetrics) HandshakeDuration() time.Duration {
 // SetHandshakeStart records the handshake start time
 func (m *ConnectionMetrics) SetHandshakeStart() {
 	flog("ConnectionMetrics.SetHandshakeStart").Debug("Recording handshake start time")
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.handshakeStarted = time.Now()
+	updateTime(&m.mu, &m.handshakeStarted, time.Now())
+}
+
+// updateTime stores t in *field under mu. Extracted to avoid the
+// lock/defer/assign triple appearing in every single-field setter.
+func updateTime(mu *sync.RWMutex, field *time.Time, t time.Time) {
+	mu.Lock()
+	defer mu.Unlock()
+	*field = t
 }
 
 // SetHandshakeEnd records the handshake completion time
 func (m *ConnectionMetrics) SetHandshakeEnd() {
 	flog("ConnectionMetrics.SetHandshakeEnd").Debug("Recording handshake end time")
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.handshakeEnded = time.Now()
+	updateTime(&m.mu, &m.handshakeEnded, time.Now())
 }
 
 // AddBytesRead increments the bytes read counter

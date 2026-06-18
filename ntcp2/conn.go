@@ -206,6 +206,14 @@ func (nc *Conn) PropagateSipHash() error {
 // Close implements net.Conn.Close.
 // Closes the underlying Noise connection, zeroes key material, and cleans up
 // resources. Close is idempotent — calling it multiple times is safe.
+
+// shouldCloseUnderlyingConn reports whether noiseConn.Close() should be called.
+// Returns false when sendTCPRST already closed the socket via SetLinger+Close,
+// preventing a double-close race on the file descriptor.
+func (nc *Conn) shouldCloseUnderlyingConn() bool {
+	return !nc.underlyingClosed.Load()
+}
+
 func (nc *Conn) Close() error {
 	var closeErr error
 	nc.closeOnce.Do(func() {
@@ -220,7 +228,7 @@ func (nc *Conn) Close() error {
 		// A double-close is safe in Go (returns an error, no panic), but between
 		// the two closes the OS could reassign the fd to a new socket; the second
 		// Close() would then erroneously close that new socket.
-		if nc.underlyingClosed.Load() {
+		if !nc.shouldCloseUnderlyingConn() {
 			nc.logger.Debug("skipping noiseConn.Close(): underlying socket already RST'd",
 				"local_addr", nc.localAddr.String(),
 				"remote_addr", nc.remoteAddr.String())
