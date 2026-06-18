@@ -278,8 +278,6 @@ func (nc *Conn) Close() error {
 		"new_state": mod.StateClosed.String(),
 	}).Debug("Connection state changed")
 
-	nc.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.Close"}).Debug("Closing NoiseConn")
-
 	// Acquire both read and write mutexes to ensure no in-flight operations are
 	// using the cipher states before we zero them (defense-in-depth).
 	// Lock order: readMutex first, then writeMutex, to match potential caller order.

@@ -275,21 +275,20 @@ func createHandshakeState(config *ConnConfig, privateStaticKey []byte) (*noise.H
 	return hs, nil
 }
 
+// roleForInitiator returns the (self, peer) Noise role strings for an initiator
+// or responder connection. Extracted to avoid dual-inversion duplication.
+func roleForInitiator(isInitiator bool) (selfRole, peerRole string) {
+	if isInitiator {
+		return "initiator", "responder"
+	}
+	return "responder", "initiator"
+}
+
 // createNoiseAddresses creates local and remote Noise addresses.
 func createNoiseAddresses(underlying net.Conn, config *ConnConfig) (*Addr, *Addr) {
-	role := "responder"
-	if config.Initiator {
-		role = "initiator"
-	}
-
-	localAddr := NewNoiseAddr(underlying.LocalAddr(), config.Pattern, role)
-
-	remoteRole := "initiator"
-	if config.Initiator {
-		remoteRole = "responder"
-	}
-	remoteAddr := NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, remoteRole)
-
+	selfRole, peerRole := roleForInitiator(config.Initiator)
+	localAddr := NewNoiseAddr(underlying.LocalAddr(), config.Pattern, selfRole)
+	remoteAddr := NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, peerRole)
 	return localAddr, remoteAddr
 }
 

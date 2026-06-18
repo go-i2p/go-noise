@@ -46,15 +46,18 @@ func ValidatePattern(pattern, pkg string) error {
 
 // ValidateHandshakeTimeout checks that the handshake timeout is positive.
 func ValidateHandshakeTimeout(timeout time.Duration, pkg string) error {
-	flog("ValidateHandshakeTimeout", logger.Fields{"timeout": timeout, "calling_pkg": pkg}).Debug("Validating handshake timeout")
-	if timeout <= 0 {
-		return oops.
-			Code("INVALID_TIMEOUT").
-			In(pkg).
-			With("timeout", timeout).
-			Errorf("handshake timeout must be positive")
-	}
-	return nil
+	return validateField(
+		"ValidateHandshakeTimeout",
+		logger.Fields{"timeout": timeout, "calling_pkg": pkg},
+		timeout <= 0,
+		func() error {
+			return oops.
+				Code("INVALID_TIMEOUT").
+				In(pkg).
+				With("timeout", timeout).
+				Errorf("handshake timeout must be positive")
+		},
+	)
 }
 
 // ValidateKeySize validates that a key has the expected size.
