@@ -11,6 +11,17 @@ import (
 	"github.com/samber/oops"
 )
 
+// boundsValidator describes a numeric bounds check with error context.
+type boundsValidator struct {
+	name    string      // Field name for error reporting
+	value   interface{} // Value to check (int, int64, float64, etc.)
+	min     float64     // Minimum allowed (inclusive)
+	max     float64     // Maximum allowed (inclusive)
+	code    string      // Error code (e.g., "INVALID_MTU")
+	msg     string      // Error message format string
+	context string      // Additional context (e.g., "ssu2", "padding")
+}
+
 // Validate checks if the configuration is valid for SSU2.
 func (sc *SSU2Config) Validate() error {
 	log.WithFields(logger.Fields{"pkg": "config", "func": "Validate"}).Debug("Validating SSU2Config")
@@ -22,6 +33,31 @@ func (sc *SSU2Config) Validate() error {
 		sc.validatePaddingConfiguration,
 		sc.validateTokenConfiguration,
 	)
+}
+
+// validateBounds checks if a value satisfies min/max bounds and returns an oops error on failure.
+// This is the workhorse for table-driven numeric validation.
+func validateBounds(v boundsValidator) error {
+	var numVal float64
+	switch val := v.value.(type) {
+	case int:
+		numVal = float64(val)
+	case int64:
+		numVal = float64(val)
+	case float64:
+		numVal = val
+	default:
+		return oops.Code("TYPE_ERROR").In(v.context).Errorf("unsupported type for bounds validation")
+	}
+
+	if numVal < v.min || numVal > v.max {
+		return oops.
+			Code(v.code).
+			In(v.context).
+			With(v.name, v.value).
+			Errorf(v.msg, v.value, v.min, v.max)
+	}
+	return nil
 }
 
 // validateBasicConfiguration checks pattern and router hash requirements.
@@ -102,25 +138,37 @@ func (sc *SSU2Config) validateTimeoutConfiguration() error {
 	return nil
 }
 
-// validateUDPConfiguration checks MTU, packet size, and fragmentation settings.
+// validateUDPConfiguration checks MTU, packet size, and fragmentation settings
+// using a table-driven approach for numeric bounds checks.
 func (sc *SSU2Config) validateUDPConfiguration() error {
 	log.WithFields(logger.Fields{"pkg": "config", "func": "validateUDPConfiguration", "mtu": sc.MTU, "max_packet_size": sc.MaxPacketSize}).Debug("Checking MTU and packet size settings")
-	// Validate MTU (IPv6 minimum is 1280, typical Ethernet is 1500)
-	if sc.MTU < 1280 || sc.MTU > 1500 {
-		return oops.
-			Code("INVALID_MTU").
-			In("ssu2").
-			With("mtu", sc.MTU).
-			Errorf("MTU must be between 1280 and 1500 bytes")
+
+	// Table-driven bounds checks for numeric configuration values.
+	boundsChecks := []boundsValidator{
+		{
+			name:    "mtu",
+			value:   sc.MTU,
+			min:     1280,
+			max:     1500,
+			code:    "INVALID_MTU",
+			msg:     "MTU must be between 1280 and 1500 bytes (got %v)",
+			context: "ssu2",
+		},
+		{
+			name:    "max_packet_size",
+			value:   sc.MaxPacketSize,
+			min:     1,
+			max:     65535,
+			code:    "INVALID_MAX_PACKET_SIZE",
+			msg:     "max packet size must be between 1 and 65535 bytes (got %v)",
+			context: "ssu2",
+		},
 	}
 
-	// Validate max packet size
-	if sc.MaxPacketSize <= 0 {
-		return oops.
-			Code("INVALID_MAX_PACKET_SIZE").
-			In("ssu2").
-			With("max_size", sc.MaxPacketSize).
-			Errorf("max packet size must be positive")
+	for _, check := range boundsChecks {
+		if err := validateBounds(check); err != nil {
+			return err
+		}
 	}
 
 	// Max packet size should be >= MTU for proper operation

@@ -226,40 +226,21 @@ func (sm *SessionManager) evictLRUSessionLocked() {
 //
 // Must be called with sm.mu held for writing.
 func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
-	var oldestHash [32]byte
-	var oldestTime time.Time
-	var oldestEstablishedHash [32]byte
-	var oldestEstablishedTime time.Time
 	count := 0
-	haveOldest := false
-	haveOldestEstablished := false
-
-	for hash, session := range sm.sessions {
-		if session.RemotePublicKey != remotePubKey {
-			continue
-		}
-		count++
-
-		// Track oldest overall
-		if !haveOldest || session.LastUsed.Before(oldestTime) {
-			oldestHash = hash
-			oldestTime = session.LastUsed
-			haveOldest = true
-		}
-
-		// Track oldest established session (prefer evicting these)
-		if session.nsrTag == nil && session.handshakeState == nil {
-			if !haveOldestEstablished || session.LastUsed.Before(oldestEstablishedTime) {
-				oldestEstablishedHash = hash
-				oldestEstablishedTime = session.LastUsed
-				haveOldestEstablished = true
-			}
+	for _, session := range sm.sessions {
+		if session.RemotePublicKey == remotePubKey {
+			count++
 		}
 	}
 
 	if count < MaxSessionsPerPeer {
 		return
 	}
+
+	// Find oldest session overall for this peer
+	oldestHash, _, haveOldest := sm.selectOldestSession(
+		func(s *Session) bool { return s.RemotePublicKey == remotePubKey },
+	)
 
 	// Guard against zero-hash eviction: if the iteration found no sessions
 	// matching remotePubKey (e.g., due to concurrent deletion or edge case),
@@ -270,9 +251,17 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 		return
 	}
 
-	hashToEvict := oldestHash
-	if haveOldestEstablished {
-		hashToEvict = oldestEstablishedHash
+	// Find oldest established session (prefer evicting these over pending initiator sessions)
+	hashToEvict, _, haveOldestEstablished := sm.selectOldestSession(
+		func(s *Session) bool {
+			return s.RemotePublicKey == remotePubKey &&
+				s.nsrTag == nil &&
+				s.handshakeState == nil
+		},
+	)
+
+	if !haveOldestEstablished {
+		hashToEvict = oldestHash
 	}
 
 	if evicted, ok := sm.sessions[hashToEvict]; ok {
@@ -286,6 +275,35 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 			"remaining_for_peer": count - 1,
 		}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
 	}
+}
+
+// selectOldestSession finds the oldest session in the session manager's session map
+// that matches the given predicate. Returns the session hash, last-used time, and a
+// boolean indicating if any matching session was found.
+//
+// The predicate function is called for each session to determine if it should be
+// considered for selection. The session with the earliest LastUsed time among matches
+// is selected.
+//
+// Must be called with sm.mu held for reading or writing.
+func (sm *SessionManager) selectOldestSession(predicate func(*Session) bool) ([32]byte, time.Time, bool) {
+	var oldestHash [32]byte
+	var oldestTime time.Time
+	found := false
+
+	for hash, session := range sm.sessions {
+		if !predicate(session) {
+			continue
+		}
+
+		if !found || session.LastUsed.Before(oldestTime) {
+			oldestHash = hash
+			oldestTime = session.LastUsed
+			found = true
+		}
+	}
+
+	return oldestHash, oldestTime, found
 }
 
 // cleanupSessionIndexesLocked removes session index entries for tag tracking,

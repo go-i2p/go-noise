@@ -61,3 +61,33 @@ func RoleString(initiator bool) string {
 	}
 	return "responder"
 }
+
+// SetHandshakeTimeout sets the handshake timeout on a BaseHandshakeConfig.
+// This is a shared helper used by both NTCP2 and SSU2 config builders.
+func SetHandshakeTimeout(base *BaseHandshakeConfig, timeout time.Duration) {
+	base.HandshakeTimeout = timeout
+}
+
+// SetReadTimeout sets the read timeout on a BaseHandshakeConfig.
+// This is a shared helper used by both NTCP2 and SSU2 config builders.
+func SetReadTimeout(base *BaseHandshakeConfig, timeout time.Duration) {
+	base.ReadTimeout = timeout
+}
+
+// SetWriteTimeout sets the write timeout on a BaseHandshakeConfig.
+// This is a shared helper used by both NTCP2 and SSU2 config builders.
+func SetWriteTimeout(base *BaseHandshakeConfig, timeout time.Duration) {
+	base.WriteTimeout = timeout
+}
+
+// SetHandshakeRetries sets the handshake retry count on a BaseHandshakeConfig.
+// This is a shared helper used by both NTCP2 and SSU2 config builders.
+func SetHandshakeRetries(base *BaseHandshakeConfig, retries int) {
+	base.HandshakeRetries = retries
+}
+
+// SetRetryBackoff sets the retry backoff delay on a BaseHandshakeConfig.
+// This is a shared helper used by both NTCP2 and SSU2 config builders.
+func SetRetryBackoff(base *BaseHandshakeConfig, backoff time.Duration) {
+	base.RetryBackoff = backoff
+}

@@ -203,32 +203,32 @@ func (nc *Config) WithRemoteStaticKey(key []byte) *Config {
 
 // WithHandshakeTimeout sets the handshake timeout.
 func (nc *Config) WithHandshakeTimeout(timeout time.Duration) *Config {
-	nc.HandshakeTimeout = timeout
+	baseconfig.SetHandshakeTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
 // WithReadTimeout sets the read timeout for post-handshake operations.
 func (nc *Config) WithReadTimeout(timeout time.Duration) *Config {
-	nc.ReadTimeout = timeout
+	baseconfig.SetReadTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
 // WithWriteTimeout sets the write timeout for post-handshake operations.
 func (nc *Config) WithWriteTimeout(timeout time.Duration) *Config {
-	nc.WriteTimeout = timeout
+	baseconfig.SetWriteTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
 // WithHandshakeRetries sets the number of handshake retry attempts.
 // Use 0 for no retries, -1 for infinite retries.
 func (nc *Config) WithHandshakeRetries(retries int) *Config {
-	nc.HandshakeRetries = retries
+	baseconfig.SetHandshakeRetries(&nc.BaseHandshakeConfig, retries)
 	return nc
 }
 
 // WithRetryBackoff sets the base delay between retry attempts.
 func (nc *Config) WithRetryBackoff(backoff time.Duration) *Config {
-	nc.RetryBackoff = backoff
+	baseconfig.SetRetryBackoff(&nc.BaseHandshakeConfig, backoff)
 	return nc
 }
 

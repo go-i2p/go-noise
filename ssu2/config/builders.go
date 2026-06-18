@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/go-i2p/go-noise/internal/baseconfig"
 )
 
 // WithPattern sets the Noise protocol pattern.
@@ -68,32 +69,32 @@ func (sc *SSU2Config) WithRemoteStaticKey(key []byte) *SSU2Config {
 
 // WithHandshakeTimeout sets the handshake timeout.
 func (sc *SSU2Config) WithHandshakeTimeout(timeout time.Duration) *SSU2Config {
-	sc.HandshakeTimeout = timeout
+	baseconfig.SetHandshakeTimeout(&sc.BaseHandshakeConfig, timeout)
 	return sc
 }
 
 // WithReadTimeout sets the read timeout for post-handshake operations.
 func (sc *SSU2Config) WithReadTimeout(timeout time.Duration) *SSU2Config {
-	sc.ReadTimeout = timeout
+	baseconfig.SetReadTimeout(&sc.BaseHandshakeConfig, timeout)
 	return sc
 }
 
 // WithWriteTimeout sets the write timeout for post-handshake operations.
 func (sc *SSU2Config) WithWriteTimeout(timeout time.Duration) *SSU2Config {
-	sc.WriteTimeout = timeout
+	baseconfig.SetWriteTimeout(&sc.BaseHandshakeConfig, timeout)
 	return sc
 }
 
 // WithHandshakeRetries sets the number of handshake retry attempts.
 // Use 0 for no retries, -1 for infinite retries.
 func (sc *SSU2Config) WithHandshakeRetries(retries int) *SSU2Config {
-	sc.HandshakeRetries = retries
+	baseconfig.SetHandshakeRetries(&sc.BaseHandshakeConfig, retries)
 	return sc
 }
 
 // WithRetryBackoff sets the base delay between retry attempts.
 func (sc *SSU2Config) WithRetryBackoff(backoff time.Duration) *SSU2Config {
-	sc.RetryBackoff = backoff
+	baseconfig.SetRetryBackoff(&sc.BaseHandshakeConfig, backoff)
 	return sc
 }
 

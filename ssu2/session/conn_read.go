@@ -104,6 +104,19 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 	return n, nil
 }
 
+// readOnePacket attempts to parse and process a single inbound packet from the given buffer and address.
+// Returns true if the packet was valid (parsed) or false if it should be dropped.
+func (h *SSU2Conn) readOnePacket(buf []byte, addr net.Addr) bool {
+	packet := h.parseInboundPacket(buf, addr)
+	if packet != nil {
+		log.WithFields(logger.Fields{"pkg": "session", "func": "readOnePacket", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
+		h.processInboundPacket(packet)
+		return true
+	}
+	log.WithFields(logger.Fields{"pkg": "session", "func": "readOnePacket"}).Debug("Inbound packet dropped (parse returned nil)")
+	return false
+}
+
 // recvLoop handles inbound packet reception.
 func (h *SSU2Conn) recvLoop() {
 	defer h.wg.Done()
@@ -130,12 +143,7 @@ func (h *SSU2Conn) recvLoop() {
 				continue
 			}
 			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
-			if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
-				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
-				h.processInboundPacket(packet)
-			} else {
-				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
-			}
+			h.readOnePacket(buf[:n], addr)
 		} else {
 			// Shared socket path: this connection does not own the PacketConn but
 			// is its sole reader (DialSSU2WithConn contract). We cannot block
@@ -172,12 +180,7 @@ func (h *SSU2Conn) recvLoop() {
 			}
 
 			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
-			if packet := h.parseInboundPacket(buf[:n], addr); packet != nil {
-				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
-				h.processInboundPacket(packet)
-			} else {
-				log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop"}).Debug("Inbound packet dropped (parse returned nil)")
-			}
+			h.readOnePacket(buf[:n], addr)
 		}
 	}
 }

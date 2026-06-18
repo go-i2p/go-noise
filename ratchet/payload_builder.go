@@ -73,14 +73,33 @@ func (pb *PayloadBuilder) validate() error {
 		return nil // empty payload is allowed
 	}
 
+	paddingIdx, terminationIdx, err := pb.collectBlockPositions()
+	if err != nil {
+		return err
+	}
+
+	if err := pb.checkPaddingPosition(paddingIdx); err != nil {
+		return err
+	}
+	return pb.checkTerminationPosition(terminationIdx, paddingIdx)
+}
+
+// collectBlockPositions scans the payload blocks and collects the indices of
+// padding and termination blocks. It also validates that BlockOptions blocks
+// (which are unimplemented in the I2P ECIES spec) and multiple padding blocks
+// do not appear.
+//
+// Returns the padding block index, termination block index (or -1 if not present),
+// and an error if validation fails. Indices are -1 if the block type was not found.
+func (pb *PayloadBuilder) collectBlockPositions() (int, int, error) {
 	paddingCount := 0
-	terminationIdx := -1
 	paddingIdx := -1
+	terminationIdx := -1
 
 	for i, b := range pb.blocks {
 		switch b.Type {
 		case BlockOptions:
-			return oops.Errorf(
+			return -1, -1, oops.Errorf(
 				"BlockOptions (type %d) is unimplemented in the I2P ECIES spec "+
 					"and must not appear in outgoing messages (ratchet.md §\"Unencrypted data\")",
 				BlockOptions,
@@ -88,7 +107,7 @@ func (pb *PayloadBuilder) validate() error {
 		case BlockPadding:
 			paddingCount++
 			if paddingCount > 1 {
-				return oops.Errorf("multiple padding blocks not allowed")
+				return -1, -1, oops.Errorf("multiple padding blocks not allowed")
 			}
 			paddingIdx = i
 		case BlockTermination:
@@ -96,10 +115,7 @@ func (pb *PayloadBuilder) validate() error {
 		}
 	}
 
-	if err := pb.checkPaddingPosition(paddingIdx); err != nil {
-		return err
-	}
-	return pb.checkTerminationPosition(terminationIdx, paddingIdx)
+	return paddingIdx, terminationIdx, nil
 }
 
 // checkPaddingPosition validates that the padding block, if present, is the

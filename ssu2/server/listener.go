@@ -386,78 +386,108 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, err
 	}
 
-	// AUDIT 8.1 / ACCT-1: Reject SessionRequest packets with a truncated header.
+	// Extract and validate initiator connection ID from packet header (AUDIT 8.1 / ACCT-1)
+	initiatorConnID, err := l.extractSessionInitiatorID(packet)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check dedup index for existing session (AUDIT 8.1)
+	existingConn := l.findExistingSessionByInitiator(initiatorConnID, remoteAddr)
+	if existingConn != nil {
+		return existingConn, nil
+	}
+
+	// Create and configure new SSU2 connection (ACCT-2, AUDIT 1.2)
+	conn, connID, err := l.createSessionConnection(packet, remoteAddr, initiatorConnID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Register connection and add to accept queue (AUDIT 8.1)
+	return l.registerAndQueueConn(conn, connID, remoteAddr, initiatorConnID)
+}
+
+// extractSessionInitiatorID extracts and validates the initiator connection ID from
+// the SessionRequest packet header.
+//
+// AUDIT 8.1 / ACCT-1: Validates that the header contains at least 24 bytes needed
+// to read the initiator's source connection ID. Without this check, a truncated
+// header would cause the dedup key to collapse to (0, remoteAddr), allowing a
+// malicious peer to falsely "retransmit" to any existing zero-connID entry or
+// create multiple sessions under the same dedup key.
+func (l *SSU2Listener) extractSessionInitiatorID(packet *SSU2Packet) (uint64, error) {
 	// Per the SSU2 spec, the SessionRequest header is exactly 32 bytes:
 	//   [0:8]   destination connection ID
 	//   [8:12]  packet number
 	//   [12:16] protocol/type byte
 	//   [16:24] source connection ID (initiator's connection ID)
 	//   [24:32] token
-	// Without at least 24 bytes we cannot read the initiator's source connID,
-	// so the dedup key would collapse to (0, remoteAddr). A malicious peer
-	// can exploit this to falsely "retransmit" to any existing zero-connID
-	// entry or to create multiple sessions under the same dedup key.
 	const minSessionRequestHeaderLen = 24
 	if len(packet.Header) < minSessionRequestHeaderLen {
-		return nil, oops.
+		return 0, oops.
 			Code("HEADER_TOO_SHORT").
 			In("ssu2_listener").
 			With("header_len", len(packet.Header)).
 			With("min_len", minSessionRequestHeaderLen).
 			Errorf("SessionRequest header too short to extract initiator connection ID")
 	}
-	initiatorConnID := binary.BigEndian.Uint64(packet.Header[16:24])
+	return binary.BigEndian.Uint64(packet.Header[16:24]), nil
+}
 
-	// AUDIT 8.1: Check dedup index for existing session keyed on (initiatorConnID, remoteAddr).
-	// If a session already exists for this (initiator key, source address) pair,
-	// route the retransmit to it instead of creating a duplicate.
+// findExistingSessionByInitiator checks the dedup index for an existing session
+// keyed on (initiatorConnID, remoteAddr).
+//
+// AUDIT 8.1: If a session already exists for this (initiator key, source address) pair,
+// route the retransmit to it instead of creating a duplicate.
+func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, remoteAddr *net.UDPAddr) *SSU2Conn {
 	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
 	l.sessionMutex.RLock()
 	existingConn := l.pendingByInitiator[dedupKey]
 	l.sessionMutex.RUnlock()
+
 	if existingConn != nil {
 		log.WithFields(logger.Fields{
 			"pkg":         "server",
-			"func":        "handleNewSession",
+			"func":        "findExistingSessionByInitiator",
 			"dedup_key":   dedupKey,
 			"remote_addr": remoteAddr.String(),
-		}).Debug("handleNewSession: routing retransmit to existing pending session")
-		return existingConn, nil
+		}).Debug("routing retransmit to existing pending session")
 	}
+	return existingConn
+}
 
-	// ACCT-2: The racy advisory pre-check on SessionCount() has been removed.
-	// It read the router's session counter WITHOUT holding the same lock used by
-	// AddSessionIfBelowCap, creating a TOCTOU window: the count could be stale in
-	// either direction, causing both false-positive rejections (spurious 503s) and
-	// false-negative passes (accepting when already at cap). The authoritative
-	// check inside AddSessionIfBelowCap (called from registerAndQueueConn, under
-	// the correct lock) is the sole capacity gate.
-
+// createSessionConnection creates and configures a new SSU2Conn for an incoming
+// SessionRequest.
+//
+// ACCT-2: The racy advisory pre-check on SessionCount() is not performed here;
+// the authoritative capacity check inside AddSessionIfBelowCap (called from
+// registerAndQueueConn, under the correct lock) is the sole capacity gate.
+//
+// AUDIT 1.2: Marks the connection as not responsible for reading the socket,
+// since the listener's receiveLoop is the sole socket reader and will feed packets
+// to this session via RoutePacket → processInboundPacket → recvQueue. This prevents
+// two goroutines (listener and recvLoop) from concurrently reading the same shared
+// socket, which violates the SSU2 multiplexing invariant.
+func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, uint64, error) {
 	connID, err := l.generateUniqueConnectionID()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	connConfig := l.buildConnConfig(packet, connID)
 
 	if connConfig.InitiatorConnectionID != 0 && connConfig.InitiatorConnectionID == connID {
-		return nil, oops.Errorf("connection ID collision: source and destination IDs are identical (%d)", connID)
+		return nil, 0, oops.Errorf("connection ID collision: source and destination IDs are identical (%d)", connID)
 	}
 
 	conn, err := NewSSU2Conn(l.underlying, remoteAddr, connConfig, false, l.config.StaticKey, nil)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to create SSU2 connection")
+		return nil, 0, oops.Wrapf(err, "failed to create SSU2 connection")
 	}
 
-	// AUDIT 1.2: Mark this listener-accepted responder session as not responsible for
-	// reading the socket. The listener's receiveLoop is the sole socket reader and will
-	// feed packets to this session via RoutePacket → processInboundPacket → recvQueue.
-	// This prevents two goroutines (listener and recvLoop) from concurrently reading
-	// the same shared socket, which violates the SSU2 multiplexing invariant.
 	conn.SetReadsOwnSocket(false)
-
-	// AUDIT 8.1: Pass dedup key to registerAndQueueConn
-	return l.registerAndQueueConn(conn, connID, remoteAddr, initiatorConnID)
+	return conn, connID, nil
 }
 
 // enforceRateLimit checks if the source IP has exceeded the SessionRequest rate.
@@ -593,6 +623,95 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 	return &connConfig
 }
 
+// checkPendingCapacity validates the pending session count against the configured cap.
+// Returns the effective max pending count and an error if capacity is exceeded.
+// LEAK-1: Applies a hard cap even when MaxSessions==0 to prevent remote memory DoS.
+func (l *SSU2Listener) checkPendingCapacity() (int, error) {
+	l.sessionMutex.RLock()
+	pendingCount := len(l.pendingByInitiator)
+	l.sessionMutex.RUnlock()
+
+	const defaultMaxPendingByInitiator = 2000
+	maxPendingByInitiator := l.config.MaxSessions * 2
+	if maxPendingByInitiator <= 0 {
+		maxPendingByInitiator = defaultMaxPendingByInitiator
+	}
+
+	if pendingCount >= maxPendingByInitiator {
+		return 0, oops.
+			Code("PENDING_CAPACITY_EXCEEDED").
+			In("ssu2_listener").
+			With("pending_count", pendingCount).
+			With("max_pending", maxPendingByInitiator).
+			Errorf("pending session capacity exceeded, connection refused")
+	}
+
+	return maxPendingByInitiator, nil
+}
+
+// installCloseHook sets up the connection close hook to perform cleanup:
+// removes the session from the router (if registered) and deletes from pending map.
+// Returns an atomic.Bool that tracks registration state for the close hook to query.
+// BUG-SA-2: The registered flag prevents RemoveSession from being called if the
+// session was never inserted due to a race or capacity error.
+func (l *SSU2Listener) installCloseHook(conn *SSU2Conn, connID uint64, dedupKey string) *atomic.Bool {
+	var registered atomic.Bool
+	conn.SetCloseHook(func() {
+		if registered.Load() {
+			l.router.RemoveSession(connID)
+		}
+		// AUDIT 8.1: Remove from pending dedup index (safe even if never inserted).
+		l.sessionMutex.Lock()
+		delete(l.pendingByInitiator, dedupKey)
+		l.sessionMutex.Unlock()
+	})
+	return &registered
+}
+
+// registerInRouter atomically performs the dedup check and router registration:
+// checks if another concurrent worker beat us to the same dedup key, and if not,
+// registers the session in the router. Must be called under sessionMutex.
+// Returns the existing connection if a dedup race was lost, or an error if
+// router registration failed.
+// AUDIT 8.3 / BUG-RC-3: Performs dedup + router insert as a single atomic operation.
+func (l *SSU2Listener) registerInRouter(conn *SSU2Conn, connID uint64, dedupKey string, registered *atomic.Bool) (*SSU2Conn, error) {
+	if existing, ok := l.pendingByInitiator[dedupKey]; ok {
+		// Race lost: another worker registered for this initiator first.
+		return existing, nil
+	}
+	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
+		return nil, oops.Wrapf(err, "failed to register session in router")
+	}
+	registered.Store(true)
+	l.pendingByInitiator[dedupKey] = conn
+	return conn, nil
+}
+
+// enqueueConnection sends the connection to the accept queue.
+// Handles three failure modes: listener shutdown, queue full (AUDIT 2.1).
+// On any failure, removes the session from the router and tears down the connection.
+// AUDIT 2.1: Every error path removes from router and closes, preventing leaks.
+func (l *SSU2Listener) enqueueConnection(conn *SSU2Conn, connID uint64, dedupKey string) (*SSU2Conn, error) {
+	select {
+	case l.acceptQueue <- conn:
+		return conn, nil
+	case <-l.shutdownChan:
+		l.router.RemoveSession(connID)
+		_ = conn.CloseImmediate()
+		return nil, oops.
+			Code("LISTENER_CLOSED").
+			In("ssu2_listener").
+			Errorf("listener closed during session creation")
+	default:
+		l.router.RemoveSession(connID)
+		_ = conn.CloseImmediate()
+		return nil, oops.
+			Code("ACCEPT_QUEUE_FULL").
+			In("ssu2_listener").
+			Errorf("accept queue full, connection dropped")
+	}
+}
+
 // registerAndQueueConn registers the connection in the sessions map and
 // queues it for acceptance.
 //
@@ -620,94 +739,35 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	// atomically. Removing the racy pre-check here; the authoritative guard is inside
 	// the lock-protected block.
 
-	// AUDIT 8.2: Add independent cap on pendingByInitiator map size to prevent
-	// unbounded growth from retransmitted SessionRequests from many initiators.
-	// The map is populated when each new handshake starts and drained when it
-	// closes. With MaxSessions=1000, this cap should be at most 2*MaxSessions
-	// to allow some headroom for concurrent handshakes and draining.
-	l.sessionMutex.RLock()
-	pendingCount := len(l.pendingByInitiator)
-	l.sessionMutex.RUnlock()
-	// LEAK-1: apply a hard cap on pendingByInitiator entries. When MaxSessions==0
-	// (unconfigured), maxPendingByInitiator would be 0 and the guard below would
-	// be permanently disabled, letting an attacker fill the map without bound
-	// (remote memory-exhaustion DoS). Fall back to a safe default so the cap is
-	// always active regardless of operator configuration.
-	const defaultMaxPendingByInitiator = 2000
-	maxPendingByInitiator := l.config.MaxSessions * 2
-	if maxPendingByInitiator <= 0 {
-		maxPendingByInitiator = defaultMaxPendingByInitiator
-	}
-	if pendingCount >= maxPendingByInitiator {
+	// AUDIT 8.2: Check pending capacity before proceeding with registration.
+	if _, err := l.checkPendingCapacity(); err != nil {
 		_ = conn.CloseImmediate()
-		return nil, oops.
-			Code("PENDING_CAPACITY_EXCEEDED").
-			In("ssu2_listener").
-			With("pending_count", pendingCount).
-			With("max_pending", maxPendingByInitiator).
-			Errorf("pending session capacity exceeded, connection refused")
+		return nil, err
 	}
 
-	// BUG-RC-3 / BUG-SA-2: Both the dedup check and the router registration must
-	// happen under a single l.sessionMutex.Lock() so no two concurrent packetWorker
-	// goroutines can both pass AddSessionIfBelowCap before either inserts into
-	// pendingByInitiator — which would briefly leave two sessions for the same
-	// initiator simultaneously registered in the router.
-	// BUG-SA-2: use registered flag so the close hook only calls RemoveSession
-	// when the session was actually inserted into the router.
-	var registered atomic.Bool
-	conn.SetCloseHook(func() {
-		if registered.Load() {
-			l.router.RemoveSession(connID)
-		}
-		// AUDIT 8.1: Remove from pending dedup index (safe even if never inserted).
-		l.sessionMutex.Lock()
-		delete(l.pendingByInitiator, dedupKey)
-		l.sessionMutex.Unlock()
-	})
+	// BUG-RC-3 / BUG-SA-2: Install close hook early so cleanup runs regardless of
+	// whether registration succeeds.
+	registered := l.installCloseHook(conn, connID, dedupKey)
 
 	// AUDIT 8.3 / BUG-RC-3: Perform dedup check, router registration, and
 	// pendingByInitiator insert as a single atomic operation under sessionMutex.
 	l.sessionMutex.Lock()
-	if existing, ok := l.pendingByInitiator[dedupKey]; ok {
-		// Race lost: another worker registered for this initiator first.
-		// Tear down our newly created connection and return the winner.
-		l.sessionMutex.Unlock()
+	existing, err := l.registerInRouter(conn, connID, dedupKey, registered)
+	l.sessionMutex.Unlock()
+
+	if err != nil {
+		_ = conn.CloseImmediate()
+		return nil, err
+	}
+
+	// If we lost the dedup race, return the existing connection (winner).
+	if existing != conn {
 		_ = conn.CloseImmediate()
 		return existing, nil
 	}
-	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
-		l.sessionMutex.Unlock()
-		_ = conn.CloseImmediate()
-		return nil, oops.Wrapf(err, "failed to register session in router")
-	}
-	registered.Store(true)
-	l.pendingByInitiator[dedupKey] = conn
-	l.sessionMutex.Unlock()
 
-	select {
-	case l.acceptQueue <- conn:
-		return conn, nil
-	case <-l.shutdownChan:
-		// AUDIT 2.1: do not leak the session/goroutines on shutdown.
-		// AUDIT 8.3: Remove from router (single source of truth)
-		l.router.RemoveSession(connID)
-		_ = conn.CloseImmediate()
-		return nil, oops.
-			Code("LISTENER_CLOSED").
-			In("ssu2_listener").
-			Errorf("listener closed during session creation")
-	default:
-		// AUDIT 2.1: accept queue full — remove from the map and tear the
-		// connection down so its reaper/replay goroutines do not leak.
-		// AUDIT 8.3: Remove from router (single source of truth)
-		l.router.RemoveSession(connID)
-		_ = conn.CloseImmediate()
-		return nil, oops.
-			Code("ACCEPT_QUEUE_FULL").
-			In("ssu2_listener").
-			Errorf("accept queue full, connection dropped")
-	}
+	// Connection successfully registered; now queue it for accept.
+	return l.enqueueConnection(conn, connID, dedupKey)
 }
 
 // validateSessionRequestToken extracts and validates the token from a SessionRequest.
