@@ -136,9 +136,7 @@ func (km *KeepaliveManager) Stop() {
 
 // IsStarted returns whether the keepalive manager is currently running.
 func (km *KeepaliveManager) IsStarted() bool {
-	km.mutex.RLock()
-	defer km.mutex.RUnlock()
-	return km.started
+	return withRLock(&km.mutex, func() bool { return km.started })
 }
 
 // UpdateLastSent records that a packet was just sent.
@@ -166,9 +164,9 @@ func (km *KeepaliveManager) UpdateLastRecv() {
 // A connection is considered dead if no packets have been received
 // within the timeout period (typically 45 seconds for default settings).
 func (km *KeepaliveManager) IsAlive() bool {
-	km.mutex.RLock()
-	defer km.mutex.RUnlock()
-	return time.Since(km.lastRecv) < km.timeout
+	return withRLock(&km.mutex, func() bool {
+		return time.Since(km.lastRecv) < km.timeout
+	})
 }
 
 // GetIdleTime returns the duration since last received packet.
@@ -176,16 +174,16 @@ func (km *KeepaliveManager) IsAlive() bool {
 // This can be used to monitor connection health or implement
 // custom timeout logic.
 func (km *KeepaliveManager) GetIdleTime() time.Duration {
-	km.mutex.RLock()
-	defer km.mutex.RUnlock()
-	return time.Since(km.lastRecv)
+	return withRLock(&km.mutex, func() time.Duration {
+		return time.Since(km.lastRecv)
+	})
 }
 
 // GetTimeSinceLastSent returns the duration since last sent packet.
 func (km *KeepaliveManager) GetTimeSinceLastSent() time.Duration {
-	km.mutex.RLock()
-	defer km.mutex.RUnlock()
-	return time.Since(km.lastSent)
+	return withRLock(&km.mutex, func() time.Duration {
+		return time.Since(km.lastSent)
+	})
 }
 
 // keepaliveLoop is the main goroutine that manages keepalive timing.

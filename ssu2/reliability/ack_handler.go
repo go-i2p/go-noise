@@ -327,17 +327,15 @@ func (h *ACKHandler) GetPending() []uint32 {
 
 // GetPendingPacket returns details about a specific pending packet.
 func (h *ACKHandler) GetPendingPacket(packetNum uint32) (*PendingACK, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ack, exists := h.pendingACKs[packetNum]
-	return ack, exists
+	return withLock2(&h.mu, func() (*PendingACK, bool) {
+		ack, exists := h.pendingACKs[packetNum]
+		return ack, exists
+	})
 }
 
 // HasPending returns true if there are packets awaiting acknowledgment.
 func (h *ACKHandler) HasPending() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.pendingACKs) > 0
+	return withLock(&h.mu, func() bool { return len(h.pendingACKs) > 0 })
 }
 
 // ClearPending removes all pending acknowledgments (used on connection close).

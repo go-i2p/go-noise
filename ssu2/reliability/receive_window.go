@@ -193,24 +193,18 @@ func (rw *ReceiveWindow) Insert(packet *SSU2Packet) ([]*SSU2Packet, error) {
 // GetExpected returns the next expected packet number.
 // Thread-safe: can be called concurrently.
 func (rw *ReceiveWindow) GetExpected() uint32 {
-	rw.mutex.RLock()
-	defer rw.mutex.RUnlock()
-	return rw.expected
+	return withRLock(&rw.mutex, func() uint32 { return rw.expected })
 }
 
 // GetMaxSize returns the maximum buffered packet count.
 func (rw *ReceiveWindow) GetMaxSize() int {
-	rw.mutex.RLock()
-	defer rw.mutex.RUnlock()
-	return rw.maxSize
+	return withRLock(&rw.mutex, func() int { return rw.maxSize })
 }
 
 // GetWindowSize returns the current number of buffered packets.
 // Thread-safe: can be called concurrently.
 func (rw *ReceiveWindow) GetWindowSize() int {
-	rw.mutex.RLock()
-	defer rw.mutex.RUnlock()
-	return len(rw.window)
+	return withRLock(&rw.mutex, func() int { return len(rw.window) })
 }
 
 // SetExpected updates the expected packet number. This is useful for
@@ -251,9 +245,7 @@ func (rw *ReceiveWindow) Clear(expected uint32) {
 //
 // Thread-safe: can be called concurrently.
 func (rw *ReceiveWindow) HasGaps() bool {
-	rw.mutex.RLock()
-	defer rw.mutex.RUnlock()
-	return len(rw.window) > 0
+	return withRLock(&rw.mutex, func() bool { return len(rw.window) > 0 })
 }
 
 // GetGapInfo returns information about gaps in the receive window.

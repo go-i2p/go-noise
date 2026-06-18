@@ -165,18 +165,14 @@ func (r *RTTEstimator) GetRTO() time.Duration {
 // This is the exponentially weighted moving average of all RTT samples.
 // Returns 0 if no samples have been recorded yet.
 func (r *RTTEstimator) GetSmoothedRTT() time.Duration {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	return r.smoothedRTT
+	return withRLock(&r.mutex, func() time.Duration { return r.smoothedRTT })
 }
 
 // GetRTTVariance returns the current RTT variance estimate.
 // This represents the mean deviation of RTT samples from the smoothed RTT.
 // Returns 0 if no samples have been recorded yet.
 func (r *RTTEstimator) GetRTTVariance() time.Duration {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	return r.rttVariance
+	return withRLock(&r.mutex, func() time.Duration { return r.rttVariance })
 }
 
 // GetMinRTT returns the minimum RTT observed across all samples.
@@ -184,17 +180,13 @@ func (r *RTTEstimator) GetRTTVariance() time.Duration {
 // in RTT relative to minRTT may indicate network congestion.
 // Returns 0 if no samples have been recorded yet.
 func (r *RTTEstimator) GetMinRTT() time.Duration {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	return r.minRTT
+	return withRLock(&r.mutex, func() time.Duration { return r.minRTT })
 }
 
 // IsInitialized returns true if at least one RTT sample has been recorded.
 // Before initialization, GetRTO() returns a default value.
 func (r *RTTEstimator) IsInitialized() bool {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-	return r.initialized
+	return withRLock(&r.mutex, func() bool { return r.initialized })
 }
 
 // Reset clears all state and returns the estimator to uninitialized state.

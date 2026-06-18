@@ -183,30 +183,22 @@ func NewCongestionControllerWithMTU(rttEstimator *RTTEstimator, mtu int) *Conges
 
 // GetCWND returns the current congestion window in bytes.
 func (cc *CongestionController) GetCWND() int {
-	cc.mutex.RLock()
-	defer cc.mutex.RUnlock()
-	return cc.cwnd
+	return withRLock(&cc.mutex, func() int { return cc.cwnd })
 }
 
 // GetState returns the current congestion control state.
 func (cc *CongestionController) GetState() CongestionState {
-	cc.mutex.RLock()
-	defer cc.mutex.RUnlock()
-	return cc.state
+	return withRLock(&cc.mutex, func() CongestionState { return cc.state })
 }
 
 // GetSSThresh returns the current slow start threshold.
 func (cc *CongestionController) GetSSThresh() int {
-	cc.mutex.RLock()
-	defer cc.mutex.RUnlock()
-	return cc.ssthresh
+	return withRLock(&cc.mutex, func() int { return cc.ssthresh })
 }
 
 // GetBytesInFlight returns the current bytes in flight (unacknowledged).
 func (cc *CongestionController) GetBytesInFlight() int {
-	cc.mutex.RLock()
-	defer cc.mutex.RUnlock()
-	return cc.bytesInFlight
+	return withRLock(&cc.mutex, func() int { return cc.bytesInFlight })
 }
 
 // CanSend returns true if more data can be sent given the congestion window.
