@@ -267,6 +267,12 @@ func (cc *CongestionController) OnAck(ackedBytes int) {
 		cc.bytesInFlight = 0
 	}
 
+	cc.dispatchAckByState(ackedBytes)
+}
+
+// dispatchAckByState routes ACK handling to the state-specific strategy.
+// Caller must hold cc.mutex.
+func (cc *CongestionController) dispatchAckByState(ackedBytes int) {
 	switch cc.state {
 	case SlowStart:
 		cc.handleSlowStartAck(ackedBytes)
