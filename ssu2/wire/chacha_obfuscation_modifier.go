@@ -62,12 +62,8 @@ func NewChaChaObfuscationModifier(name string, introKey []byte) (*ChaChaObfuscat
 // Message 3+: No obfuscation
 func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	log.WithFields(logger.Fields{"pkg": "wire", "func": "ModifyOutbound", "phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyOutbound")
-	if len(data) != 48 && len(data) != 32 {
-		return nil, oops.
-			Code("INVALID_CHACHA_INPUT_LENGTH").
-			In("wire").
-			With("length", len(data)).
-			Errorf("unexpected data length %d for chacha obfuscation: expected 32 or 48", len(data))
+	if err := validateChaChaInputLength(len(data)); err != nil {
+		return nil, err
 	}
 
 	switch phase {
@@ -83,12 +79,8 @@ func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePh
 // Accepts 48 bytes (spec-compliant) or 32 bytes (backward compatibility).
 func (com *ChaChaObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	log.WithFields(logger.Fields{"pkg": "wire", "func": "ModifyInbound", "phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyInbound")
-	if len(data) != 48 && len(data) != 32 {
-		return nil, oops.
-			Code("INVALID_CHACHA_INPUT_LENGTH").
-			In("wire").
-			With("length", len(data)).
-			Errorf("unexpected data length %d for chacha obfuscation: expected 32 or 48", len(data))
+	if err := validateChaChaInputLength(len(data)); err != nil {
+		return nil, err
 	}
 
 	switch phase {
@@ -102,6 +94,18 @@ func (com *ChaChaObfuscationModifier) ModifyInbound(phase handshake.HandshakePha
 // Name returns the modifier name for logging and debugging.
 func (com *ChaChaObfuscationModifier) Name() string {
 	return com.name
+}
+
+func validateChaChaInputLength(length int) error {
+	if length == 32 || length == 48 {
+		return nil
+	}
+
+	return oops.
+		Code("INVALID_CHACHA_INPUT_LENGTH").
+		In("wire").
+		With("length", length).
+		Errorf("unexpected data length %d for chacha obfuscation: expected 32 or 48", length)
 }
 
 // applyChacha creates a ChaCha20 cipher at counter position n=1 per the SSU2

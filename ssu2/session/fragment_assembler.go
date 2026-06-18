@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/eviction"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -54,17 +55,9 @@ func (h *DataHandler) evictOldestFragment() {
 		return
 	}
 
-	var oldestID uint32
-	var oldestTime time.Time
-	first := true
-
-	for id, fs := range h.fragments {
-		if first || fs.CreatedAt.Before(oldestTime) {
-			oldestID = id
-			oldestTime = fs.CreatedAt
-			first = false
-		}
-	}
+	oldestID, oldestTime, _ := eviction.EvictOldestByTime(h.fragments, func(fs *FragmentSet) time.Time {
+		return fs.CreatedAt
+	})
 
 	log.WithFields(logger.Fields{
 		"pkg":        "session",
@@ -73,7 +66,6 @@ func (h *DataHandler) evictOldestFragment() {
 		"age":        time.Since(oldestTime),
 	}).Warn("evicting oldest fragment set due to capacity limit")
 
-	delete(h.fragments, oldestID)
 	h.incrementStat(&h.stats.MessagesDropped)
 }
 

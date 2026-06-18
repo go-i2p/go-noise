@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/eviction"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -219,21 +220,9 @@ func (tc *TokenCache) InvalidateAddress(addr *net.UDPAddr) {
 // evictOldestLocked removes the oldest token from the cache.
 // Caller must hold tc.mutex.
 func (tc *TokenCache) evictOldestLocked() {
-	var oldestKey string
-	var oldestTime time.Time
-	first := true
-
-	for key, token := range tc.tokens {
-		if first || token.CreatedAt.Before(oldestTime) {
-			oldestKey = key
-			oldestTime = token.CreatedAt
-			first = false
-		}
-	}
-
-	if !first {
-		delete(tc.tokens, oldestKey)
-	}
+	_, _, _ = eviction.EvictOldestByTime(tc.tokens, func(token *Token) time.Time {
+		return token.CreatedAt
+	})
 }
 
 // GetTTL returns the token time-to-live duration.
