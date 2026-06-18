@@ -128,18 +128,12 @@ type SSU2Listener struct {
 // Returns a new SSU2Listener ready to start, or an error if configuration is invalid.
 func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listener, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "NewSSU2Listener"}).Debug("Creating new SSU2 listener")
-	if underlying == nil {
-		return nil, oops.
-			Code("INVALID_PACKET_CONN").
-			In("ssu2_listener").
-			Errorf("underlying packet connection cannot be nil")
+	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_listener"); err != nil {
+		return nil, err
 	}
 
-	if config == nil {
-		return nil, oops.
-			Code("INVALID_CONFIG").
-			In("ssu2_listener").
-			Errorf("configuration cannot be nil")
+	if err := validateParam(config, "configuration", "INVALID_CONFIG", "ssu2_listener"); err != nil {
+		return nil, err
 	}
 
 	// Validate configuration
@@ -848,11 +842,8 @@ func (l *SSU2Listener) validateSessionRequestToken(packet *SSU2Packet, remoteAdd
 // informational (callers of this method currently ignore it) and uses the
 // NO_TOKEN_ISSUED code so operators can surface the counter.
 func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
-	if remoteAddr == nil {
-		return oops.
-			Code("NIL_ADDRESS").
-			In("ssu2_listener").
-			Errorf("remote address cannot be nil")
+	if err := validateParam(remoteAddr, "remote address", "NIL_ADDRESS", "ssu2_listener"); err != nil {
+		return err
 	}
 	addrKey := remoteAddr.String()
 

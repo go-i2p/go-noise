@@ -120,11 +120,8 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 // Returns an SSU2Conn ready for handshake, or an error if creation fails.
 func DialSSU2WithConn(packetConn net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
 	log.WithFields(logger.Fields{"pkg": "server", "func": "DialSSU2WithConn", "remote_addr": remoteAddr}).Debug("Dialing SSU2 connection with existing PacketConn")
-	if packetConn == nil {
-		return nil, oops.
-			Code("INVALID_PACKET_CONN").
-			In("ssu2_transport").
-			Errorf("packet connection cannot be nil")
+	if err := validateParam(packetConn, "packet connection", "INVALID_PACKET_CONN", "ssu2_transport"); err != nil {
+		return nil, err
 	}
 	if err := validateDialParams(nil, remoteAddr, config); err != nil {
 		return nil, err
@@ -334,18 +331,12 @@ func WrapSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Liste
 
 // validateDialParams validates parameters for DialSSU2.
 func validateDialParams(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) error {
-	if remoteAddr == nil {
-		return oops.
-			Code("INVALID_REMOTE_ADDRESS").
-			In("ssu2_transport").
-			Errorf("remote address cannot be nil")
+	if err := validateParam(remoteAddr, "remote address", "INVALID_REMOTE_ADDRESS", "ssu2_transport"); err != nil {
+		return err
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ssu2_transport").
-			Errorf("config cannot be nil")
+	if err := validateParam(config, "config", "INVALID_CONFIG", "ssu2_transport"); err != nil {
+		return err
 	}
 
 	// Validate configuration
@@ -390,18 +381,12 @@ func validateDialParams(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) 
 
 // validateListenParams validates parameters for ListenSSU2.
 func validateListenParams(addr *net.UDPAddr, config *SSU2Config) error {
-	if addr == nil {
-		return oops.
-			Code("INVALID_ADDRESS").
-			In("ssu2_transport").
-			Errorf("listen address cannot be nil")
+	if err := validateParam(addr, "listen address", "INVALID_ADDRESS", "ssu2_transport"); err != nil {
+		return err
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ssu2_transport").
-			Errorf("config cannot be nil")
+	if err := validateParam(config, "config", "INVALID_CONFIG", "ssu2_transport"); err != nil {
+		return err
 	}
 
 	// Validate configuration
@@ -434,25 +419,16 @@ func validateListenParams(addr *net.UDPAddr, config *SSU2Config) error {
 
 // validateWrapConnParams validates parameters for WrapSSU2Conn.
 func validateWrapConnParams(underlying net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) error {
-	if underlying == nil {
-		return oops.
-			Code("INVALID_PACKET_CONN").
-			In("ssu2_transport").
-			Errorf("underlying packet connection cannot be nil")
+	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_transport"); err != nil {
+		return err
 	}
 
-	if remoteAddr == nil {
-		return oops.
-			Code("INVALID_REMOTE_ADDRESS").
-			In("ssu2_transport").
-			Errorf("remote address cannot be nil")
+	if err := validateParam(remoteAddr, "remote address", "INVALID_REMOTE_ADDRESS", "ssu2_transport"); err != nil {
+		return err
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ssu2_transport").
-			Errorf("config cannot be nil")
+	if err := validateParam(config, "config", "INVALID_CONFIG", "ssu2_transport"); err != nil {
+		return err
 	}
 
 	// Validate configuration
@@ -468,18 +444,12 @@ func validateWrapConnParams(underlying net.PacketConn, remoteAddr *net.UDPAddr, 
 
 // validateWrapListenerParams validates parameters for WrapSSU2Listener.
 func validateWrapListenerParams(underlying net.PacketConn, config *SSU2Config) error {
-	if underlying == nil {
-		return oops.
-			Code("INVALID_PACKET_CONN").
-			In("ssu2_transport").
-			Errorf("underlying packet connection cannot be nil")
+	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_transport"); err != nil {
+		return err
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ssu2_transport").
-			Errorf("config cannot be nil")
+	if err := validateParam(config, "config", "INVALID_CONFIG", "ssu2_transport"); err != nil {
+		return err
 	}
 
 	// Validate configuration
@@ -501,11 +471,8 @@ func validateWrapListenerParams(underlying net.PacketConn, config *SSU2Config) e
 //   - reserved ports (1-1023)
 //   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true
 func validateSourceAddress(addr *net.UDPAddr, config *SSU2Config) error {
-	if addr == nil {
-		return oops.
-			Code("INVALID_ADDRESS").
-			In("ssu2_transport").
-			Errorf("address cannot be nil")
+	if err := validateParam(addr, "address", "INVALID_ADDRESS", "ssu2_transport"); err != nil {
+		return err
 	}
 
 	// Check port using IsValidSourcePort (rejects nil and port 0)
