@@ -8,6 +8,7 @@ import (
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	internalvalidation "github.com/go-i2p/go-noise/internal/validation"
 	"github.com/go-i2p/go-noise/mod/validation"
 	"github.com/go-i2p/logger"
 	upstreamnoise "github.com/go-i2p/noise"
@@ -409,7 +410,8 @@ func (nc *Config) validateFrameConfiguration() error {
 	// Minimum frame size must accommodate at least one I2NP block header plus AEAD tag
 	// to prevent arithmetic underflow in writeFramed: maxPlaintext = MaxFrameSize - Poly1305Overhead
 	const minAllowedFrameSize = MinDataPhaseFrameSize + Poly1305Overhead
-	if nc.MaxFrameSize < minAllowedFrameSize {
+	comparison := internalvalidation.CompareIntRange(nc.MaxFrameSize, minAllowedFrameSize, SpecMaxFrameSize)
+	if comparison == internalvalidation.BelowRange {
 		return oops.
 			Code("INVALID_MAX_FRAME_SIZE").
 			In("ntcp2").
@@ -418,7 +420,7 @@ func (nc *Config) validateFrameConfiguration() error {
 			Errorf("max frame size %d is too small (minimum %d bytes required for I2NP block header + AEAD tag)", nc.MaxFrameSize, minAllowedFrameSize)
 	}
 
-	if nc.MaxFrameSize > SpecMaxFrameSize {
+	if comparison == internalvalidation.AboveRange {
 		return oops.
 			Code("INVALID_MAX_FRAME_SIZE").
 			In("ntcp2").

@@ -5,6 +5,28 @@ import (
 	"time"
 )
 
+type validationTestCase struct {
+	name    string
+	fn      func() error
+	wantErr bool
+}
+
+func runValidationTests(t *testing.T, cases []validationTestCase) {
+	t.Helper()
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.fn()
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidatePattern_Empty(t *testing.T) {
 	err := ValidatePattern("", "test")
 	if err == nil {
@@ -21,21 +43,11 @@ func TestValidatePattern_Valid(t *testing.T) {
 }
 
 func TestValidateHandshakeTimeout_Zero(t *testing.T) {
-	if err := ValidateHandshakeTimeout(0, "test"); err == nil {
-		t.Fatal("expected error for zero timeout")
-	}
-}
-
-func TestValidateHandshakeTimeout_Negative(t *testing.T) {
-	if err := ValidateHandshakeTimeout(-time.Second, "test"); err == nil {
-		t.Fatal("expected error for negative timeout")
-	}
-}
-
-func TestValidateHandshakeTimeout_Positive(t *testing.T) {
-	if err := ValidateHandshakeTimeout(5*time.Second, "test"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	runValidationTests(t, []validationTestCase{
+		{name: "Zero", fn: func() error { return ValidateHandshakeTimeout(0, "test") }, wantErr: true},
+		{name: "Negative", fn: func() error { return ValidateHandshakeTimeout(-time.Second, "test") }, wantErr: true},
+		{name: "Positive", fn: func() error { return ValidateHandshakeTimeout(5*time.Second, "test") }, wantErr: false},
+	})
 }
 
 func TestValidateKeyLength_Empty(t *testing.T) {
@@ -81,12 +93,10 @@ func TestValidateRetryConfig_Valid(t *testing.T) {
 }
 
 func TestValidateRetryConfig_InvalidRetries(t *testing.T) {
-	if err := ValidateRetryConfig(-2, 0, "test"); err == nil {
-		t.Fatal("expected error for retries < -1")
-	}
-	if err := ValidateRetryConfig(-100, time.Second, "test"); err == nil {
-		t.Fatal("expected error for retries -100")
-	}
+	runValidationTests(t, []validationTestCase{
+		{name: "LessThanNegativeOne", fn: func() error { return ValidateRetryConfig(-2, 0, "test") }, wantErr: true},
+		{name: "LargeNegativeRetries", fn: func() error { return ValidateRetryConfig(-100, time.Second, "test") }, wantErr: true},
+	})
 }
 
 func TestValidateRetryConfig_NegativeBackoff(t *testing.T) {

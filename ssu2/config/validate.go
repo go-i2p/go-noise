@@ -4,6 +4,7 @@ import (
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	internalvalidation "github.com/go-i2p/go-noise/internal/validation"
 	"github.com/go-i2p/go-noise/mod/validation"
 	ssu2hs "github.com/go-i2p/go-noise/ssu2/handshake"
 	"github.com/go-i2p/go-noise/ssu2/wire"
@@ -38,19 +39,12 @@ func (sc *SSU2Config) Validate() error {
 // validateBounds checks if a value satisfies min/max bounds and returns an oops error on failure.
 // This is the workhorse for table-driven numeric validation.
 func validateBounds(v boundsValidator) error {
-	var numVal float64
-	switch val := v.value.(type) {
-	case int:
-		numVal = float64(val)
-	case int64:
-		numVal = float64(val)
-	case float64:
-		numVal = val
-	default:
+	numVal, ok := internalvalidation.ToFloat64(v.value)
+	if !ok {
 		return oops.Code("TYPE_ERROR").In(v.context).Errorf("unsupported type for bounds validation")
 	}
 
-	if numVal < v.min || numVal > v.max {
+	if internalvalidation.CompareFloat64Range(numVal, v.min, v.max) != internalvalidation.InRange {
 		return oops.
 			Code(v.code).
 			In(v.context).
