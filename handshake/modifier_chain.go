@@ -2,6 +2,7 @@ package handshake
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -45,24 +46,41 @@ func NewModifierChain(name string, modifiers ...HandshakeModifier) *ModifierChai
 	}
 }
 
+// logModifyStart emits a debug trace at the start of an Modify* operation.
+func (mc *ModifierChain) logModifyStart(direction string, phase HandshakePhase, dataLen int) {
+	flog("ModifierChain."+direction, logger.Fields{"chain": mc.name, "phase": phase.String(), "data_len": dataLen}).Debug("Applying modifier chain " + direction)
+}
+
+// wrapModifierError wraps a modifier failure with standardised context.
+// direction must be either "ModifyOutbound" or "ModifyInbound".
+func (mc *ModifierChain) wrapModifierError(direction string, modifier HandshakeModifier, index int, phase HandshakePhase, err error) error {
+	flog("ModifierChain."+direction, logger.Fields{"chain": mc.name, "modifier": modifier.Name(), "index": index}).WithError(err).Error("Modifier chain " + direction + " failed")
+	const outboundMsg = "modifier chain outbound processing failed"
+	const inboundMsg = "modifier chain inbound processing failed"
+	msg := outboundMsg
+	if direction == "ModifyInbound" {
+		msg = inboundMsg
+	}
+	return oops.
+		Code("MODIFIER_CHAIN_ERROR").
+		In("handshake").
+		With("chain_name", mc.name).
+		With("modifier_name", modifier.Name()).
+		With("modifier_index", index).
+		With("phase", phase.String()).
+		Wrap(fmt.Errorf("%s: %w", msg, err))
+}
+
 // ModifyOutbound applies all modifiers in the chain to outbound data.
 // Modifiers are applied in the order they were added to the chain.
 func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
-	flog("ModifierChain.ModifyOutbound", logger.Fields{"chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain outbound")
+	mc.logModifyStart("ModifyOutbound", phase, len(data))
 	result := data
 
 	for i, modifier := range mc.modifiers {
 		modified, err := modifier.ModifyOutbound(phase, result)
 		if err != nil {
-			flog("ModifierChain.ModifyOutbound", logger.Fields{"chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain outbound failed")
-			return nil, oops.
-				Code("MODIFIER_CHAIN_ERROR").
-				In("handshake").
-				With("chain_name", mc.name).
-				With("modifier_name", modifier.Name()).
-				With("modifier_index", i).
-				With("phase", phase.String()).
-				Wrapf(err, "modifier chain outbound processing failed")
+			return nil, mc.wrapModifierError("ModifyOutbound", modifier, i, phase, err)
 		}
 		result = modified
 	}
@@ -74,7 +92,7 @@ func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]by
 // Modifiers are applied in reverse order to undo the transformations
 // applied during outbound processing.
 func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
-	flog("ModifierChain.ModifyInbound", logger.Fields{"chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain inbound")
+	mc.logModifyStart("ModifyInbound", phase, len(data))
 	result := data
 
 	// Apply modifiers in reverse order for inbound data
@@ -82,15 +100,7 @@ func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byt
 		modifier := mc.modifiers[i]
 		modified, err := modifier.ModifyInbound(phase, result)
 		if err != nil {
-			flog("ModifierChain.ModifyInbound", logger.Fields{"chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain inbound failed")
-			return nil, oops.
-				Code("MODIFIER_CHAIN_ERROR").
-				In("handshake").
-				With("chain_name", mc.name).
-				With("modifier_name", modifier.Name()).
-				With("modifier_index", i).
-				With("phase", phase.String()).
-				Wrapf(err, "modifier chain inbound processing failed")
+			return nil, mc.wrapModifierError("ModifyInbound", modifier, i, phase, err)
 		}
 		result = modified
 	}
