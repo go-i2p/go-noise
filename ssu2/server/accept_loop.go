@@ -36,7 +36,7 @@ const packetQueueSize = 256
 //
 // Thread safety: This is the sole goroutine reading from the underlying socket.
 func (l *SSU2Listener) receiveLoop() {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "receiveLoop"}).Debug("receiveLoop: starting packet receive loop")
+	flog("receiveLoop").Debug("receiveLoop: starting packet receive loop")
 	defer l.wg.Done()
 
 	buf := make([]byte, MaxPacketSizeIPv4)
@@ -58,7 +58,7 @@ func (l *SSU2Listener) receiveLoop() {
 			}
 			// Log non-shutdown errors and apply exponential backoff to
 			// prevent CPU-spin when the socket enters a persistent error state.
-			log.WithFields(logger.Fields{"pkg": "server", "func": "receiveLoop"}).
+			flog("receiveLoop").
 				WithError(err).Warn("receiveLoop: ReadFrom error; backing off")
 			select {
 			case <-l.shutdownChan:
@@ -89,12 +89,7 @@ func (l *SSU2Listener) receiveLoop() {
 		default:
 			// packetQueue is full - drop packet and warn
 			atomic.AddUint64(&l.droppedPackets, 1)
-			log.WithFields(logger.Fields{
-				"pkg":        "server",
-				"func":       "receiveLoop",
-				"remoteAddr": udpAddr.String(),
-				"dropped":    atomic.LoadUint64(&l.droppedPackets),
-			}).Warn("packetQueue full, dropping packet")
+			flog("receiveLoop", logger.Fields{"remoteAddr": udpAddr.String(), "dropped":    atomic.LoadUint64(&l.droppedPackets)}).Warn("packetQueue full, dropping packet")
 		}
 	}
 }
@@ -109,7 +104,7 @@ func (l *SSU2Listener) receiveLoop() {
 //
 // Thread safety: Multiple workers run concurrently; packet processing must be safe.
 func (l *SSU2Listener) packetWorker() {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "packetWorker"}).Debug("packetWorker: starting packet processing worker")
+	flog("packetWorker").Debug("packetWorker: starting packet processing worker")
 	defer l.wg.Done()
 
 	for {
@@ -141,7 +136,7 @@ func (l *SSU2Listener) packetWorker() {
 // - If routing fails and packet is a TokenRequest, processes it directly
 // - All other routing failures are silently ignored
 func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "handleIncomingPacket", "remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
+	flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
 	packet, ok := l.parseInboundPacket(data)
 	if !ok {
 		return
@@ -158,11 +153,7 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 				var oopsErr oops.OopsError
 				if !errors.As(err, &oopsErr) || oopsErr.Code() != "NO_TOKEN_ISSUED" {
 					atomic.AddUint64(&l.routingErrors, 1)
-					log.WithFields(logger.Fields{
-						"pkg":         "server",
-						"func":        "handleIncomingPacket",
-						"remote_addr": remoteAddr.String(),
-					}).WithError(err).Warn("token request processing failed")
+					flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String()}).WithError(err).Warn("token request processing failed")
 				}
 			}
 			return
@@ -174,13 +165,7 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 		// inbound sessions are failing.  Data packets that fail routing are
 		// typically late arrivals for a closed session and are expected; log
 		// those at Debug to avoid production noise.
-		logEntry := log.WithFields(logger.Fields{
-			"pkg":            "server",
-			"func":           "handleIncomingPacket",
-			"remote_addr":    remoteAddr.String(),
-			"message_type":   packet.MessageType,
-			"routing_errors": atomic.LoadUint64(&l.routingErrors),
-		}).WithError(err)
+		logEntry := flog("handleIncomingPacket", logger.Fields{"remote_addr":    remoteAddr.String(), "message_type":   packet.MessageType, "routing_errors": atomic.LoadUint64(&l.routingErrors)}).WithError(err)
 		if l.router.IsHandshakePacket(packet.MessageType) {
 			logEntry.Warn("handshake packet routing failed")
 		} else {

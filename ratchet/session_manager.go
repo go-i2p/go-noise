@@ -64,7 +64,7 @@ type SessionManager struct {
 
 // NewSessionManager creates a new session manager with the given private key.
 func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*SessionManager, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "NewSessionManager"}).Debug("Creating new garlic session manager")
+	flog("NewSessionManager").Debug("Creating new garlic session manager")
 
 	var publicKey [32]byte
 	privKey, err := i2pcurve25519.NewCurve25519PrivateKey(privateKey[:])
@@ -110,7 +110,7 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 
 // GenerateSessionManager creates a session manager with a freshly generated key pair.
 func GenerateSessionManager() (*SessionManager, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "GenerateSessionManager"}).Debug("Generating new session manager with fresh key pair")
+	flog("GenerateSessionManager").Debug("Generating new session manager with fresh key pair")
 	_, privBytes, err := ecies.GenerateKeyPair()
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to generate session manager key pair")
@@ -142,11 +142,7 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.oneTimeKeys[tag] = key
-	log.WithFields(logger.Fields{
-		"pkg":  "ratchet",
-		"func": "RegisterOneTimeKey",
-		"tag":  fmt.Sprintf("%x", tag),
-	}).Debug("Registered one-time garlic reply key")
+	flog("RegisterOneTimeKey", logger.Fields{"tag":  fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
 }
 
 // ProcessIncomingDHRatchet processes a DH ratchet key received from a peer.
@@ -168,11 +164,7 @@ func (sm *SessionManager) ProcessIncomingDHRatchet(sessionTag [8]byte, newRemote
 
 	session.RemotePublicKey = newRemotePubKey
 
-	log.WithFields(logger.Fields{
-		"pkg":             "ratchet",
-		"func":            "ProcessIncomingDHRatchet",
-		"message_counter": session.MessageCounter,
-	}).Debug("Processed incoming DH ratchet from peer")
+	flog("ProcessIncomingDHRatchet", logger.Fields{"message_counter": session.MessageCounter}).Debug("Processed incoming DH ratchet from peer")
 
 	return nil
 }
@@ -214,13 +206,7 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 		session.mu.Unlock()
 
 		if err != nil {
-			log.WithFields(logger.Fields{
-				"pkg":           "ratchet",
-				"func":          "replenishTagWindowOutsideLock",
-				"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]),
-				"attempt":       attempt + 1,
-				"error":         err.Error(),
-			}).Warn("Failed to generate tags during replenishment")
+			flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "attempt":       attempt + 1, "error":         err.Error()}).Warn("Failed to generate tags during replenishment")
 			return
 		}
 		if len(newTags) == 0 {
@@ -247,13 +233,7 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 	session.mu.Unlock()
 
 	if finalRemaining > 0 {
-		log.WithFields(logger.Fields{
-			"pkg":           "ratchet",
-			"func":          "replenishTagWindowOutsideLock",
-			"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]),
-			"missing_tags":  finalRemaining,
-			"max_attempts":  maxReplenishAttempts,
-		}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
+		flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "missing_tags":  finalRemaining, "max_attempts":  maxReplenishAttempts}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
 	}
 }
 
@@ -271,7 +251,7 @@ type tagWithCounter struct {
 // Returns the new tags with their associated counters, which are not yet
 // registered in sm.tagIndex or sm.tagCounterIndex.
 func generateTagsOutsideLock(session *Session) ([]tagWithCounter, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "generateTagsOutsideLock", "pending_count": len(session.pendingTags), "window_size": tagWindowSize}).Debug("Generating tags outside lock")
+	flog("generateTagsOutsideLock", logger.Fields{"pending_count": len(session.pendingTags), "window_size": tagWindowSize}).Debug("Generating tags outside lock")
 	if session.RecvTagRatchet == nil {
 		return nil, oops.Errorf("RecvTagRatchet is nil for session — cannot replenish incoming tag window")
 	}
@@ -303,11 +283,7 @@ func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags [
 			break
 		}
 		if existing, ok := sm.tagIndex[tc.tag]; ok && existing != session {
-			log.WithFields(logger.Fields{
-				"pkg":  "ratchet",
-				"func": "installGeneratedTagsLocked",
-				"tag":  fmt.Sprintf("%x", tc.tag),
-			}).Warn("Tag collision detected, skipping duplicate tag")
+			flog("installGeneratedTagsLocked", logger.Fields{"tag":  fmt.Sprintf("%x", tc.tag)}).Warn("Tag collision detected, skipping duplicate tag")
 			continue
 		}
 		session.pendingTags = append(session.pendingTags, tc.tag)
@@ -337,11 +313,7 @@ func (sm *SessionManager) generateTagWindow(session *Session) error {
 		counter := session.nextRecvTagCounter
 		session.nextRecvTagCounter++
 		if existing, ok := sm.tagIndex[tag]; ok && existing != session {
-			log.WithFields(logger.Fields{
-				"pkg":  "ratchet",
-				"func": "generateTagWindow",
-				"tag":  fmt.Sprintf("%x", tag),
-			}).Warn("Tag collision detected, skipping duplicate tag")
+			flog("generateTagWindow", logger.Fields{"tag":  fmt.Sprintf("%x", tag)}).Warn("Tag collision detected, skipping duplicate tag")
 			continue
 		}
 		session.pendingTags = append(session.pendingTags, tag)

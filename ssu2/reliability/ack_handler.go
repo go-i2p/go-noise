@@ -70,7 +70,7 @@ type PendingACK struct {
 
 // NewACKHandler creates a new ACK handler with default settings.
 func NewACKHandler() *ACKHandler {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewACKHandler"}).Debug("Creating new ACKHandler")
+	flog("NewACKHandler").Debug("Creating new ACKHandler")
 	return &ACKHandler{
 		receivedPackets: make([]uint32, 0, 64),
 		pendingACKs:     make(map[uint32]*PendingACK),
@@ -83,7 +83,7 @@ func NewACKHandler() *ACKHandler {
 // RecordReceived marks a packet number as received and needing acknowledgment.
 // This should be called for every successfully processed inbound packet.
 func (h *ACKHandler) RecordReceived(packetNum uint32) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "RecordReceived", "packetNum": packetNum}).Debug("RecordReceived: marking packet as received")
+	flog("RecordReceived", logger.Fields{"packetNum": packetNum}).Debug("RecordReceived: marking packet as received")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.receivedPackets = append(h.receivedPackets, packetNum)
@@ -92,7 +92,7 @@ func (h *ACKHandler) RecordReceived(packetNum uint32) {
 // SetACKThreshold sets the number of received packets that triggers an
 // immediate ACK. Must be >= 1.
 func (h *ACKHandler) SetACKThreshold(threshold int) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "SetACKThreshold", "threshold": threshold}).Debug("SetACKThreshold: updating ACK threshold")
+	flog("SetACKThreshold", logger.Fields{"threshold": threshold}).Debug("SetACKThreshold: updating ACK threshold")
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -105,7 +105,7 @@ func (h *ACKHandler) SetACKThreshold(threshold int) {
 // This limits ACK blocks to fit within the available MTU. Must be >= 5
 // (minimum ACK block: 4-byte throughPN + 1-byte acnt).
 func (h *ACKHandler) SetMaxACKDataSize(size int) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "SetMaxACKDataSize", "size": size}).Debug("SetMaxACKDataSize: updating max ACK data size")
+	flog("SetMaxACKDataSize", logger.Fields{"size": size}).Debug("SetMaxACKDataSize: updating max ACK data size")
 	if size < 5 {
 		size = 5
 	}
@@ -117,7 +117,7 @@ func (h *ACKHandler) SetMaxACKDataSize(size int) {
 // ShouldSendACK determines if an ACK should be sent based on timing and packet count.
 // Per ssu2.rst: ACK delay = max(10, min(rtt/6, 150)) ms
 func (h *ACKHandler) ShouldSendACK(rtt time.Duration) bool {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ShouldSendACK", "rtt": rtt}).Debug("ShouldSendACK: checking if ACK should be sent")
+	flog("ShouldSendACK", logger.Fields{"rtt": rtt}).Debug("ShouldSendACK: checking if ACK should be sent")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.receivedPackets) == 0 {
@@ -144,7 +144,7 @@ func (h *ACKHandler) ShouldSendACK(rtt time.Duration) bool {
 // GenerateACK creates an ACK block (Type 12) for all received packets.
 // Returns nil if there are no packets to acknowledge.
 func (h *ACKHandler) GenerateACK() (*SSU2Block, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "GenerateACK"}).Debug("Generating ACK block")
+	flog("GenerateACK").Debug("Generating ACK block")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.receivedPackets) == 0 {
@@ -172,7 +172,7 @@ func (h *ACKHandler) GenerateACK() (*SSU2Block, error) {
 // countConsecutiveFromTop counts how many packets form a consecutive run
 // from the highest packet number downward.
 func countConsecutiveFromTop(sorted []uint32) int {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "countConsecutiveFromTop", "sortedLen": len(sorted)}).Debug("countConsecutiveFromTop: counting consecutive packets from top")
+	flog("countConsecutiveFromTop", logger.Fields{"sortedLen": len(sorted)}).Debug("countConsecutiveFromTop: counting consecutive packets from top")
 	count := 1
 	for i := 1; i < len(sorted); i++ {
 		if sorted[i] == sorted[i-1]-1 {
@@ -186,7 +186,7 @@ func countConsecutiveFromTop(sorted []uint32) int {
 
 // buildACKRanges builds nack/ack range pairs for non-consecutive packets.
 func buildACKRanges(sorted []uint32, start, maxBytes int) []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "buildACKRanges", "start": start, "maxBytes": maxBytes, "sortedLen": len(sorted)}).Debug("buildACKRanges: building ACK range pairs")
+	flog("buildACKRanges", logger.Fields{"start": start, "maxBytes": maxBytes, "sortedLen": len(sorted)}).Debug("buildACKRanges: building ACK range pairs")
 	var rangeBytes []byte
 	i := start
 	for i < len(sorted) {
@@ -222,7 +222,7 @@ func buildACKRanges(sorted []uint32, start, maxBytes int) []byte {
 // ProcessACK handles an incoming ACK block, removing acknowledged packets
 // from the pending queue. Returns the list of acked packet numbers.
 func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ProcessACK"}).Debug("Processing ACK block")
+	flog("ProcessACK").Debug("Processing ACK block")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if ackBlock.Type != BlockTypeACK {
@@ -304,7 +304,7 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 
 // AddPending marks a packet as sent and awaiting acknowledgment.
 func (h *ACKHandler) AddPending(packetNum uint32) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "AddPending", "packetNum": packetNum}).Debug("AddPending: marking packet as pending ACK")
+	flog("AddPending", logger.Fields{"packetNum": packetNum}).Debug("AddPending: marking packet as pending ACK")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.pendingACKs[packetNum] = &PendingACK{

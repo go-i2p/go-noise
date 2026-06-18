@@ -55,7 +55,7 @@ func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPad
 // A paddingRatio of 0.0 means no ratio-based padding (uses min/max only).
 // A paddingRatio of 1.0 means 100% padding (double the message size).
 func NewNTCP2PaddingModifierWithRatio(name string, minPadding, maxPadding int, useAEADPadding bool, paddingRatio float64) (*NTCP2PaddingModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewNTCP2PaddingModifierWithRatio", "name": name}).Debug("Creating NTCP2 padding modifier")
+	flog("NewNTCP2PaddingModifierWithRatio", logger.Fields{"name": name}).Debug("Creating NTCP2 padding modifier")
 	engine, err := handshake.NewPaddingEngine(handshake.PaddingEngineConfig{
 		MinPadding:   minPadding,
 		MaxPadding:   maxPadding,
@@ -94,11 +94,11 @@ func (npm *NTCP2PaddingModifier) ModifyOutbound(phase handshake.HandshakePhase, 
 
 	paddingSize := npm.engine.CalculatePaddingSize(len(data))
 	if paddingSize == 0 {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2PaddingModifier.ModifyOutbound"}).Debug("No padding needed for outbound data")
+		flog("NTCP2PaddingModifier.ModifyOutbound").Debug("No padding needed for outbound data")
 		return data, nil
 	}
 
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2PaddingModifier.ModifyOutbound", "padding_size": paddingSize}).Debug("Adding NTCP2 outbound padding")
+	flog("NTCP2PaddingModifier.ModifyOutbound", logger.Fields{"padding_size": paddingSize}).Debug("Adding NTCP2 outbound padding")
 
 	if npm.useAEADPadding && phase > handshake.PhaseFinal {
 		return npm.engine.AddAEADPadding(data, paddingSize)
@@ -117,7 +117,7 @@ func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, d
 	npm.mu.Lock()
 	defer npm.mu.Unlock()
 
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2PaddingModifier.ModifyInbound"}).Debug("Removing NTCP2 inbound padding")
+	flog("NTCP2PaddingModifier.ModifyInbound").Debug("Removing NTCP2 inbound padding")
 
 	if npm.useAEADPadding && phase > handshake.PhaseFinal {
 		return npm.engine.RemoveTrailingAEADPadding(data, npm.engine.Config.MaxPadding)
@@ -353,7 +353,7 @@ func (npm *NTCP2PaddingModifier) Clone() handshake.HandshakeModifier {
 	})
 	if err != nil {
 		// Should never happen since we're copying a valid config
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2PaddingModifier.Clone"}).
+		flog("NTCP2PaddingModifier.Clone").
 			Errorf("Failed to clone padding engine: %v", err)
 		// Return the original on error (caller must handle potential shared state)
 		return npm

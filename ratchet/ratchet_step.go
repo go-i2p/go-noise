@@ -13,7 +13,7 @@ import (
 // inclusive ("Maximum value is 65535. ... Higher values must never be used"),
 // so the guard rejects only counters strictly greater than MaxMessageNumber.
 func advanceRatchets(session *Session) (messageKey [32]byte, sessionTag [8]byte, err error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "advanceRatchets", "message_counter": session.MessageCounter}).Debug("advancing symmetric and tag ratchets")
+	flog("advanceRatchets", logger.Fields{"message_counter": session.MessageCounter}).Debug("advancing symmetric and tag ratchets")
 	if session.MessageCounter > MaxMessageNumber {
 		return [32]byte{}, [8]byte{}, oops.Errorf(
 			"message number %d exceeds maximum %d, session must be ratcheted",
@@ -52,7 +52,7 @@ func attemptDHRatchetRotation(session *Session) error {
 				"DH ratchet failed %d consecutive times (max %d), forward secrecy compromised",
 				session.consecutiveDHFailures, MaxConsecutiveDHFailures)
 		}
-		log.WithFields(logger.Fields{"pkg": "ratchet", "func": "attemptDHRatchetRotation", "consecutive_failures": session.consecutiveDHFailures}).WithError(err).
+		flog("attemptDHRatchetRotation", logger.Fields{"consecutive_failures": session.consecutiveDHFailures}).WithError(err).
 			Warn("DH ratchet rotation failed, continuing with symmetric ratchet")
 	} else {
 		session.dhRatchetCounter = 0
@@ -98,13 +98,7 @@ func performDHRatchetStep(session *Session) error {
 	// Safe: guarded >= MaxKeyID above.
 	session.sendKeyID++
 
-	log.WithFields(logger.Fields{
-		"pkg":             "ratchet",
-		"func":            "performDHRatchetStep",
-		"message_counter": session.MessageCounter,
-		"send_key_id":     session.sendKeyID,
-		"new_pub_key":     fmt.Sprintf("%x", newPubKey[:8]),
-	}).Debug("DH ratchet rotation completed, NextKey block queued")
+	flog("performDHRatchetStep", logger.Fields{"message_counter": session.MessageCounter, "send_key_id":     session.sendKeyID, "new_pub_key":     fmt.Sprintf("%x", newPubKey[:8])}).Debug("DH ratchet rotation completed, NextKey block queued")
 
 	return nil
 }

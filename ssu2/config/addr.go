@@ -56,7 +56,7 @@ type SSU2Addr struct {
 // connID should be a cryptographically secure random 8-byte value (use GenerateConnectionID).
 // role should be either "initiator" or "responder".
 func NewSSU2Addr(underlying net.Addr, routerHash data.Hash, connID uint64, role string) (*SSU2Addr, error) {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "NewSSU2Addr", "role": role, "connID": connID}).Debug("Creating new SSU2Addr")
+	flog("NewSSU2Addr", logger.Fields{"role": role, "connID": connID}).Debug("Creating new SSU2Addr")
 	if underlying == nil {
 		return nil, oops.
 			Code("INVALID_UNDERLYING_ADDR").
@@ -94,7 +94,7 @@ func NewSSU2Addr(underlying net.Addr, routerHash data.Hash, connID uint64, role 
 // WithDestinationHash sets the destination hash for tunnel connections.
 // Returns a new SSU2Addr instance (immutable pattern).
 func (sa *SSU2Addr) WithDestinationHash(destHash data.Hash) *SSU2Addr {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "WithDestinationHash", "connID": sa.connectionID}).Debug("WithDestinationHash: setting destination hash")
+	flog("WithDestinationHash", logger.Fields{"connID": sa.connectionID}).Debug("WithDestinationHash: setting destination hash")
 	return sa.copyWithModifications(func(newAddr *SSU2Addr) {
 		h := destHash
 		newAddr.destHash = &h
@@ -105,7 +105,7 @@ func (sa *SSU2Addr) WithDestinationHash(destHash data.Hash) *SSU2Addr {
 // introducerAddr is the UDP address of the introducer service.
 // Returns a new SSU2Addr instance (immutable pattern).
 func (sa *SSU2Addr) WithIntroducer(introducerAddr net.Addr) (*SSU2Addr, error) {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "WithIntroducer", "introducerAddr": introducerAddr}).Debug("WithIntroducer: setting introducer address")
+	flog("WithIntroducer", logger.Fields{"introducerAddr": introducerAddr}).Debug("WithIntroducer: setting introducer address")
 	if introducerAddr == nil {
 		return nil, oops.
 			Code("INVALID_INTRODUCER_ADDR").
@@ -121,7 +121,7 @@ func (sa *SSU2Addr) WithIntroducer(introducerAddr net.Addr) (*SSU2Addr, error) {
 // copyWithModifications creates a defensive copy and applies modifications.
 // Helper function to maintain immutability pattern while reducing code duplication.
 func (sa *SSU2Addr) copyWithModifications(modify func(*SSU2Addr)) *SSU2Addr {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "copyWithModifications", "connID": sa.connectionID}).Debug("copyWithModifications: creating defensive copy of SSU2Addr")
+	flog("copyWithModifications", logger.Fields{"connID": sa.connectionID}).Debug("copyWithModifications: creating defensive copy of SSU2Addr")
 	newAddr := &SSU2Addr{
 		underlying:   sa.underlying,
 		connectionID: sa.connectionID,

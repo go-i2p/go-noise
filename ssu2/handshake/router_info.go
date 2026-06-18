@@ -4,7 +4,6 @@ import (
 	"bytes"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
-	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
 
@@ -17,10 +16,7 @@ func extractPeerRouterInfo(payload []byte) ([]byte, error) {
 	}
 	blocks, err := DeserializeBlocks(payload)
 	if err != nil {
-		log.WithFields(logger.Fields{
-			"pkg":  "ssu2",
-			"func": "extractPeerRouterInfo",
-		}).WithError(err).Warn("failed to deserialize SessionConfirmed blocks")
+		flog("extractPeerRouterInfo").WithError(err).Warn("failed to deserialize SessionConfirmed blocks")
 		return nil, oops.Wrapf(err, "failed to deserialize SessionConfirmed blocks")
 	}
 	for _, block := range blocks {

@@ -42,7 +42,7 @@ type PacketRouter struct {
 //
 // Returns a new PacketRouter ready to route packets.
 func NewPacketRouter(newSessionHandler func(*net.UDPAddr, *SSU2Packet) (*SSU2Conn, error)) *PacketRouter {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "NewPacketRouter"}).Debug("Creating new PacketRouter")
+	flog("NewPacketRouter").Debug("Creating new PacketRouter")
 	return &PacketRouter{
 		sessions:          make(map[uint64]*SSU2Conn),
 		newSessionHandler: newSessionHandler,
@@ -57,7 +57,7 @@ func NewPacketRouter(newSessionHandler func(*net.UDPAddr, *SSU2Packet) (*SSU2Con
 //
 // Returns error if the connection ID is already registered.
 func (pr *PacketRouter) AddSession(conn *SSU2Conn) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "AddSession"}).Debug("Adding session to packet router")
+	flog("AddSession").Debug("Adding session to packet router")
 	if conn == nil {
 		return oops.
 			Code("INVALID_SESSION").
@@ -94,7 +94,7 @@ func (pr *PacketRouter) AddSession(conn *SSU2Conn) error {
 // the non-atomic check-and-act of SessionCount() vs AddSession() that allows
 // multiple workers to exceed MaxSessions simultaneously.
 func (pr *PacketRouter) AddSessionIfBelowCap(conn *SSU2Conn, maxSessions int) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "AddSessionIfBelowCap"}).Debug("Adding session with capacity check")
+	flog("AddSessionIfBelowCap").Debug("Adding session with capacity check")
 	if conn == nil {
 		return oops.
 			Code("INVALID_SESSION").
@@ -144,7 +144,7 @@ func (pr *PacketRouter) AddSessionIfBelowCap(conn *SSU2Conn, maxSessions int) er
 // Parameters:
 //   - connID: The connection ID to remove
 func (pr *PacketRouter) RemoveSession(connID uint64) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "RemoveSession", "connID": connID}).Debug("Removing session from packet router")
+	flog("RemoveSession", logger.Fields{"connID": connID}).Debug("Removing session from packet router")
 	pr.sessionMutex.Lock()
 	defer pr.sessionMutex.Unlock()
 
@@ -175,7 +175,7 @@ func (pr *PacketRouter) GetSession(connID uint64) *SSU2Conn {
 //
 // Returns error if routing fails or session doesn't exist.
 func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "RoutePacket"}).Debug("Routing incoming packet")
+	flog("RoutePacket").Debug("Routing incoming packet")
 	if packet == nil {
 		return oops.
 			Code("INVALID_PACKET").
@@ -269,7 +269,7 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 //   - uint64: The destination connection ID
 //   - error: If header is invalid or too short
 func (pr *PacketRouter) ExtractConnectionID(header []byte) (uint64, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "ExtractConnectionID", "headerLen": len(header)}).Debug("ExtractConnectionID: extracting connection ID from header")
+	flog("ExtractConnectionID", logger.Fields{"headerLen": len(header)}).Debug("ExtractConnectionID: extracting connection ID from header")
 	// Validate header size
 	if len(header) < ShortHeaderSize {
 		return 0, oops.

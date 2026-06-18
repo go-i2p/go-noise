@@ -99,7 +99,7 @@ func NewSSU2Block(blockType uint8, data []byte) *SSU2Block {
 //   - []byte: Wire format block data
 //   - error: If block is invalid or data too large
 func (b *SSU2Block) Serialize() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Serialize", "blockType": b.Type, "dataLen": len(b.Data)}).Debug("Serialize: encoding block to wire format")
+	flog("Serialize", logger.Fields{"blockType": b.Type, "dataLen": len(b.Data)}).Debug("Serialize: encoding block to wire format")
 	// Validate block
 	if err := b.validate(); err != nil {
 		return nil, oops.Wrapf(err, "invalid block")
@@ -133,7 +133,7 @@ func (b *SSU2Block) Serialize() ([]byte, error) {
 //   - int: Number of bytes consumed from data
 //   - error: If data is malformed or too short
 func (b *SSU2Block) Deserialize(data []byte) (int, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Deserialize", "dataLen": len(data)}).Debug("Deserialize: decoding block from wire format")
+	flog("Deserialize", logger.Fields{"dataLen": len(data)}).Debug("Deserialize: decoding block from wire format")
 	// Check minimum size
 	if len(data) < minBlockHeaderSize {
 		return 0, oops.Errorf("block too short: %d bytes (minimum %d)", len(data), minBlockHeaderSize)
@@ -221,7 +221,7 @@ func (b *SSU2Block) GetData() []byte {
 // Termination (6) is second-to-last, per spec §Blocks.
 // Returns a new slice; the original is not modified.
 func enforceBlockOrder(blocks []*SSU2Block) []*SSU2Block {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "enforceBlockOrder", "blockCount": len(blocks)}).Debug("enforceBlockOrder: reordering blocks per spec")
+	flog("enforceBlockOrder", logger.Fields{"blockCount": len(blocks)}).Debug("enforceBlockOrder: reordering blocks per spec")
 	var termBlock, padBlock *SSU2Block
 	normal := make([]*SSU2Block, 0, len(blocks))
 
@@ -258,7 +258,7 @@ func enforceBlockOrder(blocks []*SSU2Block) []*SSU2Block {
 //   - []byte: Concatenated wire format of all blocks
 //   - error: If any block fails to serialize
 func SerializeBlocks(blocks []*SSU2Block) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "SerializeBlocks", "blockCount": len(blocks)}).Debug("SerializeBlocks: serializing multiple blocks")
+	flog("SerializeBlocks", logger.Fields{"blockCount": len(blocks)}).Debug("SerializeBlocks: serializing multiple blocks")
 	if len(blocks) == 0 {
 		return []byte{}, nil
 	}
@@ -297,7 +297,7 @@ func SerializeBlocks(blocks []*SSU2Block) ([]byte, error) {
 //   - []*SSU2Block: Slice of deserialized blocks
 //   - error: If deserialization fails
 func DeserializeBlocks(data []byte) ([]*SSU2Block, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "DeserializeBlocks", "dataLen": len(data)}).Debug("DeserializeBlocks: deserializing blocks from data")
+	flog("DeserializeBlocks", logger.Fields{"dataLen": len(data)}).Debug("DeserializeBlocks: deserializing blocks from data")
 	if len(data) == 0 {
 		return []*SSU2Block{}, nil
 	}

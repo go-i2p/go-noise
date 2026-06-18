@@ -28,7 +28,7 @@ const FrameLengthFieldSize = 2
 // When no length obfuscator is set, delegates directly to NoiseConn.Read.
 func (nc *Conn) Read(b []byte) (int, error) {
 	if nc.broken.Load() {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.Read"}).Warn("Read attempted on broken NTCP2 connection")
+		flog("NTCP2Conn.Read").Warn("Read attempted on broken NTCP2 connection")
 		return 0, oops.
 			Code("CONNECTION_BROKEN").
 			In("ntcp2").
@@ -166,14 +166,7 @@ func (nc *Conn) readAndDecryptFrame(underlying net.Conn, frameLen uint16) ([]byt
 	nRead, err := io.ReadFull(underlying, ciphertext)
 	if err != nil {
 		nc.broken.Store(true)
-		log.WithFields(logger.Fields{
-			"pkg":          "ntcp2",
-			"func":         "NTCP2Conn.readAndDecryptFrame",
-			"frame_length": frameLen,
-			"bytes_read":   nRead,
-			"read_nonce":   nc.readNonce,
-			"remote_addr":  nc.remoteAddr.String(),
-		}).WithError(err).Error("Frame data read failed (SipHash deobfuscated length may be wrong)")
+		flog("NTCP2Conn.readAndDecryptFrame", logger.Fields{"frame_length": frameLen, "bytes_read":   nRead, "read_nonce":   nc.readNonce, "remote_addr":  nc.remoteAddr.String()}).WithError(err).Error("Frame data read failed (SipHash deobfuscated length may be wrong)")
 		return nil, oops.
 			Code("READ_FRAME_FAILED").
 			In("ntcp2").
@@ -218,7 +211,7 @@ func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
 			// than crashing, but flag the connection as broken since the
 			// SipHash counter has advanced and the truncated data is lost.
 			nc.broken.Store(true)
-			log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.bufferPlaintext", "overflow": len(overflow)}).Error("plaintext overflow exceeds max read buffer; connection is broken")
+			flog("NTCP2Conn.bufferPlaintext", logger.Fields{"overflow": len(overflow)}).Error("plaintext overflow exceeds max read buffer; connection is broken")
 			overflow = overflow[:maxReadBufferSize]
 		}
 		nc.readBuffer = make([]byte, len(overflow))
@@ -239,7 +232,7 @@ func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
 // is applied before returning the error.
 func (nc *Conn) validateFrameLength(frameLen uint16) error {
 	if frameLen < MinDataPhaseFrameSize {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.validateFrameLength", "frame_length": frameLen}).Warn("Frame length below minimum")
+		flog("NTCP2Conn.validateFrameLength", logger.Fields{"frame_length": frameLen}).Warn("Frame length below minimum")
 		if underlying := nc.noiseConn.Underlying(); underlying != nil {
 			nc.handleAEADError(underlying)
 		}
@@ -273,7 +266,7 @@ func (nc *Conn) validateFrameLength(frameLen uint16) error {
 // MaxFrameSize minus Poly1305Overhead bytes of plaintext each.
 func (nc *Conn) Write(b []byte) (int, error) {
 	if nc.broken.Load() {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.Write"}).Warn("Write attempted on broken NTCP2 connection")
+		flog("NTCP2Conn.Write").Warn("Write attempted on broken NTCP2 connection")
 		return 0, oops.
 			Code("CONNECTION_BROKEN").
 			In("ntcp2").

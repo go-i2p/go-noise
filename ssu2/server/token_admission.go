@@ -73,12 +73,7 @@ func newFirstSightTracker(window time.Duration, maxEntries int) *firstSightTrack
 	if maxEntries <= 0 {
 		maxEntries = 50000
 	}
-	log.WithFields(logger.Fields{
-		"pkg":         "ssu2",
-		"func":        "newFirstSightTracker",
-		"window":      window,
-		"max_entries": maxEntries,
-	}).Debug("Creating first-sight tracker")
+	flog("newFirstSightTracker", logger.Fields{"window":      window, "max_entries": maxEntries}).Debug("Creating first-sight tracker")
 	return &firstSightTracker{
 		entries:    make(map[string]*list.Element),
 		order:      list.New(),
@@ -211,12 +206,7 @@ func newTokenIssuanceLimiter(rate, burst float64) *tokenIssuanceLimiter {
 			burst = 1
 		}
 	}
-	log.WithFields(logger.Fields{
-		"pkg":   "ssu2",
-		"func":  "newTokenIssuanceLimiter",
-		"rate":  rate,
-		"burst": burst,
-	}).Debug("Creating global token issuance limiter")
+	flog("newTokenIssuanceLimiter", logger.Fields{"rate":  rate, "burst": burst}).Debug("Creating global token issuance limiter")
 	return &tokenIssuanceLimiter{
 		rate:       rate,
 		burst:      burst,

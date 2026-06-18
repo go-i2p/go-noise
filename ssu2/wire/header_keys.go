@@ -46,7 +46,7 @@ type HeaderProtectorManager struct {
 // remoteIntroKey is the remote peer's intro key (can be nil for listeners).
 // isInitiator indicates whether we are initiating the handshake.
 func NewHeaderProtectorManager(introKey, remoteIntroKey []byte, isInitiator bool) (*HeaderProtectorManager, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewHeaderProtectorManager", "isInitiator": isInitiator}).Debug("Creating header protector manager")
+	flog("NewHeaderProtectorManager", logger.Fields{"isInitiator": isInitiator}).Debug("Creating header protector manager")
 	if len(introKey) != HeaderKeySize {
 		return nil, oops.
 			Code("INVALID_INTRO_KEY").
@@ -77,7 +77,7 @@ func NewHeaderProtectorManager(introKey, remoteIntroKey []byte, isInitiator bool
 // This creates a new protector with the appropriate keys based on the packet type
 // and whether we are the initiator or responder.
 func (hpm *HeaderProtectorManager) GetProtectorForType(headerType HeaderType) (*HeaderProtector, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "GetProtectorForType", "headerType": headerType}).Debug("Selecting header protector for packet type")
+	flog("GetProtectorForType", logger.Fields{"headerType": headerType}).Debug("Selecting header protector for packet type")
 	hpm.mu.RLock()
 	defer hpm.mu.RUnlock()
 
@@ -117,7 +117,7 @@ func (hpm *HeaderProtectorManager) GetProtectorForType(headerType HeaderType) (*
 // keysForIntroProtected returns keys for packets protected solely by intro keys
 // (SessionRequest, TokenRequest).
 func (hpm *HeaderProtectorManager) keysForIntroProtected() (k1, k2 []byte, err error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "keysForIntroProtected", "isInitiator": hpm.isInitiator}).Debug("Resolving intro-protected header keys")
+	flog("keysForIntroProtected", logger.Fields{"isInitiator": hpm.isInitiator}).Debug("Resolving intro-protected header keys")
 	if hpm.isInitiator {
 		if len(hpm.remoteIntroKey) != HeaderKeySize {
 			return nil, nil, oops.

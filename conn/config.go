@@ -178,13 +178,16 @@ func (c *ConnConfig) GetModifierChain() *handshake.ModifierChain {
 	if c.chainCached {
 		return c.cachedChain
 	}
-	if len(c.Modifiers) == 0 {
-		c.cachedChain = nil
-	} else {
-		c.cachedChain = handshake.NewModifierChain("config-chain", c.Modifiers...)
-	}
+	c.cachedChain = buildModifierChain(c.Modifiers)
 	c.chainCached = true
 	return c.cachedChain
+}
+
+func buildModifierChain(modifiers []handshake.HandshakeModifier) *handshake.ModifierChain {
+	if len(modifiers) == 0 {
+		return nil
+	}
+	return handshake.NewModifierChain("config-chain", modifiers...)
 }
 
 // invalidateModifierCache resets the cached modifier chain so it will be

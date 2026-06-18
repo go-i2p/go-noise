@@ -160,7 +160,7 @@ type DataHandlerStats struct {
 // NewDataHandler creates a new Data message handler.
 // queueSize determines how many complete messages can be buffered.
 func NewDataHandler(queueSize int) *DataHandler {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "NewDataHandler", "queueSize": queueSize}).Debug("creating data handler")
+	flog("NewDataHandler", logger.Fields{"queueSize": queueSize}).Debug("creating data handler")
 	if queueSize <= 0 {
 		queueSize = 100 // Default queue size
 	}
@@ -177,7 +177,7 @@ func NewDataHandler(queueSize int) *DataHandler {
 // newDataHandlerFromConfig creates a DataHandler using SSU2Config values.
 // L-6: Uses config.MessageQueueSize if specified, defaults to 100.
 func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "newDataHandlerFromConfig"}).Debug("creating data handler from config")
+	flog("newDataHandlerFromConfig").Debug("creating data handler from config")
 	queueSize := 100 // Default
 	if config != nil && config.MessageQueueSize > 0 {
 		queueSize = config.MessageQueueSize
@@ -201,7 +201,7 @@ func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 // reaper goroutine's defer. This counter is checked in tests to catch accidental
 // duplicate StartReaper() calls.
 func (h *DataHandler) StartReaper() {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "StartReaper", "fragmentTimeout": h.fragmentTimeout}).Debug("launching fragment cleanup goroutine")
+	flog("StartReaper", logger.Fields{"fragmentTimeout": h.fragmentTimeout}).Debug("launching fragment cleanup goroutine")
 	h.reaperWG.Add(1)
 	go func() {
 		defer h.reaperWG.Done()
@@ -220,7 +220,7 @@ func (h *DataHandler) StartReaper() {
 
 // Close stops the fragment reaper goroutine and waits for it to exit.
 func (h *DataHandler) Close() {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "Close"}).Debug("stopping DataHandler reaper")
+	flog("Close").Debug("stopping DataHandler reaper")
 	// STATE-4: Use closeOnce to ensure stopReaper is closed exactly once.
 	// The previous select-based guard was not safe for concurrent Close()
 	// calls — two goroutines could both pass the "channel empty?" check and
@@ -236,7 +236,7 @@ func (h *DataHandler) Close() {
 
 // SetCallbacks sets the callback handlers for block types.
 func (h *DataHandler) SetCallbacks(callbacks DataHandlerCallbacks) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "SetCallbacks"}).Debug("updating DataHandler callbacks")
+	flog("SetCallbacks").Debug("updating DataHandler callbacks")
 	h.callbackMu.Lock()
 	defer h.callbackMu.Unlock()
 	h.callbacks = callbacks
@@ -246,7 +246,7 @@ func (h *DataHandler) SetCallbacks(callbacks DataHandlerCallbacks) {
 // Callers should use the snapshot rather than reading h.callbacks directly
 // to avoid races with SetCallbacks.
 func (h *DataHandler) getCallbacks() DataHandlerCallbacks {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "getCallbacks"}).Debug("retrieving current callbacks")
+	flog("getCallbacks").Debug("retrieving current callbacks")
 	h.callbackMu.RLock()
 	defer h.callbackMu.RUnlock()
 	return h.callbacks
@@ -254,7 +254,7 @@ func (h *DataHandler) getCallbacks() DataHandlerCallbacks {
 
 // GetBlockRouter returns the block router for registering external handlers.
 func (h *DataHandler) GetBlockRouter() *BlockRouter {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "GetBlockRouter"}).Debug("returning block router")
+	flog("GetBlockRouter").Debug("returning block router")
 	return h.blockRouter
 }
 
@@ -278,7 +278,7 @@ func (h *DataHandler) ProcessDataPacket(packet *SSU2Packet) ([]*SSU2Block, error
 	// - Padding, if present, must be the last block.
 	// - Termination, if present, must be the last block except for Padding.
 	if err := validateBlockOrdering(blocks); err != nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "ProcessDataPacket", "error": err}).Warn("Invalid block ordering")
+		flog("ProcessDataPacket", logger.Fields{"error": err}).Warn("Invalid block ordering")
 	}
 
 	// Process each block
@@ -298,13 +298,13 @@ func (h *DataHandler) ProcessDataPacket(packet *SSU2Packet) ([]*SSU2Block, error
 func (h *DataHandler) processBlock(block *SSU2Block) error {
 	switch block.Type {
 	case BlockTypeI2NPMessage:
-		log.WithFields(logger.Fields{"pkg": "session", "func": "processBlock", "data_len": len(block.Data)}).Debug("processing I2NPMessage block")
+		flog("processBlock", logger.Fields{"data_len": len(block.Data)}).Debug("processing I2NPMessage block")
 		return h.handleI2NPMessage(block.Data)
 	case BlockTypeFirstFragment:
-		log.WithFields(logger.Fields{"pkg": "session", "func": "processBlock", "data_len": len(block.Data)}).Debug("processing FirstFragment block")
+		flog("processBlock", logger.Fields{"data_len": len(block.Data)}).Debug("processing FirstFragment block")
 		return h.handleFirstFragment(block.Data)
 	case BlockTypeFollowOnFragment:
-		log.WithFields(logger.Fields{"pkg": "session", "func": "processBlock", "data_len": len(block.Data)}).Debug("processing FollowOnFragment block")
+		flog("processBlock", logger.Fields{"data_len": len(block.Data)}).Debug("processing FollowOnFragment block")
 		return h.handleFollowOnFragment(block.Data)
 	case BlockTypePadding:
 		return nil
@@ -356,21 +356,11 @@ func (h *DataHandler) dispatchNonCriticalBlock(block *SSU2Block) {
 		err = h.handleCongestion(block.Data)
 	default:
 		h.incrementStat(&h.stats.UnknownBlocks)
-		log.WithFields(logger.Fields{
-			"pkg":        "ssu2",
-			"func":       "dispatchNonCriticalBlock",
-			"blockType":  block.Type,
-			"dataLength": len(block.Data),
-		}).Warn("Received unknown block type")
+		flog("dispatchNonCriticalBlock", logger.Fields{"blockType":  block.Type, "dataLength": len(block.Data)}).Warn("Received unknown block type")
 		return
 	}
 	if err != nil {
-		log.WithFields(logger.Fields{
-			"pkg":       "ssu2",
-			"func":      "dispatchNonCriticalBlock",
-			"blockType": block.Type,
-			"error":     err,
-		}).Debug("Error handling block")
+		flog("dispatchNonCriticalBlock", logger.Fields{"blockType": block.Type, "error":     err}).Debug("Error handling block")
 	}
 }
 
@@ -455,7 +445,7 @@ func (h *DataHandler) incrementStat(stat *uint64) {
 // validateBlockOrdering checks that Padding and Termination blocks are in valid positions.
 // Per spec: Padding must be the last block; Termination must be the last block except for Padding.
 func validateBlockOrdering(blocks []*SSU2Block) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "validateBlockOrdering", "blockCount": len(blocks)}).Debug("checking block order")
+	flog("validateBlockOrdering", logger.Fields{"blockCount": len(blocks)}).Debug("checking block order")
 	n := len(blocks)
 	for i, block := range blocks {
 		if block.Type == BlockTypePadding && i != n-1 {

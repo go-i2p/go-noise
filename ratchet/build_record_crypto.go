@@ -94,12 +94,7 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 encryption failed")
 	}
 
-	log.WithFields(logger.Fields{
-		"pkg":        "ratchet",
-		"func":       "EncryptReplyRecord",
-		"encryption": "ChaCha20-Poly1305",
-		"size":       len(encrypted),
-	}).Debug("Encrypted build response record")
+	flog("EncryptReplyRecord", logger.Fields{"encryption": "ChaCha20-Poly1305", "size":       len(encrypted)}).Debug("Encrypted build response record")
 
 	return encrypted, nil
 }
@@ -127,7 +122,7 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 		return nil, oops.Errorf("invalid decrypted data size: expected %d bytes, got %d", buildRecordPlaintextSize, len(cleartext))
 	}
 
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "DecryptReplyRecord"}).Debug("Decrypted build response record")
+	flog("DecryptReplyRecord").Debug("Decrypted build response record")
 	return cleartext, nil
 }
 
@@ -139,7 +134,7 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 // bytes 32-526: Random data (495 bytes)
 // byte 527:     Reply status code
 func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []byte {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "SerializeResponseRecord", "reply_code": reply}).Debug("Serializing response record")
+	flog("SerializeResponseRecord", logger.Fields{"reply_code": reply}).Debug("Serializing response record")
 	buf := make([]byte, 528)
 	copy(buf[0:32], hash[:])
 	copy(buf[32:527], randomData[:])
@@ -160,7 +155,7 @@ func buildResponseRecordHashInput(randomData [495]byte, reply byte) []byte {
 // VerifyResponseRecordHash verifies the SHA-256 hash in a serialized response record.
 // The hash covers bytes 32-527 (randomData + reply byte).
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "VerifyResponseRecordHash", "reply_code": reply}).Debug("Verifying response record hash")
+	flog("VerifyResponseRecordHash", logger.Fields{"reply_code": reply}).Debug("Verifying response record hash")
 	data := buildResponseRecordHashInput(randomData, reply)
 
 	expectedHash := types.SHA256(data)
@@ -180,7 +175,7 @@ func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) e
 //
 // Returns the SHA-256 hash that should be placed in the first 32 bytes of the record.
 func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "CreateBuildResponseRecordRaw", "reply_code": reply}).Debug("Creating build response record hash")
+	flog("CreateBuildResponseRecordRaw", logger.Fields{"reply_code": reply}).Debug("Creating build response record hash")
 	return types.SHA256(buildResponseRecordHashInput(randomData, reply))
 }
 
@@ -201,7 +196,7 @@ func (c *BuildReplyCrypto) encryptChaCha20Poly1305(
 	key [32]byte,
 	iv [16]byte,
 ) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "encryptChaCha20Poly1305", "plaintext_len": len(plaintext)}).Debug("Encrypting with ChaCha20-Poly1305")
+	flog("encryptChaCha20Poly1305", logger.Fields{"plaintext_len": len(plaintext)}).Debug("Encrypting with ChaCha20-Poly1305")
 	aead, nonce, err := prepareChaCha20Poly1305Input(plaintext, buildRecordPlaintextSize, "plaintext", key, iv)
 	if err != nil {
 		return nil, err
@@ -230,7 +225,7 @@ func (c *BuildReplyCrypto) decryptChaCha20Poly1305(
 	key [32]byte,
 	iv [16]byte,
 ) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "decryptChaCha20Poly1305", "ciphertext_len": len(ciphertext)}).Debug("Decrypting with ChaCha20-Poly1305")
+	flog("decryptChaCha20Poly1305", logger.Fields{"ciphertext_len": len(ciphertext)}).Debug("Decrypting with ChaCha20-Poly1305")
 	aead, nonce, err := prepareChaCha20Poly1305Input(ciphertext, buildRecordCiphertextSize, "ciphertext", key, iv)
 	if err != nil {
 		return nil, err

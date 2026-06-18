@@ -90,7 +90,7 @@ const (
 //
 // Returns a new SSU2Packet with timestamp set to now.
 func NewSSU2Packet(msgType uint8, packetNum uint32) *SSU2Packet {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewSSU2Packet", "messageType": msgType, "packetNum": packetNum}).Debug("NewSSU2Packet: creating new packet")
+	flog("NewSSU2Packet", logger.Fields{"messageType": msgType, "packetNum": packetNum}).Debug("NewSSU2Packet: creating new packet")
 	return &SSU2Packet{
 		MessageType:  msgType,
 		PacketNumber: packetNum,
@@ -133,7 +133,7 @@ func (p *SSU2Packet) GetHeaderSize() int {
 //   - []byte: Wire format packet data
 //   - error: If packet is invalid or incomplete
 func (p *SSU2Packet) Serialize() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Serialize", "messageType": p.MessageType, "packetNum": p.PacketNumber}).Debug("Serialize: serializing packet to wire format")
+	flog("Serialize", logger.Fields{"messageType": p.MessageType, "packetNum": p.PacketNumber}).Debug("Serialize: serializing packet to wire format")
 	// Validate packet structure
 	if err := p.validate(); err != nil {
 		return nil, oops.Wrapf(err, "invalid packet")
@@ -174,7 +174,7 @@ func (p *SSU2Packet) Serialize() ([]byte, error) {
 //
 // Returns error if data is malformed or too short.
 func (p *SSU2Packet) Deserialize(data []byte) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Deserialize", "dataLen": len(data)}).Debug("Deserialize: parsing wire format data")
+	flog("Deserialize", logger.Fields{"dataLen": len(data)}).Debug("Deserialize: parsing wire format data")
 	if len(data) < MinPacketSize {
 		return oops.Errorf("packet too short: %d bytes (minimum %d)", len(data), MinPacketSize)
 	}
@@ -198,7 +198,7 @@ func (p *SSU2Packet) Deserialize(data []byte) error {
 
 // validateLongHeader checks protocol version and network ID for long-header messages.
 func (p *SSU2Packet) validateLongHeader(data []byte, headerSize int) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "validateLongHeader", "headerSize": headerSize}).Debug("validateLongHeader: validating long header fields")
+	flog("validateLongHeader", logger.Fields{"headerSize": headerSize}).Debug("validateLongHeader: validating long header fields")
 	if headerSize != LongHeaderSize {
 		return nil
 	}
@@ -213,7 +213,7 @@ func (p *SSU2Packet) validateLongHeader(data []byte, headerSize int) error {
 
 // parsePacketSections extracts header, ephemeral key, payload, and MAC from wire data.
 func (p *SSU2Packet) parsePacketSections(data []byte, headerSize int) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "parsePacketSections", "dataLen": len(data), "headerSize": headerSize}).Debug("parsePacketSections: extracting packet sections")
+	flog("parsePacketSections", logger.Fields{"dataLen": len(data), "headerSize": headerSize}).Debug("parsePacketSections: extracting packet sections")
 	hasEphemeral := p.hasEphemeralKey()
 	minSize := headerSize + MACSize
 	if hasEphemeral {
@@ -250,7 +250,7 @@ func (p *SSU2Packet) parsePacketSections(data []byte, headerSize int) error {
 
 // validate checks that the packet has all required fields populated correctly.
 func (p *SSU2Packet) validate() error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "validate", "messageType": p.MessageType}).Debug("validate: validating packet structure")
+	flog("validate", logger.Fields{"messageType": p.MessageType}).Debug("validate: validating packet structure")
 	// Check header size
 	expectedHeaderSize := p.getHeaderSize()
 	if len(p.Header) != expectedHeaderSize {
@@ -299,7 +299,7 @@ func (p *SSU2Packet) Size() int {
 // Clone creates a deep copy of the packet.
 // Useful for retransmission scenarios where the same packet needs to be sent multiple times.
 func (p *SSU2Packet) Clone() *SSU2Packet {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Clone", "messageType": p.MessageType, "packetNum": p.PacketNumber}).Debug("Clone: creating deep copy of packet")
+	flog("Clone", logger.Fields{"messageType": p.MessageType, "packetNum": p.PacketNumber}).Debug("Clone: creating deep copy of packet")
 	clone := &SSU2Packet{
 		MessageType:  p.MessageType,
 		PacketNumber: p.PacketNumber,
@@ -366,7 +366,7 @@ func (p *SSU2Packet) IsDataPacket() bool {
 // The connection ID is encoded in the first 8 bytes of the header (big-endian)
 // per the SSU2 spec: "Destination Connection ID: 8-byte big-endian integer".
 func (p *SSU2Packet) DecodeConnectionID() (uint64, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "DecodeConnectionID"}).Debug("DecodeConnectionID: extracting connection ID from header")
+	flog("DecodeConnectionID").Debug("DecodeConnectionID: extracting connection ID from header")
 	if len(p.Header) < 8 {
 		return 0, oops.Errorf("header too short to contain connection ID: %d bytes", len(p.Header))
 	}
@@ -380,7 +380,7 @@ func (p *SSU2Packet) DecodeConnectionID() (uint64, error) {
 // The connection ID is stored in the first 8 bytes (big-endian)
 // per the SSU2 spec: "Destination Connection ID: 8-byte big-endian integer".
 func (p *SSU2Packet) EncodeConnectionID(connID uint64) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "EncodeConnectionID", "connID": connID}).Debug("EncodeConnectionID: setting connection ID in header")
+	flog("EncodeConnectionID", logger.Fields{"connID": connID}).Debug("EncodeConnectionID: setting connection ID in header")
 	if len(p.Header) < 8 {
 		return oops.Errorf("header too short to store connection ID: %d bytes", len(p.Header))
 	}

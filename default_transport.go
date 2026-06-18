@@ -4,7 +4,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-i2p/logger"
 	"github.com/go-i2p/pool"
 )
 
@@ -159,6 +158,6 @@ func GetGlobalShutdownManager() Shutdowner {
 //
 // Deprecated: Use Transport.GracefulShutdown on a dedicated Transport instance instead.
 func GracefulShutdown() error {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "GracefulShutdown"}).Debug("Initiating graceful shutdown of global components")
+	flog("GracefulShutdown").Debug("Initiating graceful shutdown of global components")
 	return getDefault().GracefulShutdown()
 }

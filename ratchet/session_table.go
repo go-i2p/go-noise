@@ -46,11 +46,7 @@ func (sm *SessionManager) removeSessionByPointer(session *Session) {
 	// Clean up all index entries for this session.
 	sm.cleanupSessionIndexesLocked(session, foundHash)
 
-	log.WithFields(logger.Fields{
-		"pkg":             "ratchet",
-		"func":            "removeSessionByPointer",
-		"remaining_count": len(sm.sessions),
-	}).Debug("Session removed after termination")
+	flog("removeSessionByPointer", logger.Fields{"remaining_count": len(sm.sessions)}).Debug("Session removed after termination")
 }
 
 // FindSessionByTag checks if a session tag matches a known session.
@@ -61,7 +57,7 @@ func (sm *SessionManager) removeSessionByPointer(session *Session) {
 // (session.mu) are performed in separate, non-overlapping critical sections.
 // Tag replenishment (HKDF) is performed outside both locks.
 func (sm *SessionManager) FindSessionByTag(tag [8]byte) bool {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "FindSessionByTag"}).Debug("Finding session by tag")
+	flog("FindSessionByTag").Debug("Finding session by tag")
 	sm.mu.Lock()
 	session, _ := sm.lookupSessionByTag(tag)
 	sm.mu.Unlock()
@@ -100,7 +96,7 @@ func (sm *SessionManager) FindSessionByTag(tag [8]byte) bool {
 // other goroutine can claim the same tag between the lookup and the per-session
 // validation step.
 func (sm *SessionManager) lookupSessionByTag(tag [8]byte) (*Session, *uint32) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "lookupSessionByTag"}).Debug("Looking up session by tag in index")
+	flog("lookupSessionByTag").Debug("Looking up session by tag in index")
 	session, exists := sm.tagIndex[tag]
 	if !exists {
 		return nil, nil
@@ -127,7 +123,7 @@ func (sm *SessionManager) lookupSessionByTag(tag [8]byte) (*Session, *uint32) {
 //	valid          — false if the session has expired; callers should discard it.
 //	needsReplenish — true when pendingTags falls below tagReplenishThreshold.
 func (sm *SessionManager) validateAndConsumeTagFromSession(session *Session, tag [8]byte) (valid, needsReplenish bool) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "validateAndConsumeTagFromSession"}).Debug("Validating and consuming tag from session")
+	flog("validateAndConsumeTagFromSession").Debug("Validating and consuming tag from session")
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
@@ -143,7 +139,7 @@ func (sm *SessionManager) isSessionValid(session *Session) bool {
 }
 
 func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "removeTagFromPendingList", "pending_count": len(session.pendingTags)}).Debug("Removing tag from session pending list")
+	flog("removeTagFromPendingList", logger.Fields{"pending_count": len(session.pendingTags)}).Debug("Removing tag from session pending list")
 	for i, pendingTag := range session.pendingTags {
 		if pendingTag == tag {
 			session.pendingTags[i] = session.pendingTags[len(session.pendingTags)-1]
@@ -155,7 +151,7 @@ func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session
 	// session's pendingTags, violating the invariant tagIndex ⊆ pendingTags.
 	// Surface it at Warn so CI under WARNFAIL_I2P catches any future
 	// desynchronization between the two structures.
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "removeTagFromPendingList"}).Warn("tag not found in session pending list; tagIndex/pendingTags out of sync")
+	flog("removeTagFromPendingList").Warn("tag not found in session pending list; tagIndex/pendingTags out of sync")
 }
 
 // bytesLess returns true if a is lexicographically less than b.
@@ -203,12 +199,7 @@ func (sm *SessionManager) evictLRUSessionLocked() {
 	if !first {
 		if evicted, ok := sm.sessions[oldestHash]; ok {
 			sm.cleanupSessionIndexesLocked(evicted, oldestHash)
-			log.WithFields(logger.Fields{
-				"pkg":             "ratchet",
-				"func":            "evictLRUSessionLocked",
-				"last_used":       oldestTime,
-				"remaining_count": len(sm.sessions),
-			}).Warn("Evicted least-recently-used garlic session")
+			flog("evictLRUSessionLocked", logger.Fields{"last_used":       oldestTime, "remaining_count": len(sm.sessions)}).Warn("Evicted least-recently-used garlic session")
 		}
 	}
 }
@@ -266,14 +257,7 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 
 	if evicted, ok := sm.sessions[hashToEvict]; ok {
 		sm.cleanupSessionIndexesLocked(evicted, hashToEvict)
-		log.WithFields(logger.Fields{
-			"pkg":                "ratchet",
-			"func":               "enforcePerPeerQuotaLocked",
-			"remote_pubkey":      fmt.Sprintf("%x", remotePubKey[:8]),
-			"evicted_hash":       fmt.Sprintf("%x", hashToEvict[:8]),
-			"remaining_count":    len(sm.sessions),
-			"remaining_for_peer": count - 1,
-		}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
+		flog("enforcePerPeerQuotaLocked", logger.Fields{"remote_pubkey":      fmt.Sprintf("%x", remotePubKey[:8]), "evicted_hash":       fmt.Sprintf("%x", hashToEvict[:8]), "remaining_count":    len(sm.sessions), "remaining_for_peer": count - 1}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
 	}
 }
 

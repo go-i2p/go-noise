@@ -81,7 +81,7 @@ type TTLCache struct {
 // to defaultCleanupInterval so the background cleanup goroutine never panics.
 // If MaxSize is non-positive, defaults to defaultMaxSize.
 func New(cfg Config) *TTLCache {
-	log.WithFields(logger.Fields{"pkg": "replaycache", "func": "New", "ttl": cfg.TTL, "max_size": cfg.MaxSize}).Debug("Creating new replay cache")
+	flog("New", logger.Fields{"ttl": cfg.TTL, "max_size": cfg.MaxSize}).Debug("Creating new replay cache")
 	nf := cfg.NowFunc
 	if nf == nil {
 		nf = time.Now
@@ -150,7 +150,7 @@ func (c *TTLCache) CheckAndAdd(key [32]byte) bool {
 	if elem, exists := c.entries[key]; exists {
 		entry := elem.Value.(*cacheEntry)
 		if now.Sub(entry.insertedAt) < c.ttl {
-			log.WithFields(logger.Fields{"pkg": "replaycache", "func": "TTLCache.CheckAndAdd"}).Debug("Replay detected in cache")
+			flog("TTLCache.CheckAndAdd").Debug("Replay detected in cache")
 			return true // replay detected
 		}
 		// Entry expired — remove from list and map, then re-insert below.
@@ -177,13 +177,13 @@ func (c *TTLCache) Size() int {
 // Close stops the background cleanup goroutine and releases resources.
 // Close is idempotent — calling it more than once is safe.
 func (c *TTLCache) Close() {
-	log.WithFields(logger.Fields{"pkg": "replaycache", "func": "TTLCache.Close"}).Debug("Closing replay cache")
+	flog("TTLCache.Close").Debug("Closing replay cache")
 	c.closeOnce.Do(func() { close(c.done) })
 }
 
 // Reset removes all entries from the cache.
 func (c *TTLCache) Reset() {
-	log.WithFields(logger.Fields{"pkg": "replaycache", "func": "TTLCache.Reset"}).Debug("Clearing all replay cache entries")
+	flog("TTLCache.Reset").Debug("Clearing all replay cache entries")
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for k := range c.entries {

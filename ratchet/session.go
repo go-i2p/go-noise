@@ -99,7 +99,7 @@ type Session struct {
 // use "initiator" direction keys and its receive ratchets use "responder" direction
 // keys (and vice versa for the responder).
 func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]byte, isInitiator bool) (*Session, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "createSession", "is_initiator": isInitiator}).Debug("Creating new ratchet session")
+	flog("createSession", logger.Fields{"is_initiator": isInitiator}).Debug("Creating new ratchet session")
 	sendRootKey, recvRootKey, err := deriveDirectionalKeys(keys.rootKey, isInitiator)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to derive directional root keys")

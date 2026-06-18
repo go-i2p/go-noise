@@ -16,7 +16,7 @@ import (
 func (nc *Conn) guardNonce(nonce uint64, direction string) error {
 	if nonce >= MaxNonce {
 		nc.broken.Store(true)
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.guardNonce", direction + "_nonce": nonce}).Error(direction + " nonce exhausted, connection must be terminated")
+		flog("NTCP2Conn.guardNonce", logger.Fields{direction + "_nonce": nonce}).Error(direction + " nonce exhausted, connection must be terminated")
 		return oops.
 			Code("NONCE_EXHAUSTED").
 			In("ntcp2").
@@ -38,7 +38,7 @@ func (nc *Conn) guardNonce(nonce uint64, direction string) error {
 // Termination blocks (reason code 4 = AEAD failure) are handled by the
 // router transport layer (go-i2p/go-i2p/lib/transport/ntcp).
 func (nc *Conn) handleAEADError(underlying net.Conn) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.handleAEADError"}).Warn("AEAD error detected, applying probing-resistance behaviour")
+	flog("NTCP2Conn.handleAEADError").Warn("AEAD error detected, applying probing-resistance behaviour")
 	nc.broken.Store(true)
 
 	// Generate a random byte count (0–AEADErrorMaxJunkBytes) to read before returning.
@@ -94,7 +94,7 @@ func randomAEADTimeout() time.Duration {
 // Sets underlyingClosed so that the subsequent NTCP2Conn.Close() call skips a
 // second close of the same socket, avoiding an fd-reuse double-close race.
 func (nc *Conn) sendTCPRST(conn net.Conn) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.sendTCPRST"}).Debug("Sending TCP RST (abnormal close) per NTCP2 spec")
+	flog("NTCP2Conn.sendTCPRST").Debug("Sending TCP RST (abnormal close) per NTCP2 spec")
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		tcpConn.SetLinger(0) //nolint:errcheck
 		tcpConn.Close()      //nolint:errcheck

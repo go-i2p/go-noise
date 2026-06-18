@@ -31,7 +31,7 @@ type Addr struct {
 // routerHash is the I2P router identity hash.
 // role should be either "initiator" or "responder".
 func NewNTCP2Addr(underlying net.Addr, routerHash data.Hash, role string) (*Addr, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewNTCP2Addr", "role": role}).Debug("Creating new NTCP2Addr")
+	flog("NewNTCP2Addr", logger.Fields{"role": role}).Debug("Creating new NTCP2Addr")
 	if underlying == nil {
 		return nil, oops.
 			Code("INVALID_UNDERLYING_ADDR").
@@ -93,7 +93,7 @@ func (na *Addr) IdentHash() [32]byte {
 // This is used to update a placeholder zero hash after the Noise handshake
 // reveals the remote peer's static key.
 func (na *Addr) SetRouterHash(routerHash data.Hash) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Addr.SetRouterHash"}).Debug("Updating router identity hash")
+	flog("NTCP2Addr.SetRouterHash").Debug("Updating router identity hash")
 	na.mu.Lock()
 	na.routerHash = routerHash
 	na.mu.Unlock()

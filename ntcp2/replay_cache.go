@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/go-i2p/go-noise/mod/replaycache"
-	"github.com/go-i2p/logger"
 )
 
 // ClockSkewTolerance is the maximum allowed difference between local and
@@ -51,7 +50,7 @@ var _ ReplayDetector = (*ReplayCache)(nil)
 // NewReplayCache creates a new replay cache and starts a background cleanup
 // goroutine. Call Close() when the cache is no longer needed.
 func NewReplayCache() *ReplayCache {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewReplayCache"}).Debug("Creating NTCP2 replay cache")
+	flog("NewReplayCache").Debug("Creating NTCP2 replay cache")
 	return &ReplayCache{
 		cache: replaycache.New(replaycache.Config{
 			TTL:             replayCacheTTL,
@@ -69,7 +68,7 @@ func NewReplayCache() *ReplayCache {
 func (rc *ReplayCache) CheckAndAdd(ephemeralKey [32]byte) bool {
 	result := rc.cache.CheckAndAdd(ephemeralKey)
 	if result {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ReplayCache.CheckAndAdd"}).Warn("Replay detected for ephemeral key")
+		flog("ReplayCache.CheckAndAdd").Warn("Replay detected for ephemeral key")
 	}
 	return result
 }
@@ -82,6 +81,6 @@ func (rc *ReplayCache) Size() int {
 // Close stops the background cleanup goroutine and releases resources.
 // Close is idempotent — calling it more than once is safe and will not panic.
 func (rc *ReplayCache) Close() {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ReplayCache.Close"}).Debug("Closing NTCP2 replay cache")
+	flog("ReplayCache.Close").Debug("Closing NTCP2 replay cache")
 	rc.cache.Close()
 }

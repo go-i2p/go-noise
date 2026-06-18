@@ -20,7 +20,7 @@ func DialNTCP2(network, addr string, config *Config) (*Conn, error) {
 
 // DialNTCP2Context creates a connection with context support.
 func DialNTCP2Context(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2Context", "address": addr}).Debug("Dialing NTCP2 connection with context")
+	flog("DialNTCP2Context", logger.Fields{"address": addr}).Debug("Dialing NTCP2 connection with context")
 	if err := validateNTCP2DialParams(network, addr, config); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func DialNTCP2WithHandshake(network, addr string, config *Config) (*Conn, error)
 // DialNTCP2WithHandshakeContext creates a connection and performs the NTCP2 handshake with context.
 // The context can be used to cancel the dial or handshake operations.
 func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2WithHandshakeContext", "address": addr}).Debug("Dialing NTCP2 with handshake")
+	flog("DialNTCP2WithHandshakeContext", logger.Fields{"address": addr}).Debug("Dialing NTCP2 with handshake")
 	ntcp2Conn, err := DialNTCP2Context(ctx, network, addr, config)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, co
 	// Propagate the peer's static key to the remote address so the router
 	// hash is available for session deduplication.
 	if err := ntcp2Conn.PropagatePeerStaticKey(); err != nil {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DialNTCP2"}).WithError(err).Warn("peer static key not propagated after dial handshake")
+		flog("DialNTCP2").WithError(err).Warn("peer static key not propagated after dial handshake")
 	}
 
 	return ntcp2Conn, nil
@@ -100,7 +100,7 @@ func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 // TIMEOUT-2: ListenNTCP2 previously hardcoded context.Background() for the
 // SO_REUSEADDR path, ignoring any deadline the caller may have set.
 func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *Config) (*Listener, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "ListenNTCP2", "address": addr}).Debug("Creating NTCP2 listener")
+	flog("ListenNTCP2", logger.Fields{"address": addr}).Debug("Creating NTCP2 listener")
 	if err := validateNTCP2ListenParams(network, addr, config); err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *C
 // WrapNTCP2Conn wraps an existing net.Conn with NTCP2Conn.
 // This function creates the necessary Noise wrapper and NTCP2 addressing.
 func WrapNTCP2Conn(conn net.Conn, config *Config) (*Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "WrapNTCP2Conn"}).Debug("Wrapping connection with NTCP2")
+	flog("WrapNTCP2Conn").Debug("Wrapping connection with NTCP2")
 	if err := validateWrapConnParams(conn, config); err != nil {
 		return nil, err
 	}

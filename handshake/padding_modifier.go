@@ -37,7 +37,7 @@ type PaddingModifier = GenericPaddingModifier
 // NewGenericPaddingModifier creates a new generic padding modifier with the specified
 // minimum and maximum padding sizes.
 func NewGenericPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewGenericPaddingModifier", "name": name, "min": minPadding, "max": maxPadding}).Debug("Creating generic padding modifier")
+	flog("NewGenericPaddingModifier", logger.Fields{"name": name, "min": minPadding, "max": maxPadding}).Debug("Creating generic padding modifier")
 
 	// Validate padding parameters against I2P spec limits (paddingRatio = 0.0 for modifier only).
 	if err := ValidatePaddingParams("handshake", minPadding, maxPadding, 0.0); err != nil {
@@ -72,7 +72,7 @@ func (pm *GenericPaddingModifier) ModifyOutbound(phase HandshakePhase, data []by
 		return data, nil // No padding configured
 	}
 
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "GenericPaddingModifier.ModifyOutbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier outbound")
+	flog("GenericPaddingModifier.ModifyOutbound", logger.Fields{"modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier outbound")
 
 	// Guard: reject data larger than the 4-byte length prefix can encode.
 	// This branch is unreachable on 32-bit platforms (where len() <= MaxInt32 < MaxUint32)
@@ -141,7 +141,7 @@ func (pm *GenericPaddingModifier) ModifyInbound(phase HandshakePhase, data []byt
 		return data, nil // No padding configured, return data unchanged
 	}
 
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "GenericPaddingModifier.ModifyInbound", "modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier inbound")
+	flog("GenericPaddingModifier.ModifyInbound", logger.Fields{"modifier": pm.name, "phase": phase.String(), "data_len": len(data)}).Debug("Padding modifier inbound")
 
 	if len(data) < 4 {
 		return nil, oops.

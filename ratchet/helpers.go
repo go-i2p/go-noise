@@ -77,15 +77,7 @@ func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) 
 	}
 	copy(combined[offset:], plaintext)
 
-	log.WithFields(logger.Fields{
-		"pkg":             "ratchet",
-		"func":            "prependPendingNextKeys",
-		"next_key_blocks": len(nextKeyBlocks),
-		"ack_blocks":      len(ackBlocks),
-		"control_bytes":   controlSize,
-		"original_size":   len(plaintext),
-		"combined_size":   len(combined),
-	}).Debug("Prepended control blocks to ES payload")
+	flog("prependPendingNextKeys", logger.Fields{"next_key_blocks": len(nextKeyBlocks), "ack_blocks":      len(ackBlocks), "control_bytes":   controlSize, "original_size":   len(plaintext), "combined_size":   len(combined)}).Debug("Prepended control blocks to ES payload")
 
 	return combined, nil
 }
@@ -95,7 +87,7 @@ func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) 
 // consolidates the repeated session-lookup-and-lock pattern used by
 // ProcessReceivedNextKey and ProcessIncomingDHRatchet.
 func (sm *SessionManager) lookupLockedSession(sessionTag [8]byte) (*Session, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "lookupLockedSession", "session_tag": fmt.Sprintf("%x", sessionTag)}).Debug("looking up session by tag")
+	flog("lookupLockedSession", logger.Fields{"session_tag": fmt.Sprintf("%x", sessionTag)}).Debug("looking up session by tag")
 	sm.mu.RLock()
 	session, exists := sm.tagIndex[sessionTag]
 	sm.mu.RUnlock()

@@ -48,7 +48,7 @@ func (t *Transport) GracefulShutdown() error {
 // Dial creates a Noise-wrapped connection to the given address using this Transport's
 // ShutdownManager and Pool. It is the Transport-scoped equivalent of DialNoise.
 func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "Transport.Dial", "network": network, "address": addr}).Debug("starting")
+	flog("Transport.Dial", logger.Fields{"network": network, "address": addr}).Debug("starting")
 	t.mu.RLock()
 	sm := t.sm
 	t.mu.RUnlock()
@@ -65,7 +65,7 @@ func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, 
 // Listen creates a Noise-wrapped listener on the given address using this Transport's
 // ShutdownManager. It is the Transport-scoped equivalent of ListenNoise.
 func (t *Transport) Listen(network, addr string, config *ListenerConfig) (*NoiseListener, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "Transport.Listen", "network": network, "address": addr}).Debug("starting")
+	flog("Transport.Listen", logger.Fields{"network": network, "address": addr}).Debug("starting")
 	t.mu.RLock()
 	sm := t.sm
 	t.mu.RUnlock()
@@ -84,7 +84,7 @@ func (t *Transport) Listen(network, addr string, config *ListenerConfig) (*Noise
 // Otherwise, a new connection is created. The connection will be automatically
 // returned to the pool when the NoiseConn is closed.
 func (t *Transport) DialWithPool(network, addr string, config *ConnConfig) (*NoiseConn, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "Transport.DialWithPool", "network": network, "address": addr}).Debug("starting")
+	flog("Transport.DialWithPool", logger.Fields{"network": network, "address": addr}).Debug("starting")
 	if err := validateDialParams(network, addr, config); err != nil {
 		return nil, err
 	}

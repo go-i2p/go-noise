@@ -241,11 +241,7 @@ func (nl *Listener) Accept() (net.Conn, error) {
 	// Handshake() is called (BUG-EH-2 fix: check and log the error).
 	if tcpConn, ok := underlying.(*net.TCPConn); ok {
 		if err := tcpConn.SetDeadline(acceptDeadline); err != nil {
-			log.WithFields(logger.Fields{
-				"pkg":   "ntcp2",
-				"func":  "Accept",
-				"error": err,
-			}).Warn("failed to set initial handshake deadline on accepted TCP conn")
+			flog("Accept", logger.Fields{"error": err}).Warn("failed to set initial handshake deadline on accepted TCP conn")
 		}
 	}
 

@@ -4,7 +4,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/go-i2p/logger"
 	"github.com/go-i2p/pool"
 )
 
@@ -36,10 +35,7 @@ func (w *putOnCloseWrapper) Close() error {
 	// Pool management errors are not caller-remediable; log at Debug and return nil
 	// so callers (defer conn.Close(), io.Copy cleanup) are not burdened.
 	if err := w.p.Put(w.Conn); err != nil {
-		log.WithFields(logger.Fields{
-			"pkg":  "noise",
-			"func": "putOnCloseWrapper.Close",
-		}).WithError(err).Debug("pool Put failed on connection close")
+		flog("putOnCloseWrapper.Close").WithError(err).Debug("pool Put failed on connection close")
 	}
 	return nil
 }

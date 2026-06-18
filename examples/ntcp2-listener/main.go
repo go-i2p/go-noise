@@ -130,21 +130,28 @@ func runNTCP2Listener(args *exampleutil.NTCP2Args, routerHash, staticKey []byte)
 
 // acceptConnections handles incoming NTCP2 connections
 func acceptConnections(listener *ntcp2.Listener) {
-	connCount := 0
+	runAcceptLoop(listener, 0)
+}
 
+func runAcceptLoop(listener *ntcp2.Listener, connCount int) {
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Accept error: %v", err)
-			continue
-		}
-
-		connCount++
-		fmt.Printf("📞 Connection %d accepted from %s\n", connCount, conn.RemoteAddr())
-
-		// Handle connection in a goroutine
-		go handleNTCP2Connection(conn, connCount)
+		connCount = acceptNextConnection(listener, connCount)
 	}
+}
+
+func acceptNextConnection(listener *ntcp2.Listener, connCount int) int {
+	conn, err := listener.Accept()
+	if err != nil {
+		log.Printf("Accept error: %v", err)
+		return connCount
+	}
+
+	connCount++
+	fmt.Printf("📞 Connection %d accepted from %s\n", connCount, conn.RemoteAddr())
+
+	// Handle connection in a goroutine
+	go handleNTCP2Connection(conn, connCount)
+	return connCount
 }
 
 // handleNTCP2Connection processes an individual NTCP2 connection

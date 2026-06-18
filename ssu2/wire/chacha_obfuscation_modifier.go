@@ -37,7 +37,7 @@ var chachaNonce = make([]byte, 12)
 // introKey must be 32 bytes (Bob's intro key per the SSU2 spec).
 // Returns error if parameters are invalid.
 func NewChaChaObfuscationModifier(name string, introKey []byte) (*ChaChaObfuscationModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "NewChaChaObfuscationModifier", "name": name}).Debug("Creating new ChaChaObfuscationModifier")
+	flog("NewChaChaObfuscationModifier", logger.Fields{"name": name}).Debug("Creating new ChaChaObfuscationModifier")
 	if len(introKey) != 32 {
 		return nil, oops.
 			Code("INVALID_INTRO_KEY").
@@ -61,7 +61,7 @@ func NewChaChaObfuscationModifier(name string, introKey []byte) (*ChaChaObfuscat
 // 32 bytes (ephemeral key only) for backward compatibility.
 // Message 3+: No obfuscation
 func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "ModifyOutbound", "phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyOutbound")
+	flog("ModifyOutbound", logger.Fields{"phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyOutbound")
 	if err := validateChaChaInputLength(len(data)); err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePh
 // ChaCha20 is symmetric (XOR-based), so encryption and decryption are identical.
 // Accepts 48 bytes (spec-compliant) or 32 bytes (backward compatibility).
 func (com *ChaChaObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "ModifyInbound", "phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyInbound")
+	flog("ModifyInbound", logger.Fields{"phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyInbound")
 	if err := validateChaChaInputLength(len(data)); err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func validateChaChaInputLength(length int) error {
 // spec and XORs the data. Supports 48-byte (spec-compliant) and 32-byte
 // (ephemeral-only) inputs. Returns an error if the modifier has been closed.
 func (com *ChaChaObfuscationModifier) applyChacha(data []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "applyChacha", "dataLen": len(data)}).Debug("applyChacha: applying ChaCha20 XOR")
+	flog("applyChacha", logger.Fields{"dataLen": len(data)}).Debug("applyChacha: applying ChaCha20 XOR")
 	com.mu.RLock()
 	defer com.mu.RUnlock()
 
@@ -145,7 +145,7 @@ func (com *ChaChaObfuscationModifier) applyChacha(data []byte) ([]byte, error) {
 // After Close returns, ModifyOutbound and ModifyInbound will return an error.
 // Close is safe to call concurrently with ModifyOutbound/ModifyInbound.
 func (com *ChaChaObfuscationModifier) Close() error {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "Close", "name": com.name}).Debug("Close: releasing ChaChaObfuscationModifier resources")
+	flog("Close", logger.Fields{"name": com.name}).Debug("Close: releasing ChaChaObfuscationModifier resources")
 	com.mu.Lock()
 	defer com.mu.Unlock()
 	if !com.closed {

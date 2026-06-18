@@ -25,7 +25,7 @@ type boundsValidator struct {
 
 // Validate checks if the configuration is valid for SSU2.
 func (sc *SSU2Config) Validate() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "Validate"}).Debug("Validating SSU2Config")
+	flog("Validate").Debug("Validating SSU2Config")
 	return validation.RunValidators(
 		sc.validateBasicConfiguration,
 		sc.validateCryptographicParameters,
@@ -56,7 +56,7 @@ func validateBounds(v boundsValidator) error {
 
 // validateBasicConfiguration checks pattern and router hash requirements.
 func (sc *SSU2Config) validateBasicConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validateBasicConfiguration", "pattern": sc.Pattern}).Debug("Checking pattern and router hash")
+	flog("validateBasicConfiguration", logger.Fields{"pattern": sc.Pattern}).Debug("Checking pattern and router hash")
 	// Validate pattern (SSU2 typically uses XK)
 	if err := validation.ValidatePattern(sc.Pattern, "ssu2"); err != nil {
 		return err
@@ -67,7 +67,7 @@ func (sc *SSU2Config) validateBasicConfiguration() error {
 
 // validateCryptographicParameters checks keys, hashes, and obfuscation settings.
 func (sc *SSU2Config) validateCryptographicParameters() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validateCryptographicParameters", "initiator": sc.Initiator, "has_static_key": len(sc.StaticKey) > 0}).Debug("Checking keys and obfuscation settings")
+	flog("validateCryptographicParameters", logger.Fields{"initiator": sc.Initiator, "has_static_key": len(sc.StaticKey) > 0}).Debug("Checking keys and obfuscation settings")
 	// Validate static key if provided
 	if err := validation.ValidateKeyLength(sc.StaticKey, "static key", "ssu2"); err != nil {
 		return err
@@ -114,7 +114,7 @@ func (sc *SSU2Config) validateCryptographicParameters() error {
 
 // validateTimeoutConfiguration checks handshake timeouts and retry settings.
 func (sc *SSU2Config) validateTimeoutConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validateTimeoutConfiguration", "handshake_timeout": sc.HandshakeTimeout, "keepalive_interval": sc.KeepaliveInterval}).Debug("Checking timeout and retry settings")
+	flog("validateTimeoutConfiguration", logger.Fields{"handshake_timeout": sc.HandshakeTimeout, "keepalive_interval": sc.KeepaliveInterval}).Debug("Checking timeout and retry settings")
 	// Validate handshake timeout and retry configuration via shared helper.
 	if err := validation.ValidateTransportConfig(sc.HandshakeTimeout, sc.HandshakeRetries, sc.RetryBackoff, "ssu2"); err != nil {
 		return err
@@ -135,7 +135,7 @@ func (sc *SSU2Config) validateTimeoutConfiguration() error {
 // validateUDPConfiguration checks MTU, packet size, and fragmentation settings
 // using a table-driven approach for numeric bounds checks.
 func (sc *SSU2Config) validateUDPConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validateUDPConfiguration", "mtu": sc.MTU, "max_packet_size": sc.MaxPacketSize}).Debug("Checking MTU and packet size settings")
+	flog("validateUDPConfiguration", logger.Fields{"mtu": sc.MTU, "max_packet_size": sc.MaxPacketSize}).Debug("Checking MTU and packet size settings")
 
 	// Table-driven bounds checks for numeric configuration values.
 	boundsChecks := []boundsValidator{
@@ -180,7 +180,7 @@ func (sc *SSU2Config) validateUDPConfiguration() error {
 
 // validatePaddingConfiguration checks padding ranges and ratios.
 func (sc *SSU2Config) validatePaddingConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validatePaddingConfiguration", "enabled": sc.PaddingEnabled, "min": sc.MinPaddingSize, "max": sc.MaxPaddingSize, "ratio": sc.PaddingRatio}).Debug("Checking padding ranges and ratios")
+	flog("validatePaddingConfiguration", logger.Fields{"enabled": sc.PaddingEnabled, "min": sc.MinPaddingSize, "max": sc.MaxPaddingSize, "ratio": sc.PaddingRatio}).Debug("Checking padding ranges and ratios")
 	if err := handshake.ValidatePaddingRange("ssu2", sc.MinPaddingSize, sc.MaxPaddingSize); err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func (sc *SSU2Config) validatePaddingConfiguration() error {
 // GlobalTokenIssuanceRate==0 means every SessionRequest is answered with a
 // Retry message whose token is never issued.
 func (sc *SSU2Config) validateTokenConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "validateTokenConfiguration", "require_retry": sc.RequireRetry, "token_rate": sc.GlobalTokenIssuanceRate}).Debug("Checking token issuance configuration")
+	flog("validateTokenConfiguration", logger.Fields{"require_retry": sc.RequireRetry, "token_rate": sc.GlobalTokenIssuanceRate}).Debug("Checking token issuance configuration")
 	if sc.RequireRetry && sc.GlobalTokenIssuanceRate <= 0 {
 		return oops.
 			Code("INVALID_TOKEN_CONFIG").
@@ -217,7 +217,7 @@ func (sc *SSU2Config) validateTokenConfiguration() error {
 // ToConnConfig converts SSU2Config to a standard ConnConfig for use with NoiseConn.
 // This includes setting up SSU2-specific modifiers based on the configuration.
 func (sc *SSU2Config) ToConnConfig() (*noise.ConnConfig, error) {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "ToConnConfig"}).Debug("Converting SSU2Config to ConnConfig")
+	flog("ToConnConfig").Debug("Converting SSU2Config to ConnConfig")
 	if err := sc.Validate(); err != nil {
 		return nil, oops.
 			Code("INVALID_CONFIG").

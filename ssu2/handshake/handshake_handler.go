@@ -102,7 +102,7 @@ type HandshakeHandler struct {
 // — meaning the Retry message itself skips MixHash, but the subsequent
 // Session Request (with token) does MixHash its header, binding the token.
 func buildSSU2Prologue() []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "buildSSU2Prologue"}).Debug("returning null prologue per SSU2 spec")
+	flog("buildSSU2Prologue").Debug("returning null prologue per SSU2 spec")
 	return nil
 }
 
@@ -111,7 +111,7 @@ func buildSSU2Prologue() []byte {
 // For responders, remoteStaticKey is nil and will be learned during handshake.
 // The prologue binds the Noise handshake to SSU2 session context; pass nil to omit.
 func NewHandshakeHandler(initiator bool, staticKey, remoteStaticKey, prologue []byte) (*HandshakeHandler, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewHandshakeHandler", "initiator": initiator}).Debug("Creating new HandshakeHandler")
+	flog("NewHandshakeHandler", logger.Fields{"initiator": initiator}).Debug("Creating new HandshakeHandler")
 	if len(staticKey) != 32 {
 		return nil, oops.Errorf("static key must be 32 bytes, got %d", len(staticKey))
 	}
@@ -180,7 +180,7 @@ func NewHandshakeHandler(initiator bool, staticKey, remoteStaticKey, prologue []
 // For responders, remoteStaticKey is nil and will be learned during handshake.
 // The prologue binds the Noise handshake to SSU2 session context; pass nil to omit.
 func NewHandshakeHandlerWithKeys(initiator bool, staticKeypair noise.DHKey, remoteStaticKey, prologue []byte) (*HandshakeHandler, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewHandshakeHandlerWithKeys", "initiator": initiator}).Debug("Creating new HandshakeHandler with keys")
+	flog("NewHandshakeHandlerWithKeys", logger.Fields{"initiator": initiator}).Debug("Creating new HandshakeHandler with keys")
 	if len(staticKeypair.Private) != 32 {
 		return nil, oops.Errorf("static private key must be 32 bytes, got %d", len(staticKeypair.Private))
 	}
@@ -246,14 +246,14 @@ func NewHandshakeHandlerWithKeys(initiator bool, staticKeypair noise.DHKey, remo
 // transport cipher states are available. For the XK pattern this requires
 // all three messages (SessionRequest, SessionCreated, SessionConfirmed).
 func (h *HandshakeHandler) IsHandshakeComplete() bool {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "IsHandshakeComplete"}).Debug("checking cipher state availability")
+	flog("IsHandshakeComplete").Debug("checking cipher state availability")
 	return h.sendCipher != nil && h.recvCipher != nil
 }
 
 // GetCipherStates returns the transport cipher states after successful handshake.
 // Returns error if handshake is not complete.
 func (h *HandshakeHandler) GetCipherStates() (*noise.CipherState, *noise.CipherState, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "GetCipherStates"}).Debug("retrieving transport cipher states")
+	flog("GetCipherStates").Debug("retrieving transport cipher states")
 	if !h.IsHandshakeComplete() {
 		return nil, nil, oops.Errorf("handshake not complete")
 	}
@@ -264,14 +264,14 @@ func (h *HandshakeHandler) GetCipherStates() (*noise.CipherState, *noise.CipherS
 // For initiators, this is known before handshake.
 // For responders, this is learned during SessionRequest processing.
 func (h *HandshakeHandler) GetRemoteStaticKey() []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "GetRemoteStaticKey"}).Debug("returning remote static public key")
+	flog("GetRemoteStaticKey").Debug("returning remote static public key")
 	return copyBytes(h.remoteStaticKey)
 }
 
 // SetLocalOptions sets the local padding parameters that will be advertised
 // in outbound Options blocks during handshake.
 func (h *HandshakeHandler) SetLocalOptions(opts *OptionsParams) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "SetLocalOptions"}).Debug("updating local padding options")
+	flog("SetLocalOptions").Debug("updating local padding options")
 	h.localOptions = opts
 }
 
@@ -356,7 +356,7 @@ func (h *HandshakeHandler) GetPeerRouterInfo() []byte {
 // createHandshakeBlocks creates the standard blocks for handshake messages.
 // Currently creates DateTime block with current timestamp.
 func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "createHandshakeBlocks", "messageType": messageType}).Debug("building standard handshake blocks")
+	flog("createHandshakeBlocks", logger.Fields{"messageType": messageType}).Debug("building standard handshake blocks")
 	blocks := make([]*SSU2Block, 0, 3)
 
 	// DateTime block (Type 0) - required in SessionRequest and SessionCreated
@@ -382,7 +382,7 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 
 // validateHandshakeBlocks validates that required blocks are present.
 func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageType uint8) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "validateHandshakeBlocks", "messageType": messageType, "blockCount": len(blocks)}).Debug("validating required blocks")
+	flog("validateHandshakeBlocks", logger.Fields{"messageType": messageType, "blockCount": len(blocks)}).Debug("validating required blocks")
 	hasDateTime := false
 
 	for _, block := range blocks {
@@ -572,7 +572,7 @@ func (h *HandshakeHandler) SessionConfirmedHeaderKey() []byte {
 // Close releases resources held by the HandshakeHandler, including the
 // replay cache's background goroutine.
 func (h *HandshakeHandler) Close() {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Close"}).Debug("Closing HandshakeHandler")
+	flog("Close").Debug("Closing HandshakeHandler")
 	if h.replayCache != nil {
 		h.replayCache.Close()
 	}

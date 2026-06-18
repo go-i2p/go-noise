@@ -16,7 +16,7 @@ func (h *SSU2Conn) validateReadyForIO() error {
 	h.stateMutex.RLock()
 	state := h.state
 	h.stateMutex.RUnlock()
-	log.WithFields(logger.Fields{"pkg": "session", "func": "validateReadyForIO", "state": state}).Debug("checking connection state")
+	flog("validateReadyForIO", logger.Fields{"state": state}).Debug("checking connection state")
 
 	if state != StateEstablished {
 		return oops.Errorf("connection not established: %s", state)
@@ -32,7 +32,7 @@ func (h *SSU2Conn) validateReadyForIO() error {
 // buffer was too small), this Read returns the remainder of that message first
 // before fetching a new one from the DataHandler.
 func (h *SSU2Conn) Read(b []byte) (int, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "Read", "buf_len": len(b)}).Debug("waiting for inbound data")
+	flog("Read", logger.Fields{"buf_len": len(b)}).Debug("waiting for inbound data")
 	if err := h.validateReadyForIO(); err != nil {
 		return 0, err
 	}
@@ -57,10 +57,7 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 	// Check if we have a pending message from a previous truncated Read.
 	// This mirrors the buffering in conn.Conn.pendingPlaintext.
 	if n, drained := iobuf.DrainPendingBuffer(&h.pendingMessage, b, true); drained || n > 0 {
-		log.WithFields(logger.Fields{
-			"pkg": "session", "func": "Read",
-			"copied_len": n, "remaining": len(h.pendingMessage),
-		}).Debug("Data read from pending message buffer")
+		flog("Read", logger.Fields{"copied_len": n, "remaining": len(h.pendingMessage)}).Debug("Data read from pending message buffer")
 		return n, nil
 	}
 
@@ -89,10 +86,7 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 		// instead of silently dropping it. See MEDIUM-1 audit finding.
 		h.pendingMessage = make([]byte, len(msg)-n)
 		copy(h.pendingMessage, msg[n:])
-		log.WithFields(logger.Fields{
-			"pkg": "session", "func": "Read",
-			"needed": len(msg), "got": len(b), "buffered": len(h.pendingMessage),
-		}).Debug("Buffer too small; buffering message remainder")
+		flog("Read", logger.Fields{"needed": len(msg), "got": len(b), "buffered": len(h.pendingMessage)}).Debug("Buffer too small; buffering message remainder")
 		// The remainder is preserved in h.pendingMessage and will be returned on
 		// the next Read, so this is a successful partial read, not an error.
 		// Returning a non-nil error here would violate the io.Reader/net.Conn
@@ -109,11 +103,11 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 func (h *SSU2Conn) readOnePacket(buf []byte, addr net.Addr) bool {
 	packet := h.parseInboundPacket(buf, addr)
 	if packet != nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "readOnePacket", "type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
+		flog("readOnePacket", logger.Fields{"type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
 		h.processInboundPacket(packet)
 		return true
 	}
-	log.WithFields(logger.Fields{"pkg": "session", "func": "readOnePacket"}).Debug("Inbound packet dropped (parse returned nil)")
+	flog("readOnePacket").Debug("Inbound packet dropped (parse returned nil)")
 	return false
 }
 
@@ -142,7 +136,7 @@ func (h *SSU2Conn) recvLoop() {
 				h.readErrors.Add(1)
 				continue
 			}
-			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
+			flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
 			h.readOnePacket(buf[:n], addr)
 		} else {
 			// Shared socket path: this connection does not own the PacketConn but
@@ -179,7 +173,7 @@ func (h *SSU2Conn) recvLoop() {
 				continue
 			}
 
-			log.WithFields(logger.Fields{"pkg": "session", "func": "recvLoop", "bytes": n, "from": addr}).Debug("Received UDP packet")
+			flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
 			h.readOnePacket(buf[:n], addr)
 		}
 	}
@@ -190,7 +184,7 @@ func (h *SSU2Conn) recvLoop() {
 // Supports connection migration: if a packet from a new address passes AEAD
 // verification, the remote address is updated (per spec §Connection Migration).
 func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "parseInboundPacket", "data_len": len(data), "from": addr}).Debug("parsing inbound UDP datagram")
+	flog("parseInboundPacket", logger.Fields{"data_len": len(data), "from": addr}).Debug("parsing inbound UDP datagram")
 	udpAddr, ok := addr.(*net.UDPAddr)
 	if !ok {
 		return nil
@@ -251,10 +245,7 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		if _, err := h.pathValidator.InitiatePathValidation(udpAddr); err != nil {
 			// Do not silently swallow: a failure to start validation means
 			// the address migration is not being verified (AUDIT 5.2).
-			log.WithFields(logger.Fields{
-				"pkg": "session", "func": "parseInboundPacket",
-				"new_addr": udpAddr.String(),
-			}).WithError(err).Warn("failed to initiate path validation for migrated address")
+			flog("parseInboundPacket", logger.Fields{"new_addr": udpAddr.String()}).WithError(err).Warn("failed to initiate path validation for migrated address")
 		}
 	}
 
@@ -367,10 +358,7 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 			case h.recvQueue <- packet:
 			case <-h.closeChan:
 			case <-timer.C:
-				log.WithFields(logger.Fields{
-					"pkg": "session", "func": "processInboundPacket",
-					"msg_type": packet.MessageType,
-				}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
+				flog("processInboundPacket", logger.Fields{"msg_type": packet.MessageType}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
 			}
 			timer.Stop()
 		}
@@ -379,18 +367,13 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 
 // processDataPacket handles a data-phase packet: parses blocks and retires ACKed packets.
 func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) {
-	log.WithFields(logger.Fields{
-		"pkg":         "ssu2",
-		"func":        "processDataPacket",
-		"pkt_num":     packet.PacketNumber,
-		"payload_len": len(packet.Payload),
-	}).Debug("processing")
+	flog("processDataPacket", logger.Fields{"pkt_num":     packet.PacketNumber, "payload_len": len(packet.Payload)}).Debug("processing")
 	blocks, err := h.dataHandler.ProcessDataPacket(packet)
 	if err != nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "processDataPacket", "error": err.Error()}).Debug("ProcessDataPacket error")
+		flog("processDataPacket", logger.Fields{"error": err.Error()}).Debug("ProcessDataPacket error")
 		return
 	}
-	log.WithFields(logger.Fields{"pkg": "session", "func": "processDataPacket", "num_blocks": len(blocks)}).Debug("processed blocks")
+	flog("processDataPacket", logger.Fields{"num_blocks": len(blocks)}).Debug("processed blocks")
 
 	// Process ACK blocks
 	for _, block := range blocks {
@@ -425,7 +408,7 @@ func (h *SSU2Conn) handlePeerNextNonce(newNonce uint64) error {
 	h.recvCipher.UnsafeSetKey(newKey)
 	h.recvCipher.SetNonce(newNonce)
 
-	log.WithFields(logger.Fields{"pkg": "session", "func": "handlePeerNextNonce", "newNonce": newNonce}).Info("Applied peer NextNonce rekey on receive cipher")
+	flog("handlePeerNextNonce", logger.Fields{"newNonce": newNonce}).Info("Applied peer NextNonce rekey on receive cipher")
 	return nil
 }
 
@@ -462,7 +445,7 @@ func (h *SSU2Conn) MessageChan() <-chan []byte {
 		// If it's Read, return a closed channel as a panic-free sentinel.
 		mode := h.readDeliveryMode.Load()
 		if mode != int32(ReadDeliveryModeChan) {
-			log.WithFields(logger.Fields{"pkg": "session", "func": "MessageChan"}).Error(
+			flog("MessageChan").Error(
 				"MessageChan called after Read; returning closed channel - these delivery paths are mutually exclusive",
 			)
 			return h.closedMessageChan

@@ -8,7 +8,7 @@ import (
 // ValidatePaddingRange checks that min and max padding sizes form a valid range.
 // It returns a contextual oops error scoped to the given subsystem name.
 func ValidatePaddingRange(subsystem string, minPadding, maxPadding int) error {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ValidatePaddingRange", "subsystem": subsystem, "min": minPadding, "max": maxPadding}).Debug("Validating padding range")
+	flog("ValidatePaddingRange", logger.Fields{"subsystem": subsystem, "min": minPadding, "max": maxPadding}).Debug("Validating padding range")
 	if minPadding < 0 {
 		return oops.
 			Code("INVALID_MIN_PADDING").

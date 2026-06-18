@@ -38,7 +38,7 @@ func NewModifierChain(name string, modifiers ...HandshakeModifier) *ModifierChai
 		}
 	}
 
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewModifierChain", "name": name, "modifier_count": len(chain)}).Debug("Creating modifier chain")
+	flog("NewModifierChain", logger.Fields{"name": name, "modifier_count": len(chain)}).Debug("Creating modifier chain")
 	return &ModifierChain{
 		modifiers: chain,
 		name:      name,
@@ -48,13 +48,13 @@ func NewModifierChain(name string, modifiers ...HandshakeModifier) *ModifierChai
 // ModifyOutbound applies all modifiers in the chain to outbound data.
 // Modifiers are applied in the order they were added to the chain.
 func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ModifierChain.ModifyOutbound", "chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain outbound")
+	flog("ModifierChain.ModifyOutbound", logger.Fields{"chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain outbound")
 	result := data
 
 	for i, modifier := range mc.modifiers {
 		modified, err := modifier.ModifyOutbound(phase, result)
 		if err != nil {
-			log.WithFields(logger.Fields{"pkg": "handshake", "func": "ModifierChain.ModifyOutbound", "chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain outbound failed")
+			flog("ModifierChain.ModifyOutbound", logger.Fields{"chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain outbound failed")
 			return nil, oops.
 				Code("MODIFIER_CHAIN_ERROR").
 				In("handshake").
@@ -74,7 +74,7 @@ func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]by
 // Modifiers are applied in reverse order to undo the transformations
 // applied during outbound processing.
 func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ModifierChain.ModifyInbound", "chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain inbound")
+	flog("ModifierChain.ModifyInbound", logger.Fields{"chain": mc.name, "phase": phase.String(), "data_len": len(data)}).Debug("Applying modifier chain inbound")
 	result := data
 
 	// Apply modifiers in reverse order for inbound data
@@ -82,7 +82,7 @@ func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byt
 		modifier := mc.modifiers[i]
 		modified, err := modifier.ModifyInbound(phase, result)
 		if err != nil {
-			log.WithFields(logger.Fields{"pkg": "handshake", "func": "ModifierChain.ModifyInbound", "chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain inbound failed")
+			flog("ModifierChain.ModifyInbound", logger.Fields{"chain": mc.name, "modifier": modifier.Name(), "index": i}).WithError(err).Error("Modifier chain inbound failed")
 			return nil, oops.
 				Code("MODIFIER_CHAIN_ERROR").
 				In("handshake").
@@ -128,7 +128,7 @@ func (mc *ModifierChain) ModifierNames() []string {
 // Callers should not call Close() concurrently with ModifyOutbound or
 // ModifyInbound.
 func (mc *ModifierChain) Close() error {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ModifierChain.Close", "chain": mc.name}).Debug("Closing modifier chain")
+	flog("ModifierChain.Close", logger.Fields{"chain": mc.name}).Debug("Closing modifier chain")
 	var errs []error
 	for _, m := range mc.modifiers {
 		if err := m.Close(); err != nil {

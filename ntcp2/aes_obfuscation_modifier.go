@@ -31,7 +31,7 @@ type AESObfuscationModifier struct {
 // NewAESObfuscationModifier creates a new AES obfuscation modifier for NTCP2.
 // routerHash must be 32 bytes (RH_B), iv must be 16 bytes from network database.
 func NewAESObfuscationModifier(name string, routerHash, iv []byte) (*AESObfuscationModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewAESObfuscationModifier", "name": name}).Debug("Creating AES obfuscation modifier")
+	flog("NewAESObfuscationModifier", logger.Fields{"name": name}).Debug("Creating AES obfuscation modifier")
 	if len(routerHash) != RouterHashSize {
 		return nil, oops.
 			Code("INVALID_ROUTER_HASH").
@@ -88,7 +88,7 @@ func (aom *AESObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase
 		return data, nil
 	}
 
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "AESObfuscationModifier.ModifyOutbound", "modifier": aom.name, "phase": phase.String()}).Debug("AES obfuscation outbound")
+	flog("AESObfuscationModifier.ModifyOutbound", logger.Fields{"modifier": aom.name, "phase": phase.String()}).Debug("AES obfuscation outbound")
 
 	var mode cipher.BlockMode
 	switch phase {
@@ -151,7 +151,7 @@ func (aom *AESObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase,
 		return data, nil
 	}
 
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "AESObfuscationModifier.ModifyInbound", "modifier": aom.name, "phase": phase.String()}).Debug("AES obfuscation inbound")
+	flog("AESObfuscationModifier.ModifyInbound", logger.Fields{"modifier": aom.name, "phase": phase.String()}).Debug("AES obfuscation inbound")
 
 	// Per NTCP2 spec: for inbound (decryption), save the last ciphertext block
 	// BEFORE decryption as the AES state for message 2.
@@ -208,7 +208,7 @@ func (aom *AESObfuscationModifier) Name() string {
 // sensitive data from lingering in memory after the connection is closed.
 // This method is safe for concurrent use.
 func (aom *AESObfuscationModifier) Close() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "AESObfuscationModifier.Close", "modifier": aom.name}).Debug("Closing AES obfuscation modifier")
+	flog("AESObfuscationModifier.Close", logger.Fields{"modifier": aom.name}).Debug("Closing AES obfuscation modifier")
 	aom.mu.Lock()
 	defer aom.mu.Unlock()
 	for i := range aom.routerHash {
@@ -242,7 +242,7 @@ func (aom *AESObfuscationModifier) Clone() handshake.HandshakeModifier {
 	blockCopy, err := aes.NewCipher(aom.routerHash)
 	if err != nil {
 		// Should never happen since we're copying a valid cipher
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "AESObfuscationModifier.Clone"}).
+		flog("AESObfuscationModifier.Clone").
 			Errorf("Failed to create AES cipher: %v", err)
 		// Return the original on error (caller must handle potential shared state)
 		return aom

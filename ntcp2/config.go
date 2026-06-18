@@ -131,7 +131,7 @@ type Config struct {
 // peer's router hash.
 // initiator indicates whether this connection will initiate the handshake.
 func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NewNTCP2Config", "initiator": initiator}).Debug("Creating new NTCP2Config")
+	flog("NewNTCP2Config", logger.Fields{"initiator": initiator}).Debug("Creating new NTCP2Config")
 	return &Config{
 		Pattern:       NTCP2Pattern,
 		Initiator:     initiator,
@@ -339,7 +339,7 @@ func (nc *Config) Validate() error {
 
 // validateCoreConfiguration checks pattern and cryptographic/session parameters.
 func (nc *Config) validateCoreConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateCoreConfiguration"}).Debug("Validating NTCP2 core configuration")
+	flog("NTCP2Config.validateCoreConfiguration").Debug("Validating NTCP2 core configuration")
 	if err := validation.ValidatePattern(nc.Pattern, "ntcp2"); err != nil {
 		return err
 	}
@@ -397,7 +397,7 @@ func (nc *Config) validateCoreConfiguration() error {
 
 // validateFrameConfiguration checks frame size and padding settings.
 func (nc *Config) validateFrameConfiguration() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateFrameConfiguration"}).Debug("Validating NTCP2 frame configuration")
+	flog("NTCP2Config.validateFrameConfiguration").Debug("Validating NTCP2 frame configuration")
 	// Validate frame settings
 	if nc.MaxFrameSize <= 0 {
 		return oops.
@@ -438,7 +438,7 @@ func (nc *Config) validateFrameConfiguration() error {
 
 // validateModifiers rejects incompatible modifiers in the NTCP2 modifier chain.
 func (nc *Config) validateModifiers() error {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.validateModifiers", "modifier_count": len(nc.Modifiers)}).Debug("Validating NTCP2 modifiers")
+	flog("NTCP2Config.validateModifiers", logger.Fields{"modifier_count": len(nc.Modifiers)}).Debug("Validating NTCP2 modifiers")
 	for _, mod := range nc.Modifiers {
 		if _, ok := mod.(*handshake.GenericPaddingModifier); ok {
 			return oops.
@@ -456,7 +456,7 @@ func (nc *Config) validateModifiers() error {
 // A PostHandshakeHook is automatically registered when SipHash length obfuscation
 // is enabled — the hook captures the handshake hash for future SipHash key derivation.
 func (nc *Config) ToConnConfig() (*noise.ConnConfig, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.ToConnConfig"}).Debug("Converting NTCP2Config to ConnConfig")
+	flog("NTCP2Config.ToConnConfig").Debug("Converting NTCP2Config to ConnConfig")
 	if err := nc.Validate(); err != nil {
 		return nil, oops.
 			Code("INVALID_CONFIG").
@@ -539,19 +539,7 @@ func (nc *Config) createPostHandshakeHook() func(*noise.NoiseConn) error {
 		if nc.Initiator {
 			role = "initiator"
 		}
-		log.WithFields(logger.Fields{
-			"pkg":                "ntcp2",
-			"func":               "NTCP2Config.createPostHandshakeHook",
-			"handshake_hash_len": len(h),
-			"ask_master_len":     len(askMaster),
-			"role":               role,
-			"sipk1_ab":           sipKeysAB[0],
-			"sipk2_ab":           sipKeysAB[1],
-			"sipiv_ab":           sipIVAB,
-			"sipk1_ba":           sipKeysBA[0],
-			"sipk2_ba":           sipKeysBA[1],
-			"sipiv_ba":           sipIVBA,
-		}).Debug("PostHandshakeHook: derived per-direction SipHash keys")
+		flog("NTCP2Config.createPostHandshakeHook", logger.Fields{"handshake_hash_len": len(h), "ask_master_len":     len(askMaster), "role":               role, "sipk1_ab":           sipKeysAB[0], "sipk2_ab":           sipKeysAB[1], "sipiv_ab":           sipIVAB, "sipk1_ba":           sipKeysBA[0], "sipk2_ba":           sipKeysBA[1], "sipiv_ba":           sipIVBA}).Debug("PostHandshakeHook: derived per-direction SipHash keys")
 
 		return nil
 	}
@@ -592,7 +580,7 @@ func (nc *Config) createBaseConnConfig() *noise.ConnConfig {
 
 // setupNTCP2Modifiers creates and configures all NTCP2-specific handshake modifiers.
 func (nc *Config) setupNTCP2Modifiers() ([]handshake.HandshakeModifier, error) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Config.setupNTCP2Modifiers"}).Debug("Setting up NTCP2-specific modifiers")
+	flog("NTCP2Config.setupNTCP2Modifiers").Debug("Setting up NTCP2-specific modifiers")
 	var modifiers []handshake.HandshakeModifier
 
 	factories := []func() (handshake.HandshakeModifier, error){

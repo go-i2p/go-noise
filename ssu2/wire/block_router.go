@@ -39,7 +39,7 @@ type BlockRouterStats struct {
 
 // NewBlockRouter creates a new block router.
 func NewBlockRouter() *BlockRouter {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewBlockRouter"}).Debug("NewBlockRouter: creating new block router")
+	flog("NewBlockRouter").Debug("NewBlockRouter: creating new block router")
 	return &BlockRouter{
 		handlers: make(map[uint8]BlockHandler),
 		stats: BlockRouterStats{
@@ -56,13 +56,13 @@ func (r *BlockRouter) RegisterHandler(handler BlockHandler) {
 
 	for _, blockType := range handler.SupportedTypes() {
 		r.handlers[blockType] = handler
-		log.WithFields(logger.Fields{"pkg": "ssu2", "func": "RegisterHandler", "blockType": blockType}).Debug("Registered block handler")
+		flog("RegisterHandler", logger.Fields{"blockType": blockType}).Debug("Registered block handler")
 	}
 }
 
 // RegisterHandlerFunc registers a simple function handler for specific block types.
 func (r *BlockRouter) RegisterHandlerFunc(blockTypes []uint8, fn BlockHandlerFunc) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "RegisterHandlerFunc", "blockTypes": blockTypes}).Debug("RegisterHandlerFunc: registering function handler")
+	flog("RegisterHandlerFunc", logger.Fields{"blockTypes": blockTypes}).Debug("RegisterHandlerFunc: registering function handler")
 	handler := &funcBlockHandler{
 		fn:    fn,
 		types: blockTypes,
@@ -72,7 +72,7 @@ func (r *BlockRouter) RegisterHandlerFunc(blockTypes []uint8, fn BlockHandlerFun
 
 // SetDefaultHandler sets a handler for unregistered block types.
 func (r *BlockRouter) SetDefaultHandler(handler BlockHandler) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "SetDefaultHandler"}).Debug("SetDefaultHandler: setting default block handler")
+	flog("SetDefaultHandler").Debug("SetDefaultHandler: setting default block handler")
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.defaultHandler = handler
@@ -131,21 +131,9 @@ func (r *BlockRouter) RouteBlock(block *SSU2Block) error {
 	if exists {
 		// A registered handler was tried but returned handled==false; this is
 		// a legitimate outcome (e.g. handler ignores empty Data), not an error.
-		log.WithFields(logger.Fields{
-			"pkg":        "ssu2",
-			"func":       "RouteBlock",
-			"blockType":  block.Type,
-			"blockName":  BlockTypeName(block.Type),
-			"dataLength": len(block.Data),
-		}).Debug("Registered handler declined block (handled=false)")
+		flog("RouteBlock", logger.Fields{"blockType":  block.Type, "blockName":  BlockTypeName(block.Type), "dataLength": len(block.Data)}).Debug("Registered handler declined block (handled=false)")
 	} else {
-		log.WithFields(logger.Fields{
-			"pkg":        "ssu2",
-			"func":       "RouteBlock",
-			"blockType":  block.Type,
-			"blockName":  BlockTypeName(block.Type),
-			"dataLength": len(block.Data),
-		}).Warn("No handler registered for block type")
+		flog("RouteBlock", logger.Fields{"blockType":  block.Type, "blockName":  BlockTypeName(block.Type), "dataLength": len(block.Data)}).Warn("No handler registered for block type")
 	}
 
 	return nil
@@ -155,7 +143,7 @@ func (r *BlockRouter) RouteBlock(block *SSU2Block) error {
 // Continues routing even if some blocks fail.
 // Returns the first error encountered.
 func (r *BlockRouter) RouteBlocks(blocks []*SSU2Block) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "RouteBlocks", "blockCount": len(blocks)}).Debug("RouteBlocks: routing multiple blocks")
+	flog("RouteBlocks", logger.Fields{"blockCount": len(blocks)}).Debug("RouteBlocks: routing multiple blocks")
 	var firstErr error
 	for _, block := range blocks {
 		if err := r.RouteBlock(block); err != nil {
@@ -188,7 +176,7 @@ func (r *BlockRouter) GetStats() BlockRouterStats {
 
 // HasHandler returns true if a handler is registered for the block type.
 func (r *BlockRouter) HasHandler(blockType uint8) bool {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "HasHandler", "blockType": blockType}).Debug("HasHandler: checking for registered handler")
+	flog("HasHandler", logger.Fields{"blockType": blockType}).Debug("HasHandler: checking for registered handler")
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	_, exists := r.handlers[blockType]

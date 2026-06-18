@@ -12,7 +12,7 @@ func (h *SSU2Conn) expectedInboundHeaderType() HeaderType {
 	h.stateMutex.RLock()
 	state := h.state
 	h.stateMutex.RUnlock()
-	log.WithFields(logger.Fields{"pkg": "session", "func": "expectedInboundHeaderType", "state": state, "initiator": h.initiator}).Debug("Determining inbound header type")
+	flog("expectedInboundHeaderType", logger.Fields{"state": state, "initiator": h.initiator}).Debug("Determining inbound header type")
 
 	if state == StateEstablished {
 		return HeaderTypeData

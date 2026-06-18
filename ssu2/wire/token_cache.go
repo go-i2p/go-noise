@@ -39,7 +39,7 @@ type Token struct {
 // If ttl is zero or negative, defaults to 60 seconds.
 // Uses the default maximum cache size MaxTokenCacheSize.
 func NewTokenCache(ttl time.Duration) *TokenCache {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "NewTokenCache", "ttl": ttl}).Debug("Creating new TokenCache")
+	flog("NewTokenCache", logger.Fields{"ttl": ttl}).Debug("Creating new TokenCache")
 	return NewTokenCacheWithMaxSize(ttl, MaxTokenCacheSize)
 }
 
@@ -47,7 +47,7 @@ func NewTokenCache(ttl time.Duration) *TokenCache {
 // maximum size. If ttl is zero or negative, defaults to 60 seconds. If maxSize
 // is zero or negative, defaults to MaxTokenCacheSize.
 func NewTokenCacheWithMaxSize(ttl time.Duration, maxSize int) *TokenCache {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "NewTokenCacheWithMaxSize", "ttl": ttl, "maxSize": maxSize}).Debug("Creating new TokenCache with custom max size")
+	flog("NewTokenCacheWithMaxSize", logger.Fields{"ttl": ttl, "maxSize": maxSize}).Debug("Creating new TokenCache with custom max size")
 	if ttl <= 0 {
 		ttl = 60 * time.Second
 	}
@@ -68,7 +68,7 @@ func NewTokenCacheWithMaxSize(ttl time.Duration, maxSize int) *TokenCache {
 // If a valid (non-expired) token already exists for this address, returns
 // the existing token instead of generating a new one to prevent retry storms.
 func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "GenerateToken"}).Debug("Generating new token")
+	flog("GenerateToken").Debug("Generating new token")
 	if addr == nil {
 		return nil, oops.
 			Code("NIL_ADDRESS").
@@ -83,11 +83,7 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 
 	// Check if valid token already exists for this address
 	if existingToken, ok := tc.lookupToken(addrStr); ok && !tc.isExpired(existingToken) {
-		log.WithFields(logger.Fields{
-			"pkg":  "wire",
-			"func": "GenerateToken",
-			"addr": addrStr,
-		}).Debug("Returning existing valid token for address")
+		flog("GenerateToken", logger.Fields{"addr": addrStr}).Debug("Returning existing valid token for address")
 		return existingToken.Value, nil
 	}
 
@@ -121,7 +117,7 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 // ValidateToken checks if a token is valid for the specified address.
 // Returns true if the token exists, matches the address, and hasn't expired.
 func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "ValidateToken", "addr": addr}).Debug("Validating token for address")
+	flog("ValidateToken", logger.Fields{"addr": addr}).Debug("Validating token for address")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false
 	}
@@ -142,7 +138,7 @@ func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
 // This should be called when a valid SessionRequest with token is received.
 // Returns true if the token was valid and consumed.
 func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "ConsumeToken", "addr": addr}).Debug("Validating and consuming token")
+	flog("ConsumeToken", logger.Fields{"addr": addr}).Debug("Validating and consuming token")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false
 	}
@@ -173,7 +169,7 @@ func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
 // Cleanup removes expired tokens from the cache.
 // This should be called periodically to prevent memory leaks.
 func (tc *TokenCache) Cleanup() int {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "Cleanup"}).Debug("Removing expired tokens")
+	flog("Cleanup").Debug("Removing expired tokens")
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 

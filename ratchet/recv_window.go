@@ -14,7 +14,7 @@ import (
 // the send-direction SymmetricRatchet, which would permanently desynchronise outgoing crypto.
 // Spec ref: ratchet.md §"Existing Session" — symmetric ratchet advances once per message.
 func fillRecvKeyCache(session *Session, upTo uint32) error {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "fillRecvKeyCache", "up_to": upTo, "fill_mark": session.recvFillMark}).Debug("pre-deriving recv message keys")
+	flog("fillRecvKeyCache", logger.Fields{"up_to": upTo, "fill_mark": session.recvFillMark}).Debug("pre-deriving recv message keys")
 	recvRatchet := session.RecvSymmetricRatchet
 	if recvRatchet == nil {
 		return oops.Errorf("RecvSymmetricRatchet is nil: session ratchet state is uninitialised; " +
@@ -34,7 +34,7 @@ func fillRecvKeyCache(session *Session, upTo uint32) error {
 // resetRecvWindow reinitialises the receive-window fields after an NSR replaces
 // the session ratchet state.  Must be called with session.mu held.
 func resetRecvWindow(session *Session) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "resetRecvWindow"}).Debug("reinitialising receive-window fields")
+	flog("resetRecvWindow").Debug("reinitialising receive-window fields")
 	session.recvWindowBase = 1
 	session.recvFillMark = 1
 	session.nextRecvTagCounter = 1
@@ -73,11 +73,6 @@ func trimRecvWindowByPN(session *Session, pn uint16) {
 	}
 
 	if trimmed > 0 {
-		log.WithFields(logger.Fields{
-			"pkg":     "ratchet",
-			"func":    "trimRecvWindowByPN",
-			"pn":      pn,
-			"trimmed": trimmed,
-		}).Debug("Trimmed stale recv window keys above PN")
+		flog("trimRecvWindowByPN", logger.Fields{"pn":      pn, "trimmed": trimmed}).Debug("Trimmed stale recv window keys above PN")
 	}
 }

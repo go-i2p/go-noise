@@ -48,7 +48,7 @@ type KeyRotationManager struct {
 // staticKey and introKey are the initial keys (32 bytes each).
 // isPublished indicates if these keys are published in router addresses.
 func NewKeyRotationManager(staticKey, introKey []byte, isPublished bool) (*KeyRotationManager, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewKeyRotationManager", "isPublished": isPublished}).Debug("Creating new KeyRotationManager")
+	flog("NewKeyRotationManager", logger.Fields{"isPublished": isPublished}).Debug("Creating new KeyRotationManager")
 	if len(staticKey) != StaticKeySize {
 		return nil, oops.
 			In("handshake").
@@ -98,7 +98,7 @@ func NewKeyRotationManagerWithAge(
 	keyAge time.Duration,
 	isPublished bool,
 ) (*KeyRotationManager, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewKeyRotationManagerWithAge", "keyAge": keyAge, "isPublished": isPublished}).Debug("NewKeyRotationManagerWithAge: creating manager with pre-aged keys")
+	flog("NewKeyRotationManagerWithAge", logger.Fields{"keyAge": keyAge, "isPublished": isPublished}).Debug("NewKeyRotationManagerWithAge: creating manager with pre-aged keys")
 	mgr, err := NewKeyRotationManager(staticKey, introKey, isPublished)
 	if err != nil {
 		return nil, err
@@ -253,7 +253,7 @@ func checkRotationAllowed(key *ManagedKey, keyName string) error {
 // RotateStaticKey generates a new static key if rotation is allowed.
 // Returns the new key bytes or an error if rotation is not permitted.
 func (krm *KeyRotationManager) RotateStaticKey() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "RotateStaticKey"}).Debug("Rotating static key")
+	flog("RotateStaticKey").Debug("Rotating static key")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -267,7 +267,7 @@ func (krm *KeyRotationManager) RotateStaticKey() ([]byte, error) {
 // ForceRotateStaticKey rotates the static key regardless of age.
 // Use with caution - this bypasses security requirements.
 func (krm *KeyRotationManager) ForceRotateStaticKey() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ForceRotateStaticKey"}).Warn("Force rotating static key (bypassing age check)")
+	flog("ForceRotateStaticKey").Warn("Force rotating static key (bypassing age check)")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -277,7 +277,7 @@ func (krm *KeyRotationManager) ForceRotateStaticKey() ([]byte, error) {
 // rotateKeyLocked generates a new key, retires the old one, and schedules
 // secure zeroing after the grace period. Caller must hold the write lock.
 func (krm *KeyRotationManager) rotateKeyLocked(keyName string, keySize int, current, previous **ManagedKey) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "rotateKeyLocked", "key": keyName}).Debug("performing key rotation")
+	flog("rotateKeyLocked", logger.Fields{"key": keyName}).Debug("performing key rotation")
 	newKey := make([]byte, keySize)
 	if _, err := rand.Read(newKey); err != nil {
 		return nil, oops.Wrapf(err, "failed to generate new %s key", keyName)
@@ -318,12 +318,7 @@ func (krm *KeyRotationManager) rotateKeyLocked(keyName string, keySize int, curr
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					log.WithFields(logger.Fields{
-						"pkg":   "handshake",
-						"func":  "rotateKeyLocked",
-						"key":   keyName,
-						"panic": r,
-					}).Error("onRotation callback panicked")
+					flog("rotateKeyLocked", logger.Fields{"key":   keyName, "panic": r}).Error("onRotation callback panicked")
 				}
 			}()
 			cb(keyName, oldKey, captured)
@@ -344,7 +339,7 @@ func (krm *KeyRotationManager) rotateStaticKeyLocked() ([]byte, error) {
 // RotateIntroKey generates a new introduction key if rotation is allowed.
 // Returns the new key bytes or an error if rotation is not permitted.
 func (krm *KeyRotationManager) RotateIntroKey() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "RotateIntroKey"}).Debug("Rotating intro key")
+	flog("RotateIntroKey").Debug("Rotating intro key")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -358,7 +353,7 @@ func (krm *KeyRotationManager) RotateIntroKey() ([]byte, error) {
 // ForceRotateIntroKey rotates the introduction key regardless of age.
 // Use with caution - this bypasses security requirements.
 func (krm *KeyRotationManager) ForceRotateIntroKey() ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ForceRotateIntroKey"}).Warn("Force rotating intro key (bypassing age check)")
+	flog("ForceRotateIntroKey").Warn("Force rotating intro key (bypassing age check)")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -375,7 +370,7 @@ func (krm *KeyRotationManager) rotateIntroKeyLocked() ([]byte, error) {
 // Returns the new keys or an error. Partial rotation is not performed -
 // if either key cannot be rotated, neither is rotated.
 func (krm *KeyRotationManager) RotateAllKeys() (staticKey, introKey []byte, err error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "RotateAllKeys"}).Debug("Rotating all keys")
+	flog("RotateAllKeys").Debug("Rotating all keys")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -407,7 +402,7 @@ func (krm *KeyRotationManager) RotateAllKeys() (staticKey, introKey []byte, err 
 // Keys that meet rotation requirements will trigger the rotation callback
 // but will NOT be automatically rotated - the callback should handle rotation.
 func (krm *KeyRotationManager) Start() {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "Start"}).Debug("Starting key rotation checker")
+	flog("Start").Debug("Starting key rotation checker")
 	krm.mu.Lock()
 	if krm.running {
 		krm.mu.Unlock()
@@ -422,7 +417,7 @@ func (krm *KeyRotationManager) Start() {
 
 // Stop halts the background key rotation checker.
 func (krm *KeyRotationManager) Stop() {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "Stop"}).Debug("Stopping key rotation checker")
+	flog("Stop").Debug("Stopping key rotation checker")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 
@@ -457,7 +452,7 @@ func (krm *KeyRotationManager) runRotationChecker() {
 
 // checkRotation checks if any keys can be rotated and updates their state.
 func (krm *KeyRotationManager) checkRotation() {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "checkRotation"}).Debug("checkRotation: checking if key rotation is needed")
+	flog("checkRotation").Debug("checkRotation: checking if key rotation is needed")
 	krm.mu.Lock()
 	defer krm.mu.Unlock()
 

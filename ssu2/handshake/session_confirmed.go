@@ -30,7 +30,7 @@ const (
 // initiator's identity. routerInfo may be nil for testing.
 // This message completes the XK handshake (→ s, se) and produces transport cipher states.
 func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber uint32, routerInfo []byte) (*SSU2Packet, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "CreateSessionConfirmed", "connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed")
+	flog("CreateSessionConfirmed", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed")
 	if !h.initiator {
 		return nil, oops.Errorf("only initiator can create SessionConfirmed")
 	}
@@ -114,7 +114,7 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 //
 // After this, both sides have completed the handshake and can send Data messages.
 func (h *HandshakeHandler) ProcessSessionConfirmed(packet *SSU2Packet) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ProcessSessionConfirmed"}).Debug("Processing received SessionConfirmed")
+	flog("ProcessSessionConfirmed").Debug("Processing received SessionConfirmed")
 	if h.initiator {
 		return oops.Errorf("initiator cannot process SessionConfirmed")
 	}
@@ -183,7 +183,7 @@ func (h *HandshakeHandler) finalizeSessionConfirmed(noiseMessage []byte) error {
 // Only the first fragment's header is MixHash'd into the handshake. Subsequent
 // fragment headers carry the same connection ID with incrementing packet numbers.
 func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packetNumber uint32, routerInfo []byte) ([]*SSU2Packet, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "CreateSessionConfirmedFragments", "connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed with fragmentation")
+	flog("CreateSessionConfirmedFragments", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed with fragmentation")
 	if !h.initiator {
 		return nil, oops.Errorf("only initiator can create SessionConfirmed")
 	}
@@ -218,7 +218,7 @@ func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packet
 
 // serializeConfirmedPayload serializes the RouterInfo block for SessionConfirmed.
 func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "serializeConfirmedPayload", "routerInfoLen": len(routerInfo)}).Debug("Serializing RouterInfo block")
+	flog("serializeConfirmedPayload", logger.Fields{"routerInfoLen": len(routerInfo)}).Debug("Serializing RouterInfo block")
 	var blocks []*SSU2Block
 	if len(routerInfo) > 0 {
 		blocks = append(blocks, NewSSU2Block(BlockTypeRouterInfo, routerInfo))
@@ -232,7 +232,7 @@ func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte,
 
 // computeFragmentCount returns the number of fragments needed for the given ciphertext size.
 func computeFragmentCount(ciphertextSize int) (int, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "computeFragmentCount", "ciphertextSize": ciphertextSize}).Debug("Calculating fragment count")
+	flog("computeFragmentCount", logger.Fields{"ciphertextSize": ciphertextSize}).Debug("Calculating fragment count")
 	totalFrags := (ciphertextSize + sessionConfirmedMaxPerPacket - 1) / sessionConfirmedMaxPerPacket
 	if totalFrags < 1 {
 		totalFrags = 1
@@ -245,7 +245,7 @@ func computeFragmentCount(ciphertextSize int) (int, error) {
 
 // buildSessionConfirmedHeader builds a 16-byte SessionConfirmed short header.
 func buildSessionConfirmedHeader(connID uint64, packetNumber uint32, fragNum, totalFrags int) []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "buildSessionConfirmedHeader", "connID": connID, "fragNum": fragNum, "totalFrags": totalFrags}).Debug("Building short header")
+	flog("buildSessionConfirmedHeader", logger.Fields{"connID": connID, "fragNum": fragNum, "totalFrags": totalFrags}).Debug("Building short header")
 	header := make([]byte, ShortHeaderSize)
 	binary.BigEndian.PutUint64(header[0:8], connID)
 	binary.BigEndian.PutUint32(header[8:12], packetNumber)
@@ -256,7 +256,7 @@ func buildSessionConfirmedHeader(connID uint64, packetNumber uint32, fragNum, to
 
 // buildFragmentPackets splits ciphertext into fragment packets.
 func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32, totalFrags int) []*SSU2Packet {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "buildFragmentPackets", "ciphertextLen": len(ciphertext), "totalFrags": totalFrags}).Debug("Splitting ciphertext into fragments")
+	flog("buildFragmentPackets", logger.Fields{"ciphertextLen": len(ciphertext), "totalFrags": totalFrags}).Debug("Splitting ciphertext into fragments")
 	packets := make([]*SSU2Packet, 0, totalFrags)
 	offset := 0
 	for i := 0; i < totalFrags; i++ {
@@ -295,7 +295,7 @@ func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32,
 //
 // For a single-fragment message, this behaves identically to ProcessSessionConfirmed.
 func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packet) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ProcessSessionConfirmedFragments", "fragmentCount": len(packets)}).Debug("Processing SessionConfirmed fragments")
+	flog("ProcessSessionConfirmedFragments", logger.Fields{"fragmentCount": len(packets)}).Debug("Processing SessionConfirmed fragments")
 	if h.initiator {
 		return oops.Errorf("initiator cannot process SessionConfirmed")
 	}
@@ -321,7 +321,7 @@ func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packe
 // validateFragmentOrdering checks that the fragment ordering and completeness
 // is correct for a set of SessionConfirmed packets.
 func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "validateFragmentOrdering", "packetCount": len(packets)}).Debug("Checking fragment ordering")
+	flog("validateFragmentOrdering", logger.Fields{"packetCount": len(packets)}).Debug("Checking fragment ordering")
 	totalFrags := int(packets[0].Header[13] & 0x0F)
 	if totalFrags < 1 {
 		totalFrags = 1
@@ -344,7 +344,7 @@ func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error
 // reassembleFragments concatenates payload data from ordered fragments into a
 // single Noise ciphertext. The last fragment's MAC is appended.
 func reassembleFragments(packets []*SSU2Packet) []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "reassembleFragments", "fragmentCount": len(packets)}).Debug("Concatenating fragment payloads")
+	flog("reassembleFragments", logger.Fields{"fragmentCount": len(packets)}).Debug("Concatenating fragment payloads")
 	totalSize := 0
 	for _, pkt := range packets {
 		totalSize += len(pkt.Payload)

@@ -65,7 +65,7 @@ const (
 //   - RTTVAR = RTT_sample / 2
 //   - RTO = SRTT + max(G, K*RTTVAR)
 func NewRTTEstimator() *RTTEstimator {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "NewRTTEstimator"}).Debug("Creating new RTTEstimator")
+	flog("NewRTTEstimator").Debug("Creating new RTTEstimator")
 	return &RTTEstimator{
 		smoothedRTT: 0,
 		rttVariance: 0,
@@ -88,7 +88,7 @@ func NewRTTEstimator() *RTTEstimator {
 //   - SRTT = (1-alpha) * SRTT + alpha * sample
 //   - minRTT = min(minRTT, sample)
 func (r *RTTEstimator) Update(sample time.Duration) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Update", "sample": sample}).Debug("Adding RTT sample")
+	flog("Update", logger.Fields{"sample": sample}).Debug("Adding RTT sample")
 	if sample <= 0 {
 		return // Ignore invalid samples
 	}
@@ -192,7 +192,7 @@ func (r *RTTEstimator) IsInitialized() bool {
 // Reset clears all state and returns the estimator to uninitialized state.
 // This is useful when connection properties change significantly (e.g., path migration).
 func (r *RTTEstimator) Reset() {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Reset"}).Debug("Clearing RTT estimator state")
+	flog("Reset").Debug("Clearing RTT estimator state")
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 

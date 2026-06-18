@@ -44,7 +44,7 @@ func floatToFixedPoint(f float64) byte {
 // ParseOptionsBlock decodes a 12+ byte Options block into OptionsParams.
 // Per spec: tmin(1) | tmax(1) | rmin(1) | rmax(1) | tdmy(2) | rdmy(2) | tdelay(2) | rdelay(2)
 func ParseOptionsBlock(data []byte) (*OptionsParams, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ParseOptionsBlock", "dataLen": len(data)}).Debug("decoding options block")
+	flog("ParseOptionsBlock", logger.Fields{"dataLen": len(data)}).Debug("decoding options block")
 	if len(data) < 12 {
 		return nil, oops.Errorf("Options block too short: %d bytes, need 12", len(data))
 	}
@@ -62,7 +62,7 @@ func ParseOptionsBlock(data []byte) (*OptionsParams, error) {
 
 // Serialize encodes OptionsParams into a 12-byte Options block per spec.
 func (o *OptionsParams) Serialize() []byte {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "Serialize"}).Debug("encoding OptionsParams to 12-byte block")
+	flog("Serialize").Debug("encoding OptionsParams to 12-byte block")
 	data := make([]byte, 12)
 	data[0] = floatToFixedPoint(o.TMinRatio)
 	data[1] = floatToFixedPoint(o.TMaxRatio)

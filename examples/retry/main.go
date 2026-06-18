@@ -14,6 +14,10 @@ import (
 )
 
 func main() {
+	run()
+}
+
+func run() {
 	// Parse command line arguments
 	args, err := exampleutil.ParseCommonArgs("retry-example")
 	if err != nil {

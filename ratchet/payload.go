@@ -185,7 +185,7 @@ func NewPaddingBlock(size int) PayloadBlock {
 // DateTime parses a DateTime block and returns the timestamp.
 // Returns an error if the block type is wrong or data length is not 4.
 func (b PayloadBlock) DateTime() (time.Time, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.DateTime", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing DateTime block")
+	flog("PayloadBlock.DateTime", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing DateTime block")
 	if b.Type != BlockDateTime {
 		return time.Time{}, oops.Errorf("block type %d is not DateTime", b.Type)
 	}
@@ -198,7 +198,7 @@ func (b PayloadBlock) DateTime() (time.Time, error) {
 
 // TerminationInfo parses a Termination block and returns the reason and additional data.
 func (b PayloadBlock) TerminationInfo() (TerminationReason, []byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.TerminationInfo", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Termination block")
+	flog("PayloadBlock.TerminationInfo", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Termination block")
 	if b.Type != BlockTermination {
 		return 0, nil, oops.Errorf("block type %d is not Termination", b.Type)
 	}
@@ -210,7 +210,7 @@ func (b PayloadBlock) TerminationInfo() (TerminationReason, []byte, error) {
 
 // MessageNumber parses a Message Number block and returns the PN value.
 func (b PayloadBlock) MessageNumber() (uint16, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.MessageNumber", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing MessageNumber block")
+	flog("PayloadBlock.MessageNumber", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing MessageNumber block")
 	if b.Type != BlockMessageNumber {
 		return 0, oops.Errorf("block type %d is not MessageNumber", b.Type)
 	}
@@ -231,7 +231,7 @@ type NextKeyInfo struct {
 
 // NextKey parses a NextKey block and returns its fields.
 func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.NextKey", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing NextKey block")
+	flog("PayloadBlock.NextKey", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing NextKey block")
 	if b.Type != BlockNextKey {
 		return NextKeyInfo{}, oops.Errorf("block type %d is not NextKey", b.Type)
 	}
@@ -255,7 +255,7 @@ func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
 
 // Acks parses an Ack block and returns the list of acknowledgment entries.
 func (b PayloadBlock) Acks() ([]AckEntry, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.Acks", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Ack block")
+	flog("PayloadBlock.Acks", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Ack block")
 	if b.Type != BlockAck {
 		return nil, oops.Errorf("block type %d is not Ack", b.Type)
 	}
@@ -279,7 +279,7 @@ func (b PayloadBlock) SerializeSize() int {
 // Serialize writes the block to a byte slice in wire format: [type(1)] + [size(2)] + [data(N)].
 // Returns the number of bytes written.
 func (b PayloadBlock) Serialize(dst []byte) (int, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "PayloadBlock.Serialize", "block_type": b.Type, "data_len": len(b.Data)}).Debug("Serializing payload block")
+	flog("PayloadBlock.Serialize", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Serializing payload block")
 	needed := b.SerializeSize()
 	if len(dst) < needed {
 		return 0, oops.Errorf("destination buffer too small: need %d, have %d", needed, len(dst))

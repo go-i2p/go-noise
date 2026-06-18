@@ -5,8 +5,6 @@ package mod
 import (
 	"sync"
 	"time"
-
-	"github.com/go-i2p/logger"
 )
 
 // ConnState represents the internal state of a NoiseConn
@@ -60,7 +58,7 @@ type ConnectionMetrics struct {
 
 // NewConnectionMetrics creates a new ConnectionMetrics instance
 func NewConnectionMetrics() *ConnectionMetrics {
-	log.WithFields(logger.Fields{"pkg": "mod", "func": "NewConnectionMetrics"}).Debug("Creating new connection metrics")
+	flog("NewConnectionMetrics").Debug("Creating new connection metrics")
 	return &ConnectionMetrics{
 		Created: time.Now(),
 	}
@@ -79,7 +77,7 @@ func (m *ConnectionMetrics) HandshakeDuration() time.Duration {
 
 // SetHandshakeStart records the handshake start time
 func (m *ConnectionMetrics) SetHandshakeStart() {
-	log.WithFields(logger.Fields{"pkg": "mod", "func": "ConnectionMetrics.SetHandshakeStart"}).Debug("Recording handshake start time")
+	flog("ConnectionMetrics.SetHandshakeStart").Debug("Recording handshake start time")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.handshakeStarted = time.Now()
@@ -87,7 +85,7 @@ func (m *ConnectionMetrics) SetHandshakeStart() {
 
 // SetHandshakeEnd records the handshake completion time
 func (m *ConnectionMetrics) SetHandshakeEnd() {
-	log.WithFields(logger.Fields{"pkg": "mod", "func": "ConnectionMetrics.SetHandshakeEnd"}).Debug("Recording handshake end time")
+	flog("ConnectionMetrics.SetHandshakeEnd").Debug("Recording handshake end time")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.handshakeEnded = time.Now()

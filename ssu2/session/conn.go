@@ -299,7 +299,7 @@ func NewSSU2Conn(
 	staticKey []byte,
 	remoteStaticKey []byte,
 ) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "NewSSU2Conn", "remote_addr": remoteAddr}).Debug("Creating new SSU2 connection")
+	flog("NewSSU2Conn", logger.Fields{"remote_addr": remoteAddr}).Debug("Creating new SSU2 connection")
 	if err := validateConnInputs(underlying, remoteAddr, config); err != nil {
 		return nil, err
 	}
@@ -335,7 +335,7 @@ func NewSSU2Conn(
 }
 
 func validateConnInputs(underlying net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "validateConnInputs", "remote_addr": remoteAddr}).Debug("Validating connection parameters")
+	flog("validateConnInputs", logger.Fields{"remote_addr": remoteAddr}).Debug("Validating connection parameters")
 	if underlying == nil {
 		return oops.Errorf("underlying PacketConn is nil")
 	}
@@ -352,7 +352,7 @@ func validateConnInputs(underlying net.PacketConn, remoteAddr *net.UDPAddr, conf
 }
 
 func resolveConnectionID(config *SSU2Config) (uint64, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "resolveConnectionID", "configured_id": config.ConnectionID}).Debug("Resolving connection ID")
+	flog("resolveConnectionID", logger.Fields{"configured_id": config.ConnectionID}).Debug("Resolving connection ID")
 	connID := config.ConnectionID
 	if connID == 0 {
 		var err error
@@ -365,7 +365,7 @@ func resolveConnectionID(config *SSU2Config) (uint64, error) {
 }
 
 func buildHandshakeHandler(initiator bool, staticKey, remoteStaticKey []byte, config *SSU2Config) (*HandshakeHandler, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "buildHandshakeHandler", "initiator": initiator, "has_remote_key": len(remoteStaticKey) > 0}).Debug("Creating handshake handler")
+	flog("buildHandshakeHandler", logger.Fields{"initiator": initiator, "has_remote_key": len(remoteStaticKey) > 0}).Debug("Creating handshake handler")
 	prologue := []byte(nil) // SSU2 spec: null prologue (MixHash(h) with empty data)
 	handler, err := NewHandshakeHandler(initiator, staticKey, remoteStaticKey, prologue)
 	if err != nil {
@@ -386,7 +386,7 @@ func buildHandshakeHandler(initiator bool, staticKey, remoteStaticKey []byte, co
 }
 
 func newSSU2AddrForConn(remoteAddr *net.UDPAddr, routerHash data.Hash, connID uint64, initiator bool) (*SSU2Addr, error) {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "newSSU2AddrForConn", "remote_addr": remoteAddr, "conn_id": connID, "initiator": initiator}).Debug("Building SSU2 address")
+	flog("newSSU2AddrForConn", logger.Fields{"remote_addr": remoteAddr, "conn_id": connID, "initiator": initiator}).Debug("Building SSU2 address")
 	role := "initiator"
 	if !initiator {
 		role = "responder"
@@ -406,7 +406,7 @@ func assembleSSU2Conn(
 	initiator bool,
 	handshakeHandler *HandshakeHandler,
 ) *SSU2Conn {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "assembleSSU2Conn", "remote_addr": remoteAddr, "initiator": initiator, "mtu": config.MTU}).Debug("Assembling connection struct")
+	flog("assembleSSU2Conn", logger.Fields{"remote_addr": remoteAddr, "initiator": initiator, "mtu": config.MTU}).Debug("Assembling connection struct")
 	rttEst := NewRTTEstimator()
 
 	// Create a closed channel sentinel for MessageChan() to return when Read() has been called,
@@ -443,7 +443,7 @@ func assembleSSU2Conn(
 }
 
 func (c *SSU2Conn) initHeaderProtection(config *SSU2Config, initiator bool) error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "initHeaderProtection", "has_intro_key": len(config.IntroKey) == HeaderKeySize, "initiator": initiator}).Debug("Initializing header protection")
+	flog("initHeaderProtection", logger.Fields{"has_intro_key": len(config.IntroKey) == HeaderKeySize, "initiator": initiator}).Debug("Initializing header protection")
 	if len(config.IntroKey) == HeaderKeySize {
 		hpm, err := NewHeaderProtectorManager(config.IntroKey, config.RemoteIntroKey, initiator)
 		if err != nil {
@@ -459,7 +459,7 @@ func (c *SSU2Conn) initHeaderProtection(config *SSU2Config, initiator bool) erro
 // messageTypeToHeaderType maps an SSU2 message type to the corresponding
 // header protection type used for key selection.
 func messageTypeToHeaderType(msgType uint8) HeaderType {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "messageTypeToHeaderType", "msg_type": msgType}).Debug("Mapping message type to header type")
+	flog("messageTypeToHeaderType", logger.Fields{"msg_type": msgType}).Debug("Mapping message type to header type")
 	switch msgType {
 	case MessageTypeSessionRequest:
 		return HeaderTypeSessionRequest

@@ -11,7 +11,7 @@ import (
 // by parameter name. The value must be a 44-byte I2P Base64-encoded string
 // representing 32 bytes.
 func keyFromRouterAddress(options map[string]string, param, label string) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "keyFromRouterAddress", "param": param, "label": label}).Debug("Extracting key from RouterAddress")
+	flog("keyFromRouterAddress", logger.Fields{"param": param, "label": label}).Debug("Extracting key from RouterAddress")
 	val, ok := options[param]
 	if !ok || val == "" {
 		return nil, oops.Errorf("RouterAddress missing required '%s' (%s) parameter", param, label)
@@ -39,7 +39,7 @@ func keyFromRouterAddress(options map[string]string, param, label string) ([]byt
 // Base 64 encoded using the standard I2P Base 64 alphabet. 32 bytes in
 // binary, 44 bytes as Base 64 encoded, big-endian ChaCha20 key."
 func IntroKeyFromRouterAddress(options map[string]string) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "IntroKeyFromRouterAddress"}).Debug("Extracting introduction key")
+	flog("IntroKeyFromRouterAddress").Debug("Extracting introduction key")
 	return keyFromRouterAddress(options, "i", "introduction key")
 }
 
@@ -47,6 +47,6 @@ func IntroKeyFromRouterAddress(options map[string]string) ([]byte, error) {
 // a RouterAddress options map. The "s" parameter is a 44-byte I2P
 // Base64-encoded string representing the X25519 public key.
 func StaticKeyFromRouterAddress(options map[string]string) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "wire", "func": "StaticKeyFromRouterAddress"}).Debug("Extracting static public key")
+	flog("StaticKeyFromRouterAddress").Debug("Extracting static public key")
 	return keyFromRouterAddress(options, "s", "static key")
 }

@@ -12,14 +12,12 @@ import (
 	"github.com/go-i2p/logger"
 )
 
-var log = logger.GetGoI2PLogger()
-
 // RandomBytes generates cryptographically secure random bytes.
 // Returns an error if n is negative. If n is zero, returns an empty slice.
 func RandomBytes(n int) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "internal/cryptorand", "func": "RandomBytes", "n": n}).Debug("Generating random bytes")
+	flog("RandomBytes", logger.Fields{"n": n}).Debug("Generating random bytes")
 	if n < 0 {
-		log.WithFields(logger.Fields{"pkg": "internal/cryptorand", "func": "RandomBytes", "n": n}).Error("Negative byte count")
+		flog("RandomBytes", logger.Fields{"n": n}).Error("Negative byte count")
 		return nil, errors.New("internal: negative byte count")
 	}
 	if n == 0 {
@@ -27,7 +25,7 @@ func RandomBytes(n int) ([]byte, error) {
 	}
 	b := make([]byte, n)
 	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		log.WithFields(logger.Fields{"pkg": "internal/cryptorand", "func": "RandomBytes"}).WithError(err).Error("Failed to read from crypto/rand")
+		flog("RandomBytes").WithError(err).Error("Failed to read from crypto/rand")
 		return nil, err
 	}
 	return b, nil

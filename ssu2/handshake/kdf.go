@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 
-	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
 )
@@ -65,7 +64,7 @@ func deriveDataPhaseKeys(cs *noise.CipherState) (kData, kHeader2 []byte, err err
 // AEAD uses the spec-mandated derived key.
 // Returns the send-direction k_header_2 and recv-direction k_header_2.
 func DeriveHeaderKeys(sendCipher, recvCipher *noise.CipherState) (sendKHeader2, recvKHeader2 []byte, err error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "DeriveHeaderKeys"}).Debug("Deriving data-phase header keys")
+	flog("DeriveHeaderKeys").Debug("Deriving data-phase header keys")
 	if sendCipher == nil || recvCipher == nil {
 		return nil, nil, oops.Errorf("handshake not complete: cipher states not available")
 	}

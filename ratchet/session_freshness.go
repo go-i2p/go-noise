@@ -50,7 +50,7 @@ func WithNSMaxFutureAge(d time.Duration) SessionManagerOption {
 //
 // Spec ref: ratchet.md §"Parameters" — max clock skew: −5 minutes to +2 minutes.
 func (sm *SessionManager) validateNSDateTimeFreshness(payload []byte) error {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "validateNSDateTimeFreshness", "payload_len": len(payload)}).Debug("Validating NS DateTime freshness")
+	flog("validateNSDateTimeFreshness", logger.Fields{"payload_len": len(payload)}).Debug("Validating NS DateTime freshness")
 	blocks, err := ParsePayload(payload)
 	if err != nil {
 		return oops.Wrapf(err, "NS payload parse failed during freshness check")

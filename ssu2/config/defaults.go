@@ -29,7 +29,7 @@ const (
 // the static key authenticated by the Noise handshake corresponds to the
 // key published in the peer's RouterInfo.
 func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "DefaultRouterInfoValidator", "router_info_len": len(routerInfo), "static_key_len": len(authenticatedStaticKey)}).Debug("Validating router info against authenticated static key")
+	flog("DefaultRouterInfoValidator", logger.Fields{"router_info_len": len(routerInfo), "static_key_len": len(authenticatedStaticKey)}).Debug("Validating router info against authenticated static key")
 	if len(routerInfo) == 0 {
 		return oops.
 			Code("EMPTY_ROUTER_INFO").
@@ -74,7 +74,7 @@ func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error
 // routerHash is the local router identity hash.
 // initiator indicates whether this connection will initiate the handshake.
 func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
-	log.WithFields(logger.Fields{"pkg": "config", "func": "NewSSU2Config", "initiator": initiator}).Debug("Creating new SSU2Config")
+	flog("NewSSU2Config", logger.Fields{"initiator": initiator}).Debug("Creating new SSU2Config")
 	return &SSU2Config{
 		Pattern:       "XK",
 		Initiator:     initiator,

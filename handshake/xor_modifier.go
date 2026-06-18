@@ -53,7 +53,7 @@ func NewXORModifier(name string, xorKey []byte) (*XORModifier, error) {
 			// Return error instead of silently degrading to a 1-byte key.
 			// This forces callers to handle the entropy failure explicitly
 			// rather than proceeding with broken obfuscation (M-3 audit finding).
-			log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewXORModifier", "name": name}).WithError(err).Error("crypto/rand failed; cannot create XOR modifier without degradation")
+			flog("NewXORModifier", logger.Fields{"name": name}).WithError(err).Error("crypto/rand failed; cannot create XOR modifier without degradation")
 			return nil, oops.
 				Code("RNG_FAILED").
 				Wrapf(err, "failed to generate random XOR key")

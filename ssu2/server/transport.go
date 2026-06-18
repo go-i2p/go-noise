@@ -41,7 +41,7 @@ import (
 //
 // Returns an SSU2Conn ready for handshake, or an error if creation fails.
 func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "DialSSU2", "remote_addr": remoteAddr}).Debug("Dialing SSU2 connection")
+	flog("DialSSU2", logger.Fields{"remote_addr": remoteAddr}).Debug("Dialing SSU2 connection")
 	if err := validateDialParams(localAddr, remoteAddr, config); err != nil {
 		return nil, err
 	}
@@ -83,13 +83,7 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 	// on this interface, recommend using DialSSU2WithConn for multiplexing.
 	// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
 	if conn.LocalAddr() != nil {
-		log.WithFields(logger.Fields{
-			"pkg":              "server",
-			"func":             "DialSSU2",
-			"ephemeral_bind":   true,
-			"local_addr":       conn.LocalAddr().String(),
-			"ephemeral_source": "new UDP socket",
-		}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
+		flog("DialSSU2", logger.Fields{"ephemeral_bind":   true, "local_addr":       conn.LocalAddr().String(), "ephemeral_source": "new UDP socket"}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
 	}
 
 	return conn, nil
@@ -119,7 +113,7 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 //
 // Returns an SSU2Conn ready for handshake, or an error if creation fails.
 func DialSSU2WithConn(packetConn net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "DialSSU2WithConn", "remote_addr": remoteAddr}).Debug("Dialing SSU2 connection with existing PacketConn")
+	flog("DialSSU2WithConn", logger.Fields{"remote_addr": remoteAddr}).Debug("Dialing SSU2 connection with existing PacketConn")
 	if err := validateParam(packetConn, "packet connection", "INVALID_PACKET_CONN", "ssu2_transport"); err != nil {
 		return nil, err
 	}
@@ -181,7 +175,7 @@ func performSSU2Handshake(ctx context.Context, conn *SSU2Conn) (*SSU2Conn, error
 // DialSSU2WithConnAndHandshakeContext creates an SSU2 connection over an existing
 // PacketConn and performs the handshake with context support.
 func DialSSU2WithConnAndHandshakeContext(ctx context.Context, packetConn net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "DialSSU2WithConnAndHandshakeContext", "remote_addr": remoteAddr}).Debug("Dialing with handshake on existing PacketConn")
+	flog("DialSSU2WithConnAndHandshakeContext", logger.Fields{"remote_addr": remoteAddr}).Debug("Dialing with handshake on existing PacketConn")
 	conn, err := DialSSU2WithConn(packetConn, remoteAddr, config)
 	if err != nil {
 		return nil, err
@@ -205,7 +199,7 @@ func DialSSU2WithConnAndHandshakeContext(ctx context.Context, packetConn net.Pac
 //
 // Returns an established SSU2Conn, or an error if dial or handshake fails.
 func DialSSU2WithHandshakeContext(ctx context.Context, localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "DialSSU2WithHandshakeContext", "remote_addr": remoteAddr}).Debug("Dialing with handshake and context")
+	flog("DialSSU2WithHandshakeContext", logger.Fields{"remote_addr": remoteAddr}).Debug("Dialing with handshake and context")
 	conn, err := DialSSU2(localAddr, remoteAddr, config)
 	if err != nil {
 		return nil, err
@@ -228,7 +222,7 @@ func DialSSU2WithHandshakeContext(ctx context.Context, localAddr, remoteAddr *ne
 //
 // Returns an SSU2Listener ready to accept, or an error if creation fails.
 func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "ListenSSU2", "address": addr}).Debug("Creating SSU2 listener")
+	flog("ListenSSU2", logger.Fields{"address": addr}).Debug("Creating SSU2 listener")
 	if err := validateListenParams(addr, config); err != nil {
 		return nil, err
 	}
@@ -262,12 +256,7 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 	// Set buffer to a larger value (e.g., 8 MB) to improve packet handling
 	// under burst traffic and flood conditions.
 	if err := packetConn.SetReadBuffer(8 * 1024 * 1024); err != nil {
-		log.WithFields(logger.Fields{
-			"pkg":     "server",
-			"func":    "ListenSSU2",
-			"address": addr,
-			"error":   err,
-		}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
+		flog("ListenSSU2", logger.Fields{"address": addr, "error":   err}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
 		// BUG-PB-2: record the failure in the listener so Stats() can expose it
 		// to monitoring without relying on log scraping.
 		listener.readBufferFailed.Store(true)
@@ -587,7 +576,7 @@ func validateListenAddress(addr *net.UDPAddr, config *SSU2Config) error {
 
 // createUDPConnection creates a UDP PacketConn bound to the specified local address.
 func createUDPConnection(localAddr *net.UDPAddr) (net.PacketConn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "createUDPConnection", "local_addr": localAddr}).Debug("Creating UDP connection")
+	flog("createUDPConnection", logger.Fields{"local_addr": localAddr}).Debug("Creating UDP connection")
 	packetConn, err := net.ListenUDP("udp", localAddr)
 	if err != nil {
 		return nil, oops.
@@ -601,7 +590,7 @@ func createUDPConnection(localAddr *net.UDPAddr) (net.PacketConn, error) {
 
 // createSSU2Connection creates an SSU2Conn from a PacketConn and configuration.
 func createSSU2Connection(packetConn net.PacketConn, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "createSSU2Connection", "remote_addr": remoteAddr}).Debug("Creating SSU2 connection wrapper")
+	flog("createSSU2Connection", logger.Fields{"remote_addr": remoteAddr}).Debug("Creating SSU2 connection wrapper")
 	// Generate connection ID if not set
 	if config.ConnectionID == 0 {
 		connID, err := GenerateConnectionID()

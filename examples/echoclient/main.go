@@ -17,6 +17,10 @@ import (
 )
 
 func main() {
+	run()
+}
+
+func run() {
 	// Parse command line arguments
 	args, err := exampleutil.ParseCommonArgs("echoclient")
 	if err != nil {
@@ -94,16 +98,16 @@ func createClientConfig(args *exampleutil.CommonArgs, staticKey, remoteKey []byt
 		WithReadTimeout(args.ReadTimeout).
 		WithWriteTimeout(args.WriteTimeout)
 
-	// Add static key if required
+	return applyOptionalKeys(config, staticKey, remoteKey)
+}
+
+func applyOptionalKeys(config *noise.ConnConfig, staticKey, remoteKey []byte) *noise.ConnConfig {
 	if staticKey != nil {
 		config = config.WithStaticKey(staticKey)
 	}
-
-	// Add remote key if required
 	if remoteKey != nil {
 		config = config.WithRemoteKey(remoteKey)
 	}
-
 	return config
 }
 

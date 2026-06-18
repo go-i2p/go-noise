@@ -24,11 +24,7 @@ func (sm *SessionManager) EncryptGarlicMessage(
 		return nil, oops.Errorf("plaintext must be non-empty: garlic messages require at least one payload block")
 	}
 
-	log.WithFields(logger.Fields{
-		"pkg":            "ratchet",
-		"func":           "EncryptGarlicMessage",
-		"plaintext_size": len(plaintextGarlic),
-	}).Debug("Encrypting garlic message")
+	flog("EncryptGarlicMessage", logger.Fields{"plaintext_size": len(plaintextGarlic)}).Debug("Encrypting garlic message")
 
 	// Hold RLock through the encrypt dispatch to prevent concurrent session
 	// eviction. encryptExistingSession is CPU-only (no network I/O), so
@@ -53,7 +49,7 @@ func (sm *SessionManager) encryptNewSession(
 	destinationHash, destinationPubKey [32]byte,
 	plaintextGarlic []byte,
 ) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "encryptNewSession", "plaintext_len": len(plaintextGarlic)}).Debug("Encrypting new session message")
+	flog("encryptNewSession", logger.Fields{"plaintext_len": len(plaintextGarlic)}).Debug("Encrypting new session message")
 	if err := ValidateNewSessionPayload(plaintextGarlic); err != nil {
 		return nil, oops.Wrapf(err, "new session payload rejected")
 	}
@@ -113,11 +109,7 @@ func (sm *SessionManager) storeNewSessionState(
 		return oops.Wrapf(err, "failed to generate tag window")
 	}
 
-	log.WithFields(logger.Fields{
-		"pkg":           "ratchet",
-		"func":          "storeNewSessionState",
-		"session_count": len(sm.sessions),
-	}).Debug("New session state stored")
+	flog("storeNewSessionState", logger.Fields{"session_count": len(sm.sessions)}).Debug("New session state stored")
 
 	return nil
 }
@@ -127,7 +119,7 @@ func (sm *SessionManager) encryptExistingSession(
 	session *Session,
 	plaintextGarlic []byte,
 ) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "encryptExistingSession", "plaintext_len": len(plaintextGarlic)}).Debug("Encrypting existing session message")
+	flog("encryptExistingSession", logger.Fields{"plaintext_len": len(plaintextGarlic)}).Debug("Encrypting existing session message")
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
@@ -197,11 +189,7 @@ func (sm *SessionManager) EncryptUnboundGarlicMessage(
 		return nil, oops.Errorf("plaintext must be non-empty: garlic messages require at least one payload block")
 	}
 
-	log.WithFields(logger.Fields{
-		"pkg":            "ratchet",
-		"func":           "EncryptUnboundGarlicMessage",
-		"plaintext_size": len(plaintextGarlic),
-	}).Debug("Encrypting unbound garlic message")
+	flog("EncryptUnboundGarlicMessage", logger.Fields{"plaintext_size": len(plaintextGarlic)}).Debug("Encrypting unbound garlic message")
 
 	if err := ValidateNewSessionPayload(plaintextGarlic); err != nil {
 		return nil, oops.Wrapf(err, "unbound new session payload rejected")
@@ -272,11 +260,7 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	session.mu.Unlock()
 	sm.mu.Unlock()
 
-	log.WithFields(logger.Fields{
-		"pkg":          "ratchet",
-		"func":         "EncryptNewSessionReply",
-		"payload_size": len(payload),
-	}).Debug("New Session Reply sent, ratchets updated with NSR keys")
+	flog("EncryptNewSessionReply", logger.Fields{"payload_size": len(payload)}).Debug("New Session Reply sent, ratchets updated with NSR keys")
 
 	return wireMsg, nil
 }

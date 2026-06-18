@@ -22,12 +22,7 @@ import (
 // to expire (typically 30-120 seconds).
 var reuseAddrControl = func(network, address string, c syscall.RawConn) error {
 	// AUDIT 7.1: Log that SO_REUSEADDR is not applied on this platform
-	log.WithFields(logger.Fields{
-		"pkg":      "ntcp2",
-		"func":     "reuseAddrControl",
-		"platform": "non-linux",
-		"address":  address,
-	}).Warn("SO_REUSEADDR not applied on this platform; use platform-specific approaches for fast restart")
+	flog("reuseAddrControl", logger.Fields{"platform": "non-linux", "address":  address}).Warn("SO_REUSEADDR not applied on this platform; use platform-specific approaches for fast restart")
 
 	// On non-Linux platforms, we do not attempt to set SO_REUSEADDR to avoid
 	// applying platform-specific semantics that may differ from Linux.

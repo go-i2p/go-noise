@@ -41,9 +41,9 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	sipKeysBA [2]uint64, sipIVBA uint64,
 	err error,
 ) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys"}).Debug("Deriving SipHash keys from handshake")
+	flog("DeriveSipHashKeys").Debug("Deriving SipHash keys from handshake")
 	if len(askMaster) != StaticKeySize {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys", "length": len(askMaster)}).Error("Invalid ask_master length")
+		flog("DeriveSipHashKeys", logger.Fields{"length": len(askMaster)}).Error("Invalid ask_master length")
 		return sipKeysAB, 0, sipKeysBA, 0, oops.
 			Code("INVALID_ASK_MASTER").
 			In("ntcp2").
@@ -52,7 +52,7 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	}
 
 	if len(handshakeHash) != StaticKeySize {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys", "length": len(handshakeHash)}).Error("Invalid handshake hash length")
+		flog("DeriveSipHashKeys", logger.Fields{"length": len(handshakeHash)}).Error("Invalid handshake hash length")
 		return sipKeysAB, 0, sipKeysBA, 0, oops.
 			Code("INVALID_HANDSHAKE_HASH").
 			In("ntcp2").
@@ -75,7 +75,7 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	// Step 4: sipkeys_ab = HMAC-SHA256(key=temp_key, data=byte(0x01))[0:24]
 	fullAB := hmac.HMACSHA256(tempKey[:], []byte{0x01})
 	if len(fullAB) < 32 {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys", "length": len(fullAB)}).Error("Unexpected HMAC output length for sipkeys_ab")
+		flog("DeriveSipHashKeys", logger.Fields{"length": len(fullAB)}).Error("Unexpected HMAC output length for sipkeys_ab")
 		return sipKeysAB, 0, sipKeysBA, 0, oops.
 			Code("INVALID_HMAC_OUTPUT").
 			In("ntcp2").
@@ -95,7 +95,7 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	step5Data[len(fullAB[:])] = 0x02
 	fullBA := hmac.HMACSHA256(tempKey[:], step5Data)
 	if len(fullBA) < 32 {
-		log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys", "length": len(fullBA)}).Error("Unexpected HMAC output length for sipkeys_ba")
+		flog("DeriveSipHashKeys", logger.Fields{"length": len(fullBA)}).Error("Unexpected HMAC output length for sipkeys_ba")
 		return sipKeysAB, 0, sipKeysBA, 0, oops.
 			Code("INVALID_HMAC_OUTPUT").
 			In("ntcp2").
@@ -117,6 +117,6 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	securemem.SecureZero(step5Data)
 	securemem.SecureZero(fullBA[:])
 
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "DeriveSipHashKeys"}).Debug("SipHash key derivation completed successfully")
+	flog("DeriveSipHashKeys").Debug("SipHash key derivation completed successfully")
 	return sipKeysAB, sipIVAB, sipKeysBA, sipIVBA, nil
 }

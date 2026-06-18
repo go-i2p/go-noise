@@ -48,7 +48,7 @@ func openAndWrapTransport[R shutdownRegisterer](
 	result, err := wrap(resource)
 	if err != nil {
 		if closeErr := resource.Close(); closeErr != nil {
-			log.WithFields(logger.Fields{"pkg": "transport", "func": "openAndWrapTransport", "error": closeErr.Error()}).Warn("resource.Close failed after wrap error")
+			flog("openAndWrapTransport", logger.Fields{"error": closeErr.Error()}).Warn("resource.Close failed after wrap error")
 		}
 		return zero, err
 	}
@@ -61,10 +61,10 @@ func openAndWrapTransport[R shutdownRegisterer](
 // createNewConn establishes a new network connection to the specified address.
 // Returns an error with detailed context if the connection fails.
 func createNewConn(network, addr string) (net.Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConn", "network": network, "address": addr}).Debug("Dialing new connection")
+	flog("createNewConn", logger.Fields{"network": network, "address": addr}).Debug("Dialing new connection")
 	conn, err := net.Dial(network, addr)
 	if err != nil {
-		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConn", "network": network, "address": addr}).WithError(err).Error("Dial failed")
+		flog("createNewConn", logger.Fields{"network": network, "address": addr}).WithError(err).Error("Dial failed")
 		return nil, wrapTransportError("DIAL_FAILED", network, addr,
 			"failed to dial %s://%s", err, network, addr)
 	}
@@ -74,11 +74,11 @@ func createNewConn(network, addr string) (net.Conn, error) {
 // createNewConnContext establishes a new network connection with context support.
 // Returns an error with detailed context if the connection fails.
 func createNewConnContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConnContext", "network": network, "address": addr}).Debug("Dialing new connection with context")
+	flog("createNewConnContext", logger.Fields{"network": network, "address": addr}).Debug("Dialing new connection with context")
 	dialer := &net.Dialer{}
 	conn, err := dialer.DialContext(ctx, network, addr)
 	if err != nil {
-		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewConnContext", "network": network, "address": addr}).WithError(err).Error("Dial failed")
+		flog("createNewConnContext", logger.Fields{"network": network, "address": addr}).WithError(err).Error("Dial failed")
 		return nil, wrapTransportError("DIAL_FAILED", network, addr,
 			"failed to dial %s://%s", err, network, addr)
 	}
@@ -88,10 +88,10 @@ func createNewConnContext(ctx context.Context, network, addr string) (net.Conn, 
 // createNoiseConn wraps a network connection with NoiseConn configuration.
 // Returns an error with detailed context if NoiseConn creation fails.
 func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "createNoiseConn", "network": network, "address": addr}).Debug("Creating NoiseConn wrapper")
+	flog("createNoiseConn", logger.Fields{"network": network, "address": addr}).Debug("Creating NoiseConn wrapper")
 	noiseConn, err := NewNoiseConn(conn, config)
 	if err != nil {
-		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNoiseConn"}).WithError(err).Error("Failed to create NoiseConn")
+		flog("createNoiseConn").WithError(err).Error("Failed to create NoiseConn")
 		return nil, wrapTransportError("NOISE_CONN_FAILED", network, addr,
 			"failed to create noise connection", err)
 	}
@@ -101,10 +101,10 @@ func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*
 // createNewListener establishes a new network listener on the specified address.
 // Returns an error with detailed context if the listen call fails.
 func createNewListener(network, addr string) (net.Listener, error) {
-	log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewListener", "network": network, "address": addr}).Debug("Creating new listener")
+	flog("createNewListener", logger.Fields{"network": network, "address": addr}).Debug("Creating new listener")
 	listener, err := net.Listen(network, addr)
 	if err != nil {
-		log.WithFields(logger.Fields{"pkg": "noise", "func": "createNewListener", "network": network, "address": addr}).WithError(err).Error("Listen failed")
+		flog("createNewListener", logger.Fields{"network": network, "address": addr}).WithError(err).Error("Listen failed")
 		return nil, wrapTransportError("LISTEN_FAILED", network, addr,
 			"failed to listen on %s://%s", err, network, addr)
 	}

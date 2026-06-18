@@ -10,7 +10,7 @@ import (
 // CleanupExpiredSessions removes sessions that have exceeded the timeout.
 // Returns the number of sessions removed.
 func (sm *SessionManager) CleanupExpiredSessions() int {
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "CleanupExpiredSessions"}).Debug("Cleaning up expired sessions")
+	flog("CleanupExpiredSessions").Debug("Cleaning up expired sessions")
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -44,13 +44,7 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 	}
 
 	if removed > 0 {
-		log.WithFields(logger.Fields{
-			"pkg":                    "ratchet",
-			"func":                   "CleanupExpiredSessions",
-			"removed_sessions":       removed,
-			"remaining_sessions":     len(sm.sessions),
-			"remaining_indexed_tags": len(sm.tagIndex),
-		}).Info("Expired sessions cleaned up")
+		flog("CleanupExpiredSessions", logger.Fields{"removed_sessions":       removed, "remaining_sessions":     len(sm.sessions), "remaining_indexed_tags": len(sm.tagIndex)}).Info("Expired sessions cleaned up")
 	}
 
 	return removed
@@ -99,7 +93,7 @@ func (sm *SessionManager) Close() error {
 		sm.ourPrivateKey[i] = 0
 	}
 
-	log.WithFields(logger.Fields{"pkg": "ratchet", "func": "Close"}).Debug("SessionManager closed")
+	flog("Close").Debug("SessionManager closed")
 	return nil
 }
 
@@ -133,9 +127,5 @@ func (sm *SessionManager) StartCleanupLoop(ctx context.Context) {
 		}
 	}()
 
-	log.WithFields(logger.Fields{
-		"pkg":      "ratchet",
-		"func":     "StartCleanupLoop",
-		"interval": "2m",
-	}).Debug("Started garlic session cleanup loop")
+	flog("StartCleanupLoop", logger.Fields{"interval": "2m"}).Debug("Started garlic session cleanup loop")
 }

@@ -20,7 +20,7 @@ import (
 //
 // XK pattern message 1: → e, es
 func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64) (*SSU2Packet, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "CreateSessionRequest", "sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionRequest")
+	flog("CreateSessionRequest", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionRequest")
 	if !h.initiator {
 		return nil, oops.Errorf("only initiator can create SessionRequest")
 	}
@@ -40,7 +40,7 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64)
 // This method calls ResetForRetry internally to create a fresh handshake state
 // with a new ephemeral key and clean chaining key (C-3).
 func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnID uint64, token []byte) (*SSU2Packet, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "CreateSessionRequestWithToken", "sourceConnID": sourceConnID, "destConnID": destConnID, "tokenLen": len(token)}).Debug("Creating SessionRequest with retry token")
+	flog("CreateSessionRequestWithToken", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID, "tokenLen": len(token)}).Debug("Creating SessionRequest with retry token")
 	if !h.initiator {
 		return nil, oops.Errorf("only initiator can create SessionRequest")
 	}
@@ -77,7 +77,7 @@ func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnI
 // message 1. Per SSU2 spec, the retried SessionRequest must use a fresh
 // ephemeral key and start from a clean chaining key (C-3).
 func (h *HandshakeHandler) ResetForRetry() error {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ResetForRetry"}).Debug("Resetting handshake state for retry")
+	flog("ResetForRetry").Debug("Resetting handshake state for retry")
 	cs := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
 	pub, err := derivePublicKey(h.staticKey)
 	if err != nil {
@@ -129,7 +129,7 @@ func (h *HandshakeHandler) ResetForRetry() error {
 // ProcessSessionConfirmed call via GetRemoteStaticKey(). Do NOT use the
 // first return value of this function for authorization decisions.
 func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "ssu2", "func": "ProcessSessionRequest"}).Debug("Processing received SessionRequest")
+	flog("ProcessSessionRequest").Debug("Processing received SessionRequest")
 	if h.initiator {
 		return nil, oops.Errorf("initiator cannot process SessionRequest")
 	}

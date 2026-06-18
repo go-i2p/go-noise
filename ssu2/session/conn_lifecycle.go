@@ -32,7 +32,7 @@ func (h *SSU2Conn) CloseImmediate() error {
 // + reason (1 byte) + additional data (optional).
 func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []byte) error {
 	h.closeOnce.Do(func() {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "CloseWithReason", "reason": reason}).Debug("Closing SSU2 connection")
+		flog("CloseWithReason", logger.Fields{"reason": reason}).Debug("Closing SSU2 connection")
 		// Update state first
 		h.stateMutex.Lock()
 		h.state = StateClosing
@@ -60,11 +60,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			// AUDIT 5.4: Capture send error into debug log instead of discarding.
 			// If socket is dead, short-circuit the destroy wait.
 			if err := h.sendPacketDirect(packet); err != nil {
-				log.WithFields(logger.Fields{
-					"pkg":   "session",
-					"func":  "CloseWithReason",
-					"error": err.Error(),
-				}).Warn("failed to send Termination block (best effort)")
+				flog("CloseWithReason", logger.Fields{"error": err.Error()}).Warn("failed to send Termination block (best effort)")
 				// Check if error indicates socket is already dead (e.g., broken pipe, connection refused)
 				// This lets us skip the destroy wait since there's no peer to respond anyway.
 				socketDead = isSocketDeadError(err)

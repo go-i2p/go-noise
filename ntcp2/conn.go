@@ -162,7 +162,7 @@ func NewNTCP2Conn(noiseConn *noise.NoiseConn, localAddr, remoteAddr *Addr) (*Con
 // When set, Read/Write will use framed I/O with SipHash-obfuscated length prefixes.
 // This is safe to call concurrently with Read/Write (uses atomic.Pointer).
 func (nc *Conn) SetLengthObfuscator(slm *SipHashLengthModifier) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.SetLengthObfuscator"}).Debug("Storing SipHash length obfuscator")
+	flog("NTCP2Conn.SetLengthObfuscator").Debug("Storing SipHash length obfuscator")
 	nc.lengthObfuscator.Store(slm)
 }
 
@@ -170,7 +170,7 @@ func (nc *Conn) SetLengthObfuscator(slm *SipHashLengthModifier) {
 // PropagateSipHash can copy PostHandshakeHook-derived keys after handshake.
 // This is safe to call concurrently with PropagateSipHash (uses atomic.Pointer).
 func (nc *Conn) SetNTCP2Config(cfg *Config) {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.SetNTCP2Config"}).Debug("Storing NTCP2 config reference")
+	flog("NTCP2Conn.SetNTCP2Config").Debug("Storing NTCP2 config reference")
 	nc.ntcp2Config.Store(cfg)
 }
 
@@ -198,7 +198,7 @@ func (nc *Conn) PropagateSipHash() error {
 			In("ntcp2").
 			Errorf("PropagateSipHash called but SipHash modifier is nil (handshake not complete or SipHash disabled)")
 	}
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.PropagateSipHash"}).Debug("Copying SipHash modifier from config to connection")
+	flog("NTCP2Conn.PropagateSipHash").Debug("Copying SipHash modifier from config to connection")
 	nc.lengthObfuscator.Store(slm)
 	return nil
 }
@@ -252,7 +252,7 @@ func (nc *Conn) Close() error {
 // sensitive data from lingering in memory after connection close. Per the
 // NTCP2 spec: "routers should zero-out any in-memory ephemeral data".
 func (nc *Conn) zeroKeyMaterial() {
-	log.WithFields(logger.Fields{"pkg": "ntcp2", "func": "NTCP2Conn.zeroKeyMaterial"}).Debug("Zeroing SipHash keys and buffered plaintext")
+	flog("NTCP2Conn.zeroKeyMaterial").Debug("Zeroing SipHash keys and buffered plaintext")
 	if slm := nc.lengthObfuscator.Load(); slm != nil {
 		slm.ZeroKeys()
 	}

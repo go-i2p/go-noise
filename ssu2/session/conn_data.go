@@ -15,7 +15,7 @@ import (
 // AUDIT 2.1: Start the fragment reaper here, not in NewSSU2Conn, to avoid leaking
 // goroutines if the handshake is never completed or Close is never called.
 func (h *SSU2Conn) startDataLoops() {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "startDataLoops"}).Debug("Starting send, keepalive, retransmit, and reaper loops")
+	flog("startDataLoops").Debug("Starting send, keepalive, retransmit, and reaper loops")
 	h.dataHandler.StartReaper()
 	h.wg.Add(3)
 	go h.sendLoop()
@@ -25,7 +25,7 @@ func (h *SSU2Conn) startDataLoops() {
 
 // installCipherStates transfers transport cipher states from the handshake handler.
 func (h *SSU2Conn) installCipherStates() error {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "installCipherStates"}).Debug("Transferring cipher states from handshake")
+	flog("installCipherStates").Debug("Transferring cipher states from handshake")
 	send, recv, err := h.handshakeHandler.GetCipherStates()
 	if err != nil {
 		return err
@@ -46,7 +46,7 @@ func (h *SSU2Conn) installCipherStates() error {
 
 // wireDataCallbacks wires internal handler callbacks for data-phase processing.
 func (h *SSU2Conn) wireDataCallbacks() {
-	log.WithFields(logger.Fields{"pkg": "session", "func": "wireDataCallbacks", "next_nonce_enabled": h.config.EnableNextNonce}).Debug("Wiring data-phase callbacks")
+	flog("wireDataCallbacks", logger.Fields{"next_nonce_enabled": h.config.EnableNextNonce}).Debug("Wiring data-phase callbacks")
 	cbs := h.dataHandler.getCallbacks()
 
 	// G-2: Warn if signature verification callbacks are not configured.
@@ -78,25 +78,25 @@ func (h *SSU2Conn) wireDataCallbacks() {
 // missing signatures are silently accepted when no verifier is registered.
 func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	if cbs.VerifyPeerTestSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages (G-2)")
 	}
 	if cbs.VerifyRelayRequestSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayRequest signature verifier not configured; signature verification will be SKIPPED for relay requests (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayRequest signature verifier not configured; signature verification will be SKIPPED for relay requests (G-2)")
 	}
 	if cbs.VerifyRelayResponseSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayResponse signature verifier not configured; signature verification will be SKIPPED for signed relay responses (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayResponse signature verifier not configured; signature verification will be SKIPPED for signed relay responses (G-2)")
 	}
 	if cbs.VerifyRelayIntroSignature == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("RelayIntro signature verifier not configured; signature verification will be SKIPPED for relay intros (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayIntro signature verifier not configured; signature verification will be SKIPPED for relay intros (G-2)")
 	}
 	// Warn about missing application-level dispatch callbacks: these are the
 	// handlers that actually implement NAT detection and relay coordination.
 	// Without them the respective blocks are silently dropped after verification.
 	if cbs.OnPeerTest == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("OnPeerTest callback not configured; peer test blocks will be silently dropped (NAT detection will not function)")
+		flog("warnMissingSignatureVerifiers").Warn("OnPeerTest callback not configured; peer test blocks will be silently dropped (NAT detection will not function)")
 	}
 	if cbs.OnRelayRequest == nil {
-		log.WithFields(logger.Fields{"pkg": "session", "func": "warnMissingSignatureVerifiers"}).Warn("OnRelayRequest callback not configured; relay request blocks will be silently dropped (relay coordination will not function)")
+		flog("warnMissingSignatureVerifiers").Warn("OnRelayRequest callback not configured; relay request blocks will be silently dropped (relay coordination will not function)")
 	}
 }
 
@@ -107,14 +107,7 @@ func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 		sent := h.validDataPacketsSent.Load()
 		if sent > 0 {
 			lost := int64(sent) - int64(peerReceived)
-			log.WithFields(logger.Fields{
-				"pkg":          "ssu2",
-				"func":         "wrapTerminationCallback",
-				"sent":         sent,
-				"peerReceived": peerReceived,
-				"lost":         lost,
-				"reason":       reason,
-			}).Info("Termination packet loss summary (G-7)")
+			flog("wrapTerminationCallback", logger.Fields{"sent":         sent, "peerReceived": peerReceived, "lost":         lost, "reason":       reason}).Info("Termination packet loss summary (G-7)")
 		}
 		if existingOnTermination != nil {
 			existingOnTermination(peerReceived, reason, additionalData)

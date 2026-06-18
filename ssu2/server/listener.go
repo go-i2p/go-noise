@@ -127,7 +127,7 @@ type SSU2Listener struct {
 //
 // Returns a new SSU2Listener ready to start, or an error if configuration is invalid.
 func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listener, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "NewSSU2Listener"}).Debug("Creating new SSU2 listener")
+	flog("NewSSU2Listener").Debug("Creating new SSU2 listener")
 	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_listener"); err != nil {
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 //
 // Returns error if the listener is already closed.
 func (l *SSU2Listener) Start() error {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "Start"}).Debug("Starting SSU2 listener")
+	flog("Start").Debug("Starting SSU2 listener")
 	l.closeMutex.Lock()
 	defer l.closeMutex.Unlock()
 
@@ -236,7 +236,7 @@ func (l *SSU2Listener) Start() error {
 //   - net.Conn: The accepted connection
 //   - error: If the listener is closed or an error occurs
 func (l *SSU2Listener) Accept() (net.Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "Accept"}).Debug("Waiting to accept SSU2 connection")
+	flog("Accept").Debug("Waiting to accept SSU2 connection")
 	select {
 	case conn := <-l.acceptQueue:
 		if conn == nil {
@@ -260,7 +260,7 @@ func (l *SSU2Listener) Accept() (net.Conn, error) {
 //
 // Returns error if close fails.
 func (l *SSU2Listener) Close() error {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "Close"}).Debug("Closing SSU2 listener")
+	flog("Close").Debug("Closing SSU2 listener")
 	l.closeMutex.Lock()
 	defer l.closeMutex.Unlock()
 
@@ -354,7 +354,7 @@ func makeDedupKey(initiatorConnID uint64, remoteAddr *net.UDPAddr) string {
 // instead of accepting the session. The initiator is expected to resend
 // SessionRequest including the token from the Retry.
 func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Packet) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "handleNewSession", "remote_addr": remoteAddr.String()}).Debug("handleNewSession: creating new session for incoming handshake")
+	flog("handleNewSession", logger.Fields{"remote_addr": remoteAddr.String()}).Debug("handleNewSession: creating new session for incoming handshake")
 
 	// AUDIT 7.2 — Validate source address (reject reserved ports, loopback unless allowed, etc.)
 	if err := validateListenAddress(remoteAddr, l.config); err != nil {
@@ -441,12 +441,7 @@ func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, re
 	l.sessionMutex.RUnlock()
 
 	if existingConn != nil {
-		log.WithFields(logger.Fields{
-			"pkg":         "server",
-			"func":        "findExistingSessionByInitiator",
-			"dedup_key":   dedupKey,
-			"remote_addr": remoteAddr.String(),
-		}).Debug("routing retransmit to existing pending session")
+		flog("findExistingSessionByInitiator", logger.Fields{"dedup_key":   dedupKey, "remote_addr": remoteAddr.String()}).Debug("routing retransmit to existing pending session")
 	}
 	return existingConn
 }
@@ -500,7 +495,7 @@ func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *n
 // that the configured rate limit (sessionRequestsPerSecond) is generous enough to
 // accommodate reasonable retry behavior under normal packet loss conditions.
 func (l *SSU2Listener) enforceRateLimit(remoteAddr *net.UDPAddr) error {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "enforceRateLimit", "remote_ip": remoteAddr.IP.String()}).Debug("enforceRateLimit: checking session request rate")
+	flog("enforceRateLimit", logger.Fields{"remote_ip": remoteAddr.IP.String()}).Debug("enforceRateLimit: checking session request rate")
 	if !l.sessionRateLimiter.Allow(remoteAddr.IP.String()) {
 		return oops.
 			Code("RATE_LIMITED").
@@ -513,7 +508,7 @@ func (l *SSU2Listener) enforceRateLimit(remoteAddr *net.UDPAddr) error {
 // handleSessionRequestToken validates the token in a SessionRequest, sending
 // a Retry if required by config and no token is present.
 func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "handleSessionRequestToken", "remote_addr": remoteAddr.String(), "message_type": packet.MessageType}).Debug("handleSessionRequestToken: validating session request token")
+	flog("handleSessionRequestToken", logger.Fields{"remote_addr": remoteAddr.String(), "message_type": packet.MessageType}).Debug("handleSessionRequestToken: validating session request token")
 	if packet.MessageType != MessageTypeSessionRequest {
 		return nil
 	}
@@ -560,7 +555,7 @@ func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Pac
 // AUDIT 8.1: Retry loop to increase probability of finding a unique ID despite
 // concurrent workers also generating and checking IDs.
 func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "generateUniqueConnectionID"}).Debug("generateUniqueConnectionID: generating unique connection ID")
+	flog("generateUniqueConnectionID").Debug("generateUniqueConnectionID: generating unique connection ID")
 
 	// AUDIT 8.1: Retry up to 5 times to find a unique connection ID.
 	// With a 64-bit random space, collisions are extremely rare. Even if two
@@ -578,12 +573,7 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 		}
 
 		if attempt < maxRetries-1 {
-			log.WithFields(logger.Fields{
-				"pkg":         "server",
-				"func":        "generateUniqueConnectionID",
-				"attempt":     attempt + 1,
-				"max_retries": maxRetries,
-			}).Debug("connection ID collision, retrying")
+			flog("generateUniqueConnectionID", logger.Fields{"attempt":     attempt + 1, "max_retries": maxRetries}).Debug("connection ID collision, retrying")
 		}
 	}
 
@@ -605,7 +595,7 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 // on RouterHash. The hook is accessed via SSU2Conn.GetSSU2Addr() after the connection
 // is established. See SSU2Addr.UpdateRouterHash godoc for details.
 func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2Config {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "buildConnConfig", "conn_id": connID}).Debug("buildConnConfig: building connection config from session request")
+	flog("buildConnConfig", logger.Fields{"conn_id": connID}).Debug("buildConnConfig: building connection config from session request")
 	var routerHash data.Hash
 	if len(packet.EphemeralKey) == 32 {
 		routerHash = data.NewHash(sha256.Sum256(packet.EphemeralKey))
@@ -727,7 +717,7 @@ func (l *SSU2Listener) enqueueConnection(conn *SSU2Conn, connID uint64, dedupKey
 //     normal close later deregisters the session from both routing maps.
 //   - 8.1: pendingByInitiator dedup index is added for retransmit dedup.
 func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, error) {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "registerAndQueueConn", "conn_id": connID}).Debug("registerAndQueueConn: registering session and queuing for accept")
+	flog("registerAndQueueConn", logger.Fields{"conn_id": connID}).Debug("registerAndQueueConn: registering session and queuing for accept")
 
 	// AUDIT 8.1: Create dedup key for retransmit detection
 	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
@@ -854,11 +844,7 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	// independent bounded map so exhausting first-sight cannot evict
 	// real tokens.
 	if l.config.FirstSightRequired && !l.firstSight.ObserveAndAllow(addrKey) {
-		log.WithFields(logger.Fields{
-			"pkg":         "ssu2_listener",
-			"func":        "processTokenRequest",
-			"remote_addr": addrKey,
-		}).Debug("declining token issuance: first-sight only, peer must retry")
+		flog("processTokenRequest", logger.Fields{"remote_addr": addrKey}).Debug("declining token issuance: first-sight only, peer must retry")
 		return oops.
 			Code("NO_TOKEN_ISSUED").
 			In("ssu2_listener").
@@ -870,11 +856,7 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	// Gate 2 (Strategy 1): global issuance bucket. Even if the first-sight
 	// gate passes, never issue more than the configured rate in aggregate.
 	if !l.issuanceLimiter.Allow() {
-		log.WithFields(logger.Fields{
-			"pkg":         "ssu2_listener",
-			"func":        "processTokenRequest",
-			"remote_addr": addrKey,
-		}).Debug("declining token issuance: global issuance rate exceeded")
+		flog("processTokenRequest", logger.Fields{"remote_addr": addrKey}).Debug("declining token issuance: global issuance rate exceeded")
 		return oops.
 			Code("NO_TOKEN_ISSUED").
 			In("ssu2_listener").
@@ -941,7 +923,7 @@ const tokenCleanupInterval = 60 * time.Second
 
 // tokenCleanupLoop periodically removes expired tokens from the cache (G-5).
 func (l *SSU2Listener) tokenCleanupLoop() {
-	log.WithFields(logger.Fields{"pkg": "server", "func": "tokenCleanupLoop", "interval": tokenCleanupInterval}).Debug("tokenCleanupLoop: starting periodic token cache cleanup")
+	flog("tokenCleanupLoop", logger.Fields{"interval": tokenCleanupInterval}).Debug("tokenCleanupLoop: starting periodic token cache cleanup")
 	defer l.wg.Done()
 
 	ticker := time.NewTicker(tokenCleanupInterval)

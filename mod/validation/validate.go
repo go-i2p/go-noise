@@ -46,7 +46,7 @@ func ValidatePattern(pattern, pkg string) error {
 
 // ValidateHandshakeTimeout checks that the handshake timeout is positive.
 func ValidateHandshakeTimeout(timeout time.Duration, pkg string) error {
-	log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "ValidateHandshakeTimeout", "timeout": timeout, "calling_pkg": pkg}).Debug("Validating handshake timeout")
+	flog("ValidateHandshakeTimeout", logger.Fields{"timeout": timeout, "calling_pkg": pkg}).Debug("Validating handshake timeout")
 	if timeout <= 0 {
 		return oops.
 			Code("INVALID_TIMEOUT").
@@ -61,7 +61,7 @@ func ValidateHandshakeTimeout(timeout time.Duration, pkg string) error {
 func ValidateKeySize(key []byte, expectedSize int) bool {
 	valid := len(key) == expectedSize
 	if !valid {
-		log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "ValidateKeySize", "expected": expectedSize, "actual": len(key)}).Warn("Key size mismatch")
+		flog("ValidateKeySize", logger.Fields{"expected": expectedSize, "actual": len(key)}).Warn("Key size mismatch")
 	}
 	return valid
 }
@@ -85,7 +85,7 @@ func ValidateKeyLength(key []byte, name, pkg string) error {
 // RunValidators executes a sequence of validation functions, returning the
 // first error encountered or nil if all pass.
 func RunValidators(validators ...func() error) error {
-	log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "RunValidators", "validator_count": len(validators)}).Debug("Running validators")
+	flog("RunValidators", logger.Fields{"validator_count": len(validators)}).Debug("Running validators")
 	for _, v := range validators {
 		if err := v(); err != nil {
 			return err
@@ -96,7 +96,7 @@ func RunValidators(validators ...func() error) error {
 
 // ValidateRetryConfig checks that retry parameters are within valid ranges.
 func ValidateRetryConfig(retries int, backoff time.Duration, pkg string) error {
-	log.WithFields(logger.Fields{"pkg": "mod/validation", "func": "ValidateRetryConfig", "retries": retries, "backoff": backoff, "calling_pkg": pkg}).Debug("Validating retry config")
+	flog("ValidateRetryConfig", logger.Fields{"retries": retries, "backoff": backoff, "calling_pkg": pkg}).Debug("Validating retry config")
 	if retries < -1 {
 		return oops.
 			Code("INVALID_RETRY_COUNT").

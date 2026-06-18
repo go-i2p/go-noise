@@ -44,7 +44,7 @@ type PaddingEngine struct {
 
 // NewPaddingEngine creates a validated padding engine.
 func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "NewPaddingEngine", "domain": config.Domain, "min": config.MinPadding, "max": config.MaxPadding}).Debug("Creating padding engine")
+	flog("NewPaddingEngine", logger.Fields{"domain": config.Domain, "min": config.MinPadding, "max": config.MaxPadding}).Debug("Creating padding engine")
 	if err := ValidatePaddingParams(config.Domain, config.MinPadding, config.MaxPadding, config.PaddingRatio); err != nil {
 		return nil, err
 	}
@@ -53,7 +53,7 @@ func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error) {
 
 // ValidatePaddingParams validates common I2P padding parameters.
 func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRatio float64) error {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "ValidatePaddingParams", "domain": domain, "min": minPadding, "max": maxPadding, "ratio": paddingRatio}).Debug("Validating padding params")
+	flog("ValidatePaddingParams", logger.Fields{"domain": domain, "min": minPadding, "max": maxPadding, "ratio": paddingRatio}).Debug("Validating padding params")
 	if minPadding < 0 {
 		return oops.
 			Code("INVALID_PADDING").
@@ -106,13 +106,13 @@ func (pe *PaddingEngine) CalculatePaddingSize(dataLen int) int {
 	paddingSize = pe.enforceMinimumPadding(paddingSize)
 	paddingSize = pe.applyRandomVariation(paddingSize, dataLen)
 	result := pe.enforceMaximumPadding(paddingSize)
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "PaddingEngine.CalculatePaddingSize", "data_len": dataLen, "padding_size": result}).Debug("Calculated padding size")
+	flog("PaddingEngine.CalculatePaddingSize", logger.Fields{"data_len": dataLen, "padding_size": result}).Debug("Calculated padding size")
 	return result
 }
 
 // UpdateParams updates the engine's padding parameters after validation.
 func (pe *PaddingEngine) UpdateParams(minPad, maxPad int, ratio float64) error {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "PaddingEngine.UpdateParams", "domain": pe.Config.Domain, "min": minPad, "max": maxPad, "ratio": ratio}).Debug("Updating padding params")
+	flog("PaddingEngine.UpdateParams", logger.Fields{"domain": pe.Config.Domain, "min": minPad, "max": maxPad, "ratio": ratio}).Debug("Updating padding params")
 	if err := ValidatePaddingParams(pe.Config.Domain, minPad, maxPad, ratio); err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, e
 // RemoveTrailingAEADPadding removes a trailing I2P padding block (type 254)
 // by scanning from paddingSize=0 upward. maxScanPadding limits the search range.
 func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding int) ([]byte, error) {
-	log.WithFields(logger.Fields{"pkg": "handshake", "func": "PaddingEngine.RemoveTrailingAEADPadding", "data_len": len(data), "max_scan": maxScanPadding}).Debug("Removing trailing AEAD padding")
+	flog("PaddingEngine.RemoveTrailingAEADPadding", logger.Fields{"data_len": len(data), "max_scan": maxScanPadding}).Debug("Removing trailing AEAD padding")
 	if len(data) < I2PBlockHeaderSize {
 		return data, nil
 	}

@@ -218,12 +218,7 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 				In("ntcp2").
 				Wrapf(err, "LocalRouterInfo does not advertise the static key (strict mode enabled; see PROMPT.md)")
 		}
-		log.WithFields(logger.Fields{
-			"pkg":   "ntcp2",
-			"func":  "performInitiatorHandshake",
-			"event": "static_key_ri_mismatch",
-			"err":   err.Error(),
-		}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
+		flog("performInitiatorHandshake", logger.Fields{"event": "static_key_ri_mismatch", "err":   err.Error()}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
 	}
 
 	if err := sendInitiatorMsg1(cfg, nc, m3p2Len); err != nil {
@@ -291,13 +286,7 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 		return err
 	}
 	// Debug-level breadcrumb for interop diagnostics. Redacted for anonymity.
-	log.WithFields(logger.Fields{
-		"pkg":          "ntcp2",
-		"func":         "receiveResponderMsg2",
-		"event":        "msg2_processed",
-		"bob_padlen":   bobPadLen,
-		"bob_opts_len": len(bobOpts),
-	}).Debug("NTCP2 msg2 processed; bob padlen extracted")
+	flog("receiveResponderMsg2", logger.Fields{"event":        "msg2_processed", "bob_padlen":   bobPadLen, "bob_opts_len": len(bobOpts)}).Debug("NTCP2 msg2 processed; bob padlen extracted")
 	return nil
 }
 
@@ -384,15 +373,7 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 	// Terminate after AEAD/block check). If they are seconds apart, the peer
 	// accepted msg3 and closed later for an unrelated reason. See
 	// libi2pd/NTCP2.cpp:634 (HandleSessionConfirmedReceived).
-	log.WithFields(logger.Fields{
-		"pkg":      "ntcp2",
-		"func":     "sendInitiatorMsg3",
-		"event":    "msg3_sent",
-		"msg3_len": len(msg3),
-		"m3p1_len": msg3Part1Size,
-		"m3p2_len": int(m3p2Len),
-		"ri_len":   len(riBytes),
-	}).Debug("NTCP2 msg3 written to wire; awaiting first data-phase frame")
+	flog("sendInitiatorMsg3", logger.Fields{"event":    "msg3_sent", "msg3_len": len(msg3), "m3p1_len": msg3Part1Size, "m3p2_len": int(m3p2Len), "ri_len":   len(riBytes)}).Debug("NTCP2 msg3 written to wire; awaiting first data-phase frame")
 	return nil
 }
 
@@ -410,10 +391,7 @@ var missingReplayWarnOnce sync.Once
 // running without NTCP2 message-1 replay protection.
 func warnMissingReplayDetector() {
 	missingReplayWarnOnce.Do(func() {
-		log.WithFields(logger.Fields{
-			"pkg":  "ntcp2",
-			"func": "performResponderHandshake",
-		}).Warn("no ReplayDetector configured: NTCP2 message-1 replay protection is DISABLED; set one via WithReplayDetector")
+		flog("performResponderHandshake").Warn("no ReplayDetector configured: NTCP2 message-1 replay protection is DISABLED; set one via WithReplayDetector")
 	})
 }
 
