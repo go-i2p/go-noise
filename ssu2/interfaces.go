@@ -28,6 +28,13 @@ type ConnIface interface {
 	// Handshake performs the SSU2 XK handshake.
 	// Must be called before Read/Write.
 	Handshake(ctx context.Context) error
+
+	// WriteBlocksWithNumbers sends blocks as individual Data packets and
+	// returns the packet number assigned to each block in order.  Callers
+	// can use these numbers to correlate explicit ACK blocks from the peer
+	// to the exact outbound packets, enabling spec-correct delivery
+	// confirmation without heuristic retirement.
+	WriteBlocksWithNumbers(blocks []*session.SSU2Block) ([]uint32, error)
 }
 
 // Dialer establishes outbound SSU2 connections with handshake.

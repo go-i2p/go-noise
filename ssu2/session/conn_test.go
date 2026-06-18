@@ -1401,3 +1401,152 @@ func TestDelayedACKSchedulerTriggersOnThreshold(t *testing.T) {
 		conn.processInboundPacket(testPacket)
 	}, "H-2: processInboundPacket should not panic when calling ShouldSendACK for delayed ACK scheduling")
 }
+
+// WriteBlocksWithNumbers tests
+
+// TestWriteBlocksWithNumbers_ReturnsPacketNumbers verifies that
+// WriteBlocksWithNumbers returns exactly one packet number per block,
+// all strictly increasing, matching what nextSendSequence allocates.
+func TestWriteBlocksWithNumbers_ReturnsPacketNumbers(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	blocks := []*SSU2Block{
+		{Type: BlockTypeI2NPMessage, Data: []byte("block-0")},
+		{Type: BlockTypeI2NPMessage, Data: []byte("block-1")},
+		{Type: BlockTypeI2NPMessage, Data: []byte("block-2")},
+	}
+
+	nums, err := conn.WriteBlocksWithNumbers(blocks)
+	require.NoError(t, err)
+	require.Len(t, nums, len(blocks), "should return one packet number per block")
+
+	// Numbers must be strictly increasing (monotone send sequence).
+	for i := 1; i < len(nums); i++ {
+		assert.Greater(t, nums[i], nums[i-1],
+			"packet numbers must be strictly increasing: got %v", nums)
+	}
+}
+
+// TestWriteBlocksWithNumbers_UniqueAcrossCallsites verifies that packet numbers
+// are globally unique and do not overlap between two successive WriteBlocksWithNumbers
+// calls.  This is the invariant callers rely on for exact ACK correlation.
+func TestWriteBlocksWithNumbers_UniqueAcrossCallsites(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	blocks := func(n int) []*SSU2Block {
+		bs := make([]*SSU2Block, n)
+		for i := range bs {
+			bs[i] = &SSU2Block{Type: BlockTypeI2NPMessage, Data: []byte("payload")}
+		}
+		return bs
+	}
+
+	nums1, err := conn.WriteBlocksWithNumbers(blocks(3))
+	require.NoError(t, err)
+
+	nums2, err := conn.WriteBlocksWithNumbers(blocks(3))
+	require.NoError(t, err)
+
+	// All numbers from both calls must be distinct.
+	seen := make(map[uint32]bool)
+	for _, n := range nums1 {
+		assert.False(t, seen[n], "duplicate packet number %d", n)
+		seen[n] = true
+	}
+	for _, n := range nums2 {
+		assert.False(t, seen[n], "duplicate packet number %d", n)
+		seen[n] = true
+	}
+}
+
+// TestWriteBlocksWithNumbers_EmptySlice verifies that an empty block slice
+// succeeds and returns an empty (not nil) numbers slice.
+func TestWriteBlocksWithNumbers_EmptySlice(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	nums, err := conn.WriteBlocksWithNumbers([]*SSU2Block{})
+	require.NoError(t, err)
+	require.NotNil(t, nums)
+	assert.Len(t, nums, 0)
+}
+
+// TestWriteBlocksWithNumbers_NotEstablished verifies that calling
+// WriteBlocksWithNumbers before the handshake completes returns an error and
+// no packet numbers.
+func TestWriteBlocksWithNumbers_NotEstablished(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// State is still Init — not established.
+	blocks := []*SSU2Block{{Type: BlockTypeI2NPMessage, Data: []byte("data")}}
+	nums, err := conn.WriteBlocksWithNumbers(blocks)
+	require.Error(t, err)
+	assert.Nil(t, nums)
+}
+
+// TestWriteBlocks_BackwardCompat verifies that the existing WriteBlocks method
+// still works correctly as a wrapper after the refactor.
+func TestWriteBlocks_BackwardCompat(t *testing.T) {
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+	defer initConn.Close()
+
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}
+	config := createTestConfig(t)
+
+	conn, err := NewSSU2Conn(initConn, remoteAddr, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	conn.stateMutex.Lock()
+	conn.state = StateEstablished
+	conn.stateMutex.Unlock()
+
+	blocks := []*SSU2Block{
+		{Type: BlockTypeI2NPMessage, Data: []byte("compat-test")},
+	}
+	err = conn.WriteBlocks(blocks)
+	assert.NoError(t, err, "WriteBlocks backward-compat wrapper must not error")
+}

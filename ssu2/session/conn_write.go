@@ -148,17 +148,41 @@ func (h *SSU2Conn) buildI2NPFragmentBlocks(data []byte, maxBlockData int) ([]*SS
 // wrapper and sends pre-built blocks directly. Use this to send fragment
 // blocks (BlockTypeFirstFragment / BlockTypeFollowOnFragment) for large I2NP
 // messages.
+//
+// To obtain the assigned packet numbers for ACK correlation, use
+// WriteBlocksWithNumbers instead.
 func (h *SSU2Conn) WriteBlocks(blocks []*SSU2Block) error {
-	flog("WriteBlocks", logger.Fields{"blockCount": len(blocks)}).Debug("sending blocks")
+	_, err := h.WriteBlocksWithNumbers(blocks)
+	return err
+}
+
+// WriteBlocksWithNumbers sends the provided SSU2 blocks as individual Data
+// packets (one packet per block) and returns the packet number assigned to
+// each block in the same order. The returned slice has the same length as
+// blocks; element i is the packet number of the packet carrying blocks[i].
+//
+// Packet numbers are allocated at enqueue time, before the packet reaches the
+// wire. Callers can use the returned numbers to deterministically correlate
+// explicit ACK blocks received from the peer to the exact packets they sent,
+// enabling spec-correct delivery confirmation without heuristic retirement.
+//
+// On the first error the function stops and returns the packet numbers
+// allocated so far (which may be fewer than len(blocks)) together with the
+// error. Numbers already allocated to enqueued packets remain in flight.
+func (h *SSU2Conn) WriteBlocksWithNumbers(blocks []*SSU2Block) ([]uint32, error) {
+	flog("WriteBlocksWithNumbers", logger.Fields{"blockCount": len(blocks)}).Debug("sending blocks with packet-number tracking")
 	if err := h.validateReadyForIO(); err != nil {
-		return err
+		return nil, err
 	}
+	nums := make([]uint32, 0, len(blocks))
 	for _, block := range blocks {
-		if err := h.writeBlock(block); err != nil {
-			return err
+		pktNum, err := h.writeBlockWithNumber(block)
+		if err != nil {
+			return nums, err
 		}
+		nums = append(nums, pktNum)
 	}
-	return nil
+	return nums, nil
 }
 
 // newDataPacket allocates a fresh SSU2 Data packet with the next sequence
@@ -178,17 +202,28 @@ func (h *SSU2Conn) newDataPacket() *SSU2Packet {
 }
 
 // writeBlock sends a single SSU2Block as a Data packet.
+// It is a convenience wrapper around writeBlockWithNumber that discards the
+// assigned packet number.
 func (h *SSU2Conn) writeBlock(block *SSU2Block) error {
-	flog("writeBlock", logger.Fields{"blockType": block.Type}).Debug("sending block")
+	_, err := h.writeBlockWithNumber(block)
+	return err
+}
+
+// writeBlockWithNumber sends a single SSU2Block as a Data packet and returns
+// the packet number assigned to that packet.  The number is allocated before
+// the packet is enqueued so that callers receive a stable identifier even
+// before the packet reaches the wire.
+func (h *SSU2Conn) writeBlockWithNumber(block *SSU2Block) (uint32, error) {
+	flog("writeBlockWithNumber", logger.Fields{"blockType": block.Type}).Debug("sending block")
 
 	// AUDIT 2.2: Check write deadline BEFORE consuming sequence number to avoid
 	// wasting sequence numbers on writes that will be rejected by deadline anyway.
 	// This prevents sequence number gaps that cause unnecessary peer retransmissions.
 	select {
 	case <-h.getWriteDeadline():
-		return oops.Errorf("write deadline exceeded")
+		return 0, oops.Errorf("write deadline exceeded")
 	case <-h.closeChan:
-		return oops.Errorf("connection closed")
+		return 0, oops.Errorf("connection closed")
 	default:
 		// Deadline not yet expired, safe to proceed
 	}
@@ -198,18 +233,18 @@ func (h *SSU2Conn) writeBlock(block *SSU2Block) error {
 	// Serialize block into payload
 	payload, err := SerializeBlocks([]*SSU2Block{block})
 	if err != nil {
-		return oops.Wrapf(err, "failed to serialize block")
+		return 0, oops.Wrapf(err, "failed to serialize block")
 	}
 	packet.Payload = payload
 
 	// Enqueue for sending
 	select {
 	case h.sendQueue <- packet:
-		return nil
+		return packet.PacketNumber, nil
 	case <-h.closeChan:
-		return oops.Errorf("connection closed")
+		return 0, oops.Errorf("connection closed")
 	case <-h.getWriteDeadline():
-		return oops.Errorf("write deadline exceeded")
+		return 0, oops.Errorf("write deadline exceeded")
 	}
 }
 
@@ -223,7 +258,7 @@ func (h *SSU2Conn) sendLoop() {
 		case packet := <-h.sendQueue:
 			if err := h.sendPacketDirect(packet); err != nil {
 				h.writeErrors.Add(1)
-				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error":  err}).Error("UDP write failed")
+				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err}).Error("UDP write failed")
 				continue
 			}
 		case <-h.closeChan:
@@ -477,7 +512,7 @@ func (h *SSU2Conn) handleAddressBlock(data []byte) error {
 	localAddr := h.LocalAddr()
 	if udp, ok := localAddr.(*net.UDPAddr); ok {
 		if !udp.IP.Equal(ip) || udp.Port != int(port) {
-			flog("handleAddressBlock", logger.Fields{"reportedIP":   ip.String(), "reportedPort": port, "localIP":      udp.IP.String(), "localPort":    udp.Port}).Info("Address block reports different address (possible NAT)")
+			flog("handleAddressBlock", logger.Fields{"reportedIP": ip.String(), "reportedPort": port, "localIP": udp.IP.String(), "localPort": udp.Port}).Info("Address block reports different address (possible NAT)")
 		}
 	}
 	return nil
