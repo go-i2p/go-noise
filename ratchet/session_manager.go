@@ -150,7 +150,7 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.oneTimeKeys[tag] = key
-	flog("RegisterOneTimeKey", logger.Fields{"tag":  fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
+	flog("RegisterOneTimeKey", logger.Fields{"tag": fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
 }
 
 // ProcessIncomingDHRatchet processes a DH ratchet key received from a peer.
@@ -214,7 +214,7 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 		session.mu.Unlock()
 
 		if err != nil {
-			flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "attempt":       attempt + 1, "error":         err.Error()}).Warn("Failed to generate tags during replenishment")
+			flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "attempt": attempt + 1, "error": err.Error()}).Warn("Failed to generate tags during replenishment")
 			return
 		}
 		if len(newTags) == 0 {
@@ -241,7 +241,7 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 	session.mu.Unlock()
 
 	if finalRemaining > 0 {
-		flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "missing_tags":  finalRemaining, "max_attempts":  maxReplenishAttempts}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
+		flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "missing_tags": finalRemaining, "max_attempts": maxReplenishAttempts}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
 	}
 }
 
@@ -291,7 +291,7 @@ func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags [
 			break
 		}
 		if existing, ok := sm.tagIndex[tc.tag]; ok && existing != session {
-			flog("installGeneratedTagsLocked", logger.Fields{"tag":  fmt.Sprintf("%x", tc.tag)}).Warn("Tag collision detected, skipping duplicate tag")
+			flog("installGeneratedTagsLocked", logger.Fields{"tag": fmt.Sprintf("%x", tc.tag)}).Warn("Tag collision detected, skipping duplicate tag")
 			continue
 		}
 		session.pendingTags = append(session.pendingTags, tc.tag)
@@ -321,7 +321,7 @@ func (sm *SessionManager) generateTagWindow(session *Session) error {
 		counter := session.nextRecvTagCounter
 		session.nextRecvTagCounter++
 		if existing, ok := sm.tagIndex[tag]; ok && existing != session {
-			flog("generateTagWindow", logger.Fields{"tag":  fmt.Sprintf("%x", tag)}).Warn("Tag collision detected, skipping duplicate tag")
+			flog("generateTagWindow", logger.Fields{"tag": fmt.Sprintf("%x", tag)}).Warn("Tag collision detected, skipping duplicate tag")
 			continue
 		}
 		session.pendingTags = append(session.pendingTags, tag)

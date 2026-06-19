@@ -94,7 +94,7 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 encryption failed")
 	}
 
-	flog("EncryptReplyRecord", logger.Fields{"encryption": "ChaCha20-Poly1305", "size":       len(encrypted)}).Debug("Encrypted build response record")
+	flog("EncryptReplyRecord", logger.Fields{"encryption": "ChaCha20-Poly1305", "size": len(encrypted)}).Debug("Encrypted build response record")
 
 	return encrypted, nil
 }
