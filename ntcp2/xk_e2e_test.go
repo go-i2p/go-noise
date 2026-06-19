@@ -516,7 +516,7 @@ func TestInboundRouterHash(t *testing.T) {
 	// Verify SHA-256(initiator static public key) matches independently.
 	expectedHashBytes := sha256.Sum256(initiatorKP.Public)
 	rhBytes := responderRemoteHash.Bytes()
-	assert.Equal(t, expectedHashBytes[:], rhBytes,
+	assert.Equal(t, expectedHashBytes, rhBytes,
 		"responder RouterHash should be SHA-256 of the initiator's actual static public key")
 }
 
