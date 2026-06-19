@@ -53,6 +53,28 @@ func (t *Transport) withShutdownManager(network, addr, op string) Shutdowner {
 	return sm
 }
 
+// getPoolAndShutdown snapshots Transport resources under one read lock.
+func (t *Transport) getPoolAndShutdown() (pool.Pool, Shutdowner) {
+	t.mu.RLock()
+	p := t.pool
+	sm := t.sm
+	t.mu.RUnlock()
+	return p, sm
+}
+
+// dialFreshAndHandshake dials a new raw connection and then performs the
+// standard NoiseConn wrap+handshake flow.
+func (t *Transport) dialFreshAndHandshake(ctx context.Context, network, addr string, config *ConnConfig, sm Shutdowner) (*NoiseConn, error) {
+	conn, err := createNewConnContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// createAndHandshakeConnTransport takes ownership of conn on error (closes it
+	// and zeros key material), so we must not close conn here.
+	return t.createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)
+}
+
 // Dial creates a Noise-wrapped connection to the given address using this Transport's
 // ShutdownManager and Pool. It is the Transport-scoped equivalent of DialNoise.
 func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, error) {
@@ -91,10 +113,7 @@ func (t *Transport) DialWithPool(network, addr string, config *ConnConfig) (*Noi
 		return nil, err
 	}
 
-	t.mu.RLock()
-	p := t.pool
-	sm := t.sm
-	t.mu.RUnlock()
+	p, sm := t.getPoolAndShutdown()
 
 	var conn net.Conn
 	var fromPool bool
@@ -145,28 +164,8 @@ func (t *Transport) DialWithHandshakeContext(ctx context.Context, network, addr 
 		return nil, err
 	}
 
-	dialer := &net.Dialer{}
-	conn, err := dialer.DialContext(ctx, network, addr)
-	if err != nil {
-		return nil, oops.
-			Code("DIAL_FAILED").
-			In("transport").
-			With("network", network).
-			With("address", addr).
-			Wrapf(err, "failed to dial %s://%s", network, addr)
-	}
-
-	// createAndHandshakeConnTransport takes ownership of conn on error (closes it
-	// and zeros key material), so we must not close conn here.
-	t.mu.RLock()
-	sm := t.sm
-	t.mu.RUnlock()
-	noiseConn, err := t.createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)
-	if err != nil {
-		return nil, err
-	}
-
-	return noiseConn, nil
+	_, sm := t.getPoolAndShutdown()
+	return t.dialFreshAndHandshake(ctx, network, addr, config, sm)
 }
 
 // DialWithPoolAndHandshake creates a connection with pool support and handshake retry.
@@ -187,10 +186,7 @@ func (t *Transport) DialWithPoolAndHandshakeContext(ctx context.Context, network
 
 	// pool.Put stores entries under conn.RemoteAddr().String(), which is the
 	// plain "host:port" string — use addr directly so the keys match.
-	t.mu.RLock()
-	p := t.pool
-	sm := t.sm
-	t.mu.RUnlock()
+	p, sm := t.getPoolAndShutdown()
 
 	if p != nil {
 		if rawConn := p.Get(addr); rawConn != nil {
@@ -204,8 +200,8 @@ func (t *Transport) DialWithPoolAndHandshakeContext(ctx context.Context, network
 		}
 	}
 
-	// Create new connection with handshake
-	return t.DialWithHandshakeContext(ctx, network, addr, config)
+	// Create new connection with handshake.
+	return t.dialFreshAndHandshake(ctx, network, addr, config, sm)
 }
 
 // createAndHandshakeConnTransport creates a NoiseConn and performs handshake with retry logic.
