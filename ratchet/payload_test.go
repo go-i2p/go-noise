@@ -840,7 +840,9 @@ func TestParsePayload_BlockOptions_AmongOtherBlocks(t *testing.T) {
 	// Padding block: type 254, length 0
 	paddingWire := []byte{byte(BlockPadding), 0, 0}
 
-	combined := append(dtBuf, optionsWire...)
+	var combined []byte
+	combined = append(combined, dtBuf...)
+	combined = append(combined, optionsWire...)
 	combined = append(combined, paddingWire...)
 
 	blocks, err := ParsePayload(combined)

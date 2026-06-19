@@ -1282,7 +1282,9 @@ func TestParseExistingSessionMessage(t *testing.T) {
 	_, err := rand.Read(tag[:])
 	require.NoError(t, err)
 
-	msg := append(ct, tag[:]...)
+	var msg []byte
+	msg = append(msg, ct...)
+	msg = append(msg, tag[:]...)
 	parsedCT, parsedTag, err := parseExistingSessionMessage(msg)
 	require.NoError(t, err)
 	assert.Equal(t, ct, parsedCT)

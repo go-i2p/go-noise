@@ -119,12 +119,14 @@ func (nc *Conn) validateConnState(isSend bool) error {
 }
 
 // validateReadState validates the connection state before reading.
+//
 // Deprecated: use validateConnState(false) instead.
 func (nc *Conn) validateReadState() error {
 	return nc.validateConnState(false)
 }
 
 // validateWriteState validates the connection state before writing.
+//
 // Deprecated: use validateConnState(true) instead.
 func (nc *Conn) validateWriteState() error {
 	return nc.validateConnState(true)
@@ -202,12 +204,13 @@ func (nc *Conn) configureReadTimeout() error {
 // underlying connection. Per the Noise spec §12.3, each message is preceded
 // by a 2-byte big-endian length field. This method reads the length, then
 // reads exactly that many bytes of ciphertext before returning.
-func (nc *Conn) readEncryptedData(b []byte) ([]byte, int, error) {
-	encrypted, err := nc.readFramedMessage()
+func (nc *Conn) readEncryptedData(b []byte) (encryptedData []byte, encryptedLen int, err error) {
+	encryptedData, err = nc.readFramedMessage()
 	if err != nil {
 		return nil, 0, err
 	}
-	return encrypted, len(encrypted), nil
+	encryptedLen = len(encryptedData)
+	return
 }
 
 // writeFramedMessage writes a 2-byte big-endian length prefix followed by

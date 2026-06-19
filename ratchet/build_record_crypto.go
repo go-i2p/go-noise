@@ -66,6 +66,7 @@ var (
 )
 
 // NewBuildRecordCrypto creates a new BuildRecordCrypto handler.
+//
 // Deprecated: prefer NewBuildReplyCrypto() or NewBuildRequestCrypto() for
 // call sites that use only one of the two crypto operations.
 func NewBuildRecordCrypto() *BuildRecordCrypto {

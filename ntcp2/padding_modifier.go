@@ -186,10 +186,10 @@ func (npm *NTCP2PaddingModifier) validateBlockBounds(data []byte, offset int) bo
 }
 
 // extractBlockHeader reads the block type and size from the data at the given offset.
-func (npm *NTCP2PaddingModifier) extractBlockHeader(data []byte, offset int) (byte, int) {
-	blockType := data[offset]
-	blockSize := int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
-	return blockType, blockSize
+func (npm *NTCP2PaddingModifier) extractBlockHeader(data []byte, offset int) (blockType byte, blockSize int) {
+	blockType = data[offset]
+	blockSize = int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
+	return
 }
 
 // validateBlockSize ensures the block size doesn't exceed the available data.

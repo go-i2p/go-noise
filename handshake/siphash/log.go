@@ -1,15 +1,9 @@
 package siphash
 
-import "github.com/go-i2p/logger"
+import (
+	"github.com/go-i2p/go-noise/internal/logutil"
+	"github.com/go-i2p/logger"
+)
 
+var flog = logutil.MakePackageLogger("handshake/siphash")
 var log = logger.GetGoI2PLogger()
-
-func flog(fn string, fields ...logger.Fields) *logger.Entry {
-	f := logger.Fields{"pkg": "handshake/siphash", "func": fn}
-	if len(fields) > 0 && fields[0] != nil {
-		for k, v := range fields[0] {
-			f[k] = v
-		}
-	}
-	return log.WithFields(f)
-}

@@ -393,7 +393,9 @@ func TestDataHandler_FollowOnFragment(t *testing.T) {
 	require.NotNil(t, msg)
 
 	// Verify reassembled message has 9-byte I2NP short header prepended (G-3)
-	expected := append(firstBlockData[:9], firstData...)
+	var expected []byte
+	expected = append(expected, firstBlockData[:9]...)
+	expected = append(expected, firstData...)
 	expected = append(expected, secondData...)
 	assert.Equal(t, expected, msg)
 
@@ -570,7 +572,9 @@ func TestDataHandler_FragmentReassembly_MultiFragment(t *testing.T) {
 	// Verify the reassembled message has 9-byte I2NP short header prepended (G-3)
 	assert.True(t, handler.HasMessages())
 	msg := handler.GetMessage()
-	expected := append(firstBlockData[:9], firstData...)
+	var expected []byte
+	expected = append(expected, firstBlockData[:9]...)
+	expected = append(expected, firstData...)
 	expected = append(expected, secondData...)
 	assert.Equal(t, expected, msg)
 

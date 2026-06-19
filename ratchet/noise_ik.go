@@ -331,7 +331,7 @@ func readEphemeralKey(ns *noise.SymmetricState, ephEncoded []byte) ([32]byte, er
 }
 
 // readUnboundPayload handles the unbound (N-pattern) variant of the IK message.
-func readUnboundPayload(ns *noise.SymmetricState, encryptedPayload []byte) (*noiseIKMessage1Result, error) {
+func readUnboundPayload(ns *noise.SymmetricState, encryptedPayload []byte) (result *noiseIKMessage1Result, err error) {
 	flog("readUnboundPayload", logger.Fields{"encrypted_len": len(encryptedPayload)}).Debug("Processing unbound (N-pattern) payload")
 	payload, err := ns.DecryptAndHash(nil, encryptedPayload)
 	if err != nil {

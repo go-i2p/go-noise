@@ -285,11 +285,11 @@ func roleForInitiator(isInitiator bool) (selfRole, peerRole string) {
 }
 
 // createNoiseAddresses creates local and remote Noise addresses.
-func createNoiseAddresses(underlying net.Conn, config *ConnConfig) (*Addr, *Addr) {
+func createNoiseAddresses(underlying net.Conn, config *ConnConfig) (localAddr, remoteAddr *Addr) {
 	selfRole, peerRole := roleForInitiator(config.Initiator)
-	localAddr := NewNoiseAddr(underlying.LocalAddr(), config.Pattern, selfRole)
-	remoteAddr := NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, peerRole)
-	return localAddr, remoteAddr
+	localAddr = NewNoiseAddr(underlying.LocalAddr(), config.Pattern, selfRole)
+	remoteAddr = NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, peerRole)
+	return
 }
 
 // executeRoleBasedHandshake performs handshake based on initiator/responder role.

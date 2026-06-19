@@ -790,7 +790,9 @@ func TestCreateSessionConfirmedFragments_LargePayload(t *testing.T) {
 	for i := range prefix {
 		prefix[i] = byte(i % 256)
 	}
-	largeRouterInfo := append(prefix, []byte(pubB64)...)
+	var largeRouterInfo []byte
+	largeRouterInfo = append(largeRouterInfo, prefix...)
+	largeRouterInfo = append(largeRouterInfo, []byte(pubB64)...)
 
 	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, largeRouterInfo)
 	require.NoError(t, err)

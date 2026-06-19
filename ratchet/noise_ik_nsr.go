@@ -298,7 +298,9 @@ func encryptNSRPayload(ns *noise.SymmetricState, payload []byte) ([]byte, *nsrSe
 		return nil, nil, oops.Wrapf(err, "failed to encrypt NSR payload")
 	}
 
-	encrypted := append(ct, tag[:]...)
+	var encrypted []byte
+	encrypted = append(encrypted, ct...)
+	encrypted = append(encrypted, tag[:]...)
 
 	var chainKey [32]byte
 	copy(chainKey[:], ns.ChainingKey())
