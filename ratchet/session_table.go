@@ -196,7 +196,7 @@ func (sm *SessionManager) evictLRUSessionLocked() {
 	if !first {
 		if evicted, ok := sm.sessions[oldestHash]; ok {
 			sm.cleanupSessionIndexesLocked(evicted, oldestHash)
-			flog("evictLRUSessionLocked", logger.Fields{"last_used":       oldestTime, "remaining_count": len(sm.sessions)}).Warn("Evicted least-recently-used garlic session")
+			flog("evictLRUSessionLocked", logger.Fields{"last_used": oldestTime, "remaining_count": len(sm.sessions)}).Warn("Evicted least-recently-used garlic session")
 		}
 	}
 }
@@ -254,7 +254,7 @@ func (sm *SessionManager) enforcePerPeerQuotaLocked(remotePubKey [32]byte) {
 
 	if evicted, ok := sm.sessions[hashToEvict]; ok {
 		sm.cleanupSessionIndexesLocked(evicted, hashToEvict)
-		flog("enforcePerPeerQuotaLocked", logger.Fields{"remote_pubkey":      fmt.Sprintf("%x", remotePubKey[:8]), "evicted_hash":       fmt.Sprintf("%x", hashToEvict[:8]), "remaining_count":    len(sm.sessions), "remaining_for_peer": count - 1}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
+		flog("enforcePerPeerQuotaLocked", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", remotePubKey[:8]), "evicted_hash": fmt.Sprintf("%x", hashToEvict[:8]), "remaining_count": len(sm.sessions), "remaining_for_peer": count - 1}).Warn("Evicted oldest session for peer to enforce MaxSessionsPerPeer quota")
 	}
 }
 

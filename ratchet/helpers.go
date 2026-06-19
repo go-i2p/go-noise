@@ -77,7 +77,7 @@ func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) 
 	}
 	copy(combined[offset:], plaintext)
 
-	flog("prependPendingNextKeys", logger.Fields{"next_key_blocks": len(nextKeyBlocks), "ack_blocks":      len(ackBlocks), "control_bytes":   controlSize, "original_size":   len(plaintext), "combined_size":   len(combined)}).Debug("Prepended control blocks to ES payload")
+	flog("prependPendingNextKeys", logger.Fields{"next_key_blocks": len(nextKeyBlocks), "ack_blocks": len(ackBlocks), "control_bytes": controlSize, "original_size": len(plaintext), "combined_size": len(combined)}).Debug("Prepended control blocks to ES payload")
 
 	return combined, nil
 }
