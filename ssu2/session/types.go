@@ -28,24 +28,14 @@ var (
 // ─── From ssu2/wire ───────────────────────────────────────────────────────────
 
 type (
-	SSU2Block                 = wire.SSU2Block
-	SSU2Packet                = wire.SSU2Packet
-	TerminationReason         = wire.TerminationReason
-	AddressBlock              = wire.AddressBlock
-	NewTokenBlock             = wire.NewTokenBlock
-	BlockHandler              = wire.BlockHandler
-	BlockHandlerFunc          = wire.BlockHandlerFunc
-	BlockRouter               = wire.BlockRouter
-	BlockRouterStats          = wire.BlockRouterStats
-	BlockTypeCategory         = wire.BlockTypeCategory
-	HeaderType                = wire.HeaderType
-	HeaderProtector           = wire.HeaderProtector
-	HeaderProtectorManager    = wire.HeaderProtectorManager
-	SipHashLengthModifier     = wire.SipHashLengthModifier
-	ChaChaObfuscationModifier = wire.ChaChaObfuscationModifier
-	SSU2PaddingModifier       = wire.SSU2PaddingModifier
-	TokenCache                = wire.TokenCache
-	Token                     = wire.Token
+	SSU2Block              = wire.SSU2Block
+	SSU2Packet             = wire.SSU2Packet
+	TerminationReason      = wire.TerminationReason
+	BlockRouter            = wire.BlockRouter
+	HeaderType             = wire.HeaderType
+	HeaderProtectorManager = wire.HeaderProtectorManager
+	SSU2PaddingModifier    = wire.SSU2PaddingModifier
+	Token                  = wire.Token
 )
 
 const (
@@ -63,7 +53,6 @@ const (
 	BlockTypeNextNonce         = wire.BlockTypeNextNonce
 	BlockTypeACK               = wire.BlockTypeACK
 	BlockTypeAddress           = wire.BlockTypeAddress
-	BlockTypeReserved14        = wire.BlockTypeReserved14
 	BlockTypeRelayTagRequest   = wire.BlockTypeRelayTagRequest
 	BlockTypeRelayTag          = wire.BlockTypeRelayTag
 	BlockTypeNewToken          = wire.BlockTypeNewToken
@@ -123,45 +112,21 @@ const (
 )
 
 const (
-	ShortHeaderSize            = wire.ShortHeaderSize
-	LongHeaderSize             = wire.LongHeaderSize
-	EphemeralKeySize           = wire.EphemeralKeySize
-	MACSize                    = wire.MACSize
-	MinPacketSize              = wire.MinPacketSize
-	MaxPacketSizeIPv4          = wire.MaxPacketSizeIPv4
-	MaxPacketSizeIPv6          = wire.MaxPacketSizeIPv6
-	SSU2ProtocolVersion        = wire.SSU2ProtocolVersion
-	SSU2NetworkID              = wire.SSU2NetworkID
-	SipHashIVSize              = wire.SipHashIVSize
-	DataLengthFieldSize        = wire.DataLengthFieldSize
-	TokenSize                  = wire.TokenSize
-	MaxTokenCacheSize          = wire.MaxTokenCacheSize
-	HeaderKeySize              = wire.HeaderKeySize
-	MinPacketSizeForEncryption = wire.MinPacketSizeForEncryption
+	ShortHeaderSize   = wire.ShortHeaderSize
+	MACSize           = wire.MACSize
+	MaxPacketSizeIPv4 = wire.MaxPacketSizeIPv4
+	HeaderKeySize     = wire.HeaderKeySize
 )
 
 var (
-	NewSSU2Block                        = wire.NewSSU2Block
-	NewSSU2Packet                       = wire.NewSSU2Packet
-	NewBlockRouter                      = wire.NewBlockRouter
-	SerializeBlocks                     = wire.SerializeBlocks
-	DeserializeBlocks                   = wire.DeserializeBlocks
-	FindBlockByType                     = wire.FindBlockByType
-	IsKnownBlockType                    = wire.IsKnownBlockType
-	BlockTypeName                       = wire.BlockTypeName
-	GetBlockTypeName                    = wire.GetBlockTypeName
-	GetBlockCategory                    = wire.GetBlockCategory
-	AllBlockTypes                       = wire.AllBlockTypes
-	ExtractConnectionID                 = wire.ExtractConnectionID
-	ParseNewTokenBlock                  = wire.ParseNewTokenBlock
-	EncodeAddressBlock                  = wire.EncodeAddressBlock
-	DecodeAddressBlock                  = wire.DecodeAddressBlock
-	NewSipHashLengthModifierDirectional = wire.NewSipHashLengthModifierDirectional
-	NewHeaderProtectorManager           = wire.NewHeaderProtectorManager
-	NewTokenCache                       = wire.NewTokenCache
-	NewTokenCacheWithMaxSize            = wire.NewTokenCacheWithMaxSize
-	IntroKeyFromRouterAddress           = wire.IntroKeyFromRouterAddress
-	StaticKeyFromRouterAddress          = wire.StaticKeyFromRouterAddress
+	NewSSU2Block              = wire.NewSSU2Block
+	NewBlockRouter            = wire.NewBlockRouter
+	SerializeBlocks           = wire.SerializeBlocks
+	DeserializeBlocks         = wire.DeserializeBlocks
+	FindBlockByType           = wire.FindBlockByType
+	ExtractConnectionID       = wire.ExtractConnectionID
+	ParseNewTokenBlock        = wire.ParseNewTokenBlock
+	NewHeaderProtectorManager = wire.NewHeaderProtectorManager
 )
 
 // ─── From ssu2/handshake ──────────────────────────────────────────────────────
