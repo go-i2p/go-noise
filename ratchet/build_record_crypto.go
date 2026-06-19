@@ -137,7 +137,7 @@ func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []
 	flog("SerializeResponseRecord", logger.Fields{"reply_code": reply}).Debug("Serializing response record")
 	buf := make([]byte, 528)
 	writeArray32(buf[0:32], hash)
-	writeArray495(buf[32:527], randomData)
+	writeArray495(buf[32:527], &randomData)
 	buf[527] = reply
 	return buf
 }
@@ -145,7 +145,7 @@ func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []
 // buildResponseRecordHashInput constructs the 496-byte buffer that is hashed
 // to produce (or verify) the SHA-256 field of a build response record.
 // Layout: randomData[0:495] || reply byte.
-func buildResponseRecordHashInput(randomData [495]byte, reply byte) []byte {
+func buildResponseRecordHashInput(randomData *[495]byte, reply byte) []byte {
 	data := make([]byte, 496)
 	writeArray495(data[0:495], randomData)
 	data[495] = reply
@@ -156,7 +156,7 @@ func buildResponseRecordHashInput(randomData [495]byte, reply byte) []byte {
 // The hash covers bytes 32-527 (randomData + reply byte).
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
 	flog("VerifyResponseRecordHash", logger.Fields{"reply_code": reply}).Debug("Verifying response record hash")
-	data := buildResponseRecordHashInput(randomData, reply)
+	data := buildResponseRecordHashInput(&randomData, reply)
 
 	expectedHash := types.SHA256(data)
 
@@ -176,7 +176,7 @@ func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) e
 // Returns the SHA-256 hash that should be placed in the first 32 bytes of the record.
 func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
 	flog("CreateBuildResponseRecordRaw", logger.Fields{"reply_code": reply}).Debug("Creating build response record hash")
-	return types.SHA256(buildResponseRecordHashInput(randomData, reply))
+	return types.SHA256(buildResponseRecordHashInput(&randomData, reply))
 }
 
 // newChaCha20Poly1305 creates a ChaCha20-Poly1305 AEAD cipher and derives the
