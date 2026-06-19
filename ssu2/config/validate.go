@@ -38,7 +38,7 @@ func (sc *SSU2Config) Validate() error {
 
 // validateBounds checks if a value satisfies min/max bounds and returns an oops error on failure.
 // This is the workhorse for table-driven numeric validation.
-func validateBounds(v boundsValidator) error {
+func validateBounds(v *boundsValidator) error {
 	numVal, ok := internalvalidation.ToFloat64(v.value)
 	if !ok {
 		return oops.Code("TYPE_ERROR").In(v.context).Errorf("unsupported type for bounds validation")
@@ -159,8 +159,8 @@ func (sc *SSU2Config) validateUDPConfiguration() error {
 		},
 	}
 
-	for _, check := range boundsChecks {
-		if err := validateBounds(check); err != nil {
+	for i := range boundsChecks {
+		if err := validateBounds(&boundsChecks[i]); err != nil {
 			return err
 		}
 	}

@@ -10,7 +10,6 @@ import (
 	"github.com/go-i2p/go-noise/internal/baseconfig"
 	shutdown "github.com/go-i2p/go-noise/shutdown"
 	"github.com/go-i2p/logger"
-	i2plogger "github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
 
@@ -271,7 +270,7 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 		maxConnSemaphore: maxConnSem,
 	}
 
-	log.WithFields(i2plogger.Fields{
+	log.WithFields(logger.Fields{
 		"pkg":               "noise",
 		"func":              "NewNoiseListener",
 		"pattern":           config.Pattern,
@@ -328,7 +327,7 @@ func (nl *Listener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 
-	nl.logger.WithFields(i2plogger.Fields{
+	nl.logger.WithFields(logger.Fields{
 		"pkg":           "noise",
 		"func":          "NoiseListener.Accept",
 		"listener_addr": nl.addr.String(),
@@ -412,7 +411,7 @@ func (nl *Listener) handleTransientError(err error) (bool, time.Duration, error)
 		}
 	}
 
-	nl.logger.WithFields(i2plogger.Fields{
+	nl.logger.WithFields(logger.Fields{
 		"pkg":                "noise",
 		"func":               "NoiseListener.handleTransientError",
 		"listener_addr":      nl.addr.String(),
@@ -538,7 +537,7 @@ func (nl *Listener) Close() error {
 
 	err := nl.underlying.Close()
 	if err != nil {
-		nl.logger.WithFields(i2plogger.Fields{
+		nl.logger.WithFields(logger.Fields{
 			"pkg":           "noise",
 			"func":          "NoiseListener.Close",
 			"listener_addr": nl.addr.String(),
@@ -552,7 +551,7 @@ func (nl *Listener) Close() error {
 			Wrapf(err, "failed to close underlying listener")
 	}
 
-	nl.logger.WithFields(i2plogger.Fields{
+	nl.logger.WithFields(logger.Fields{
 		"pkg":           "noise",
 		"func":          "NoiseListener.Close",
 		"listener_addr": nl.addr.String(),

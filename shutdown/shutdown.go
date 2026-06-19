@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/logger"
-	i2plogger "github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
 
@@ -126,7 +125,7 @@ func (sm *ShutdownManager) registerConnection(conn ShutdownConn, register bool) 
 		action = "unregistered"
 	}
 
-	sm.logger.WithFields(i2plogger.Fields{
+	sm.logger.WithFields(logger.Fields{
 		"pkg":         "noise",
 		"func":        "ShutdownManager." + op,
 		"local_addr":  conn.LocalAddr().String(),
@@ -175,7 +174,7 @@ func (sm *ShutdownManager) registerListener(listener ShutdownListener, register 
 		action = "unregistered"
 	}
 
-	sm.logger.WithFields(i2plogger.Fields{
+	sm.logger.WithFields(logger.Fields{
 		"pkg":             "noise",
 		"func":            "ShutdownManager." + op,
 		"listener_addr":   listener.Addr().String(),
@@ -202,7 +201,7 @@ func (sm *ShutdownManager) Shutdown() error {
 		sm.cancel()
 
 		shutdownErr = sm.executeShutdownSequence()
-		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.Shutdown"}).Info("graceful shutdown complete")
+		sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.Shutdown"}).Info("graceful shutdown complete")
 
 		// Store the error in the struct so subsequent callers can retrieve it.
 		// See LOW-1 audit finding: all callers should see the same result.
@@ -226,7 +225,7 @@ func (sm *ShutdownManager) logShutdownInitiation() {
 	connCount := sm.connectedCount()
 	listCount := sm.listenerCount()
 
-	sm.logger.WithFields(i2plogger.Fields{
+	sm.logger.WithFields(logger.Fields{
 		"pkg":            "noise",
 		"func":           "ShutdownManager.logShutdownInitiation",
 		"timeout":        sm.shutdownTimeout.String(),
@@ -244,13 +243,13 @@ func (sm *ShutdownManager) executeShutdownSequence() error {
 	// Close listeners first to stop accepting new connections
 	shutdownErr = sm.closeListeners()
 	if shutdownErr != nil {
-		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(shutdownErr).Error("error closing listeners during shutdown")
+		sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(shutdownErr).Error("error closing listeners during shutdown")
 	}
 
 	if err := sm.waitForConnectionsDrain(); err != nil {
-		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(err).Warn("timeout waiting for connections to drain, forcing close")
+		sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(err).Warn("timeout waiting for connections to drain, forcing close")
 		if forceErr := sm.forceCloseConnections(); forceErr != nil {
-			sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(forceErr).Error("error force closing connections")
+			sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(forceErr).Error("error force closing connections")
 			if shutdownErr == nil {
 				shutdownErr = forceErr
 			}
@@ -330,7 +329,7 @@ func (sm *ShutdownManager) closeListeners() error {
 
 	return sm.closeAll(listeners, "listener", func(item io.Closer, err error) {
 		listener := item.(ShutdownListener)
-		sm.logger.WithFields(i2plogger.Fields{
+		sm.logger.WithFields(logger.Fields{
 			"pkg":            "noise",
 			"func":           "ShutdownManager.closeListeners",
 			"listener_addr":  listener.Addr().String(),
@@ -367,7 +366,7 @@ func (sm *ShutdownManager) waitForConnectionsDrain() error {
 				return nil
 			}
 
-			sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.waitForConnectionsDrain", "remaining_connections": connectionCount}).
+			sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.waitForConnectionsDrain", "remaining_connections": connectionCount}).
 				WithField("shutdown_phase", "draining").
 				Debug("waiting for connections to drain")
 		}
@@ -385,7 +384,7 @@ func (sm *ShutdownManager) forceCloseConnections() error {
 
 	return sm.closeAll(connections, "connection", func(item io.Closer, err error) {
 		conn := item.(ShutdownConn)
-		sm.logger.WithFields(i2plogger.Fields{
+		sm.logger.WithFields(logger.Fields{
 			"pkg":            "noise",
 			"func":           "ShutdownManager.forceCloseConnections",
 			"local_addr":     conn.LocalAddr().String(),
