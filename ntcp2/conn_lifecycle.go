@@ -50,8 +50,12 @@ func (nc *Conn) handleAEADError(underlying net.Conn) {
 		// Randomize the timeout duration within [AEADErrorTimeoutMin, AEADErrorTimeoutMax]
 		// to avoid creating a timing fingerprint (per spec: "random timeout").
 		timeout := randomAEADTimeout()
+		// Best-effort probing resistance: deadline failures do not change the
+		// required close-on-auth-failure outcome, so the error is intentionally ignored.
 		underlying.SetReadDeadline(time.Now().Add(timeout)) //nolint:errcheck
 		junk := make([]byte, junkLen)
+		// Best-effort junk read: if the peer closes or the deadline fires, the
+		// connection is still marked broken and RST below.
 		underlying.Read(junk) //nolint:errcheck // best effort
 	}
 
@@ -91,9 +95,12 @@ func randomAEADTimeout() time.Duration {
 func (nc *Conn) sendTCPRST(conn net.Conn) {
 	flog("NTCP2Conn.sendTCPRST").Debug("Sending TCP RST (abnormal close) per NTCP2 spec")
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		// These are best-effort cleanup calls. Any failure still leaves the
+		// socket on the path toward close, and the caller treats this as terminal.
 		tcpConn.SetLinger(0) //nolint:errcheck
 		tcpConn.Close()      //nolint:errcheck
 	} else {
+		// Same best-effort cleanup semantics for non-TCP connections.
 		conn.Close() //nolint:errcheck
 	}
 	// BUG-RC-4: store flag AFTER the close operations so that a panic between

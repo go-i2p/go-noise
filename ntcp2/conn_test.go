@@ -1718,6 +1718,8 @@ func TestNTCP2Conn_ConcurrentReadWrite(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for m := 0; m < msgsPerGoroutine; m++ {
+				// The test is asserting concurrent I/O progress; write errors
+				// would just terminate the probe early and reduce coverage.
 				conn.Write([]byte("msg")) //nolint:errcheck
 			}
 		}()
@@ -1730,6 +1732,8 @@ func TestNTCP2Conn_ConcurrentReadWrite(t *testing.T) {
 			defer wg.Done()
 			buf := make([]byte, 128)
 			for i := 0; i < msgsPerGoroutine; i++ {
+				// Deadline/read errors are acceptable in this stress probe; the
+				// test only cares that the goroutines complete without deadlock.
 				serverPipe.SetReadDeadline(time.Now().Add(2 * time.Second)) //nolint:errcheck
 				serverPipe.Read(buf)                                        //nolint:errcheck
 			}

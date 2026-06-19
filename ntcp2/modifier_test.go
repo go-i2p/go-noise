@@ -955,6 +955,8 @@ func TestAudit_Quality_ThreadSafety(t *testing.T) {
 			go func() {
 				defer func() { done <- struct{}{} }()
 				k := make([]byte, 32)
+				// These mutation calls are probed for race-safety; the test only
+				// cares that they do not panic or race, not about returned errors.
 				modifier.ModifyOutbound(handshake.PhaseExchange, k) //nolint:errcheck
 				modifier.ModifyInbound(handshake.PhaseExchange, k)  //nolint:errcheck
 			}()
@@ -974,6 +976,8 @@ func TestAudit_Quality_ThreadSafety(t *testing.T) {
 				defer func() { done <- struct{}{} }()
 				data := make([]byte, 2)
 				binary.BigEndian.PutUint16(data, 1000)
+				// Same race-safety rationale as above: errors are not expected in
+				// this concurrency probe and would only add noise to the test.
 				modifier.ModifyOutbound(handshake.PhaseData, data) //nolint:errcheck
 				modifier.ModifyInbound(handshake.PhaseData, data)  //nolint:errcheck
 			}()

@@ -36,6 +36,8 @@ func HandleEchoConnection(rawConn net.Conn) {
 	defer rawConn.Close()
 	buf := make([]byte, 1024)
 	for {
+		// The deadline is advisory for responsiveness; a failure still leaves
+		// the read loop in a valid state, so we intentionally ignore it here.
 		rawConn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
 		n, err := rawConn.Read(buf)
 		if err != nil {
@@ -44,6 +46,8 @@ func HandleEchoConnection(rawConn net.Conn) {
 			}
 			return
 		}
+		// Echo best-effort: if the write fails, the connection is already being
+		// torn down by the read loop's error handling.
 		rawConn.Write(buf[:n]) //nolint:errcheck
 	}
 }
@@ -104,6 +108,8 @@ func acceptShouldStop(ctx context.Context) bool {
 // unblocks periodically and the loop can check context cancellation.
 func setAcceptDeadline(listener net.Listener) {
 	if tcpListener, ok := listener.(*net.TCPListener); ok {
+		// Deadline refresh is a responsiveness hint; failure just means the
+		// accept loop will wait until the next iteration.
 		tcpListener.SetDeadline(time.Now().Add(1 * time.Second)) //nolint:errcheck
 	}
 }

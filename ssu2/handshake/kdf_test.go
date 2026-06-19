@@ -12,6 +12,7 @@ import (
 // hmacSHA256Test is a test helper that computes HMAC-SHA256(key, data).
 func hmacSHA256Test(key, data []byte) []byte {
 	mac := hmac.New(sha256.New, key)
+	// hash.Hash.Write never fails for in-memory test data, so this is ignored.
 	mac.Write(data) //nolint:errcheck
 	return mac.Sum(nil)
 }
