@@ -61,9 +61,7 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	}
 
 	// Step 1: temp_key = HMAC-SHA256(key=ask_master, data=h || "siphash")
-	hData := make([]byte, len(handshakeHash)+len("siphash"))
-	copy(hData, handshakeHash)
-	copy(hData[len(handshakeHash):], "siphash")
+	hData := concatBytes(handshakeHash, []byte("siphash"))
 	tempKey := hmac.HMACSHA256(askMaster, hData)
 
 	// Step 2: sip_master = HMAC-SHA256(key=temp_key, data=byte(0x01))
@@ -90,9 +88,7 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	// Per the i2pd reference implementation, the full 32-byte HMAC output from step 4
 	// (not just the 24 extracted bytes) is used as the input prefix. In i2pd, m_Sipkeysab
 	// holds 32 bytes and m_Sipkeysab[32]=0x02 is set before passing 33 bytes to HMAC.
-	step5Data := make([]byte, len(fullAB[:])+1)
-	copy(step5Data, fullAB[:])
-	step5Data[len(fullAB[:])] = 0x02
+	step5Data := concatBytes(fullAB[:], []byte{0x02})
 	fullBA := hmac.HMACSHA256(tempKey[:], step5Data)
 	if len(fullBA) < 32 {
 		flog("DeriveSipHashKeys", logger.Fields{"length": len(fullBA)}).Error("Unexpected HMAC output length for sipkeys_ba")
@@ -119,4 +115,19 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 
 	flog("DeriveSipHashKeys").Debug("SipHash key derivation completed successfully")
 	return sipKeysAB, sipIVAB, sipKeysBA, sipIVBA, nil
+}
+
+func concatBytes(parts ...[]byte) []byte {
+	total := 0
+	for _, p := range parts {
+		total += len(p)
+	}
+
+	out := make([]byte, total)
+	offset := 0
+	for _, p := range parts {
+		offset += copy(out[offset:], p)
+	}
+
+	return out
 }

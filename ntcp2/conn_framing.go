@@ -63,17 +63,13 @@ func (nc *Conn) Read(b []byte) (int, error) {
 // NoiseConn already wraps errors with appropriate context.
 func (nc *Conn) readDirect(b []byte) (int, error) {
 	n, err := nc.noiseConn.Read(b)
-	if n > 0 {
-		nc.logger.Trace("NTCP2 data read (direct)",
-			"bytes_read", n,
-			"local_addr", nc.localAddr.String(),
-			"remote_addr", nc.remoteAddr.String())
-	}
+	nc.logDirectIO("NTCP2 data read (direct)", "bytes_read", n)
 	return n, err
 }
 
 // readFramed reads an NTCP2 data-phase frame with SipHash length deobfuscation.
 func (nc *Conn) readFramed(b []byte) (int, error) {
+	// Step 1: Enforce nonce exhaustion guard before touching framing state.
 	if err := nc.guardNonce(nc.readNonce, "read"); err != nil {
 		return 0, err
 	}
@@ -81,22 +77,26 @@ func (nc *Conn) readFramed(b []byte) (int, error) {
 	slm := nc.lengthObfuscator.Load()
 	underlying := nc.noiseConn.Underlying()
 
+	// Step 2: Read and deobfuscate the SipHash-protected frame length.
 	frameLen, err := nc.readObfuscatedFrameLength(underlying, slm)
 	if err != nil {
 		return 0, err
 	}
 
+	// Step 3: Read exact ciphertext bytes and decrypt via Noise state.
 	plaintext, err := nc.readAndDecryptFrame(underlying, frameLen)
 	if err != nil {
 		return 0, err
 	}
 
+	// Step 4: Apply PhaseData inbound modifiers to decrypted payload.
 	// Apply PhaseData modifier chain after decryption (e.g., strip NTCP2 AEAD padding).
 	plaintext, err = nc.applyInboundModifier(plaintext)
 	if err != nil {
 		return 0, err
 	}
 
+	// Step 5: Copy plaintext to caller and buffer any overflow.
 	n := nc.bufferPlaintext(b, plaintext)
 
 	// Zero the original Decrypt output so sensitive plaintext does not linger
@@ -106,6 +106,7 @@ func (nc *Conn) readFramed(b []byte) (int, error) {
 	// plaintext here is safe and does not affect the buffered remainder.
 	clear(plaintext)
 
+	// Step 6: Advance per-frame nonce and emit read diagnostics.
 	nc.readNonce++
 
 	nc.logger.Trace("NTCP2 data read (framed)",
@@ -166,7 +167,7 @@ func (nc *Conn) readAndDecryptFrame(underlying net.Conn, frameLen uint16) ([]byt
 	nRead, err := io.ReadFull(underlying, ciphertext)
 	if err != nil {
 		nc.broken.Store(true)
-		flog("NTCP2Conn.readAndDecryptFrame", logger.Fields{"frame_length": frameLen, "bytes_read":   nRead, "read_nonce":   nc.readNonce, "remote_addr":  nc.remoteAddr.String()}).WithError(err).Error("Frame data read failed (SipHash deobfuscated length may be wrong)")
+		flog("NTCP2Conn.readAndDecryptFrame", logger.Fields{"frame_length": frameLen, "bytes_read": nRead, "read_nonce": nc.readNonce, "remote_addr": nc.remoteAddr.String()}).WithError(err).Error("Frame data read failed (SipHash deobfuscated length may be wrong)")
 		return nil, oops.
 			Code("READ_FRAME_FAILED").
 			In("ntcp2").
@@ -295,12 +296,20 @@ func (nc *Conn) writeDirect(b []byte) (int, error) {
 		return n, err
 	}
 
-	nc.logger.Trace("NTCP2 data written (direct)",
-		"bytes_written", n,
-		"local_addr", nc.localAddr.String(),
-		"remote_addr", nc.remoteAddr.String())
+	nc.logDirectIO("NTCP2 data written (direct)", "bytes_written", n)
 
 	return n, nil
+}
+
+func (nc *Conn) logDirectIO(message, bytesField string, n int) {
+	if n <= 0 {
+		return
+	}
+
+	nc.logger.Trace(message,
+		bytesField, n,
+		"local_addr", nc.localAddr.String(),
+		"remote_addr", nc.remoteAddr.String())
 }
 
 // applyOutboundModifier passes plaintext through the NoiseConn's modifier chain

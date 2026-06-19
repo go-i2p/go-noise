@@ -23,28 +23,28 @@ import (
 // This function assumes the pending slice and its backing array are not accessed
 // concurrently.
 func DrainPendingBuffer(pending *[]byte, b []byte, zero bool) (n int, drained bool) {
-	if len(*pending) == 0 {
+	current := *pending
+	if len(current) == 0 {
 		return 0, false
 	}
 
 	// Copy as many bytes as the destination buffer can hold
-	n = copy(b, *pending)
+	n = copy(b, current)
 
 	// If zeroing is enabled, immediately zero the delivered bytes to minimize
 	// plaintext lifetime in memory. This ensures already-delivered plaintext
 	// doesn't linger in the backing array even if the buffer isn't fully drained yet.
 	if zero && n > 0 {
-		securemem.SecureZero((*pending)[:n])
+		securemem.SecureZero(current[:n])
 	}
 
-	*pending = (*pending)[n:]
+	remaining := current[n:]
+	*pending = remaining
 
-	// If fully drained, ensure the entire backing array is zeroed
-	if len(*pending) == 0 {
-		if zero && cap(*pending) > 0 {
-			// Reslice to the original backing array capacity and zero any remainder
-			tail := (*pending)[:cap(*pending)]
-			securemem.SecureZero(tail)
+	// If fully drained, zero any unused tail capacity and clear the slice.
+	if len(remaining) == 0 {
+		if zero && cap(current) > n {
+			securemem.SecureZero(current[n:cap(current)])
 		}
 		*pending = nil
 		return n, true

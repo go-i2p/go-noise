@@ -143,12 +143,8 @@ func (npm *NTCP2PaddingModifier) parseBlockStructure(data []byte) blockParseResu
 	foundPadding := false
 
 	for offset < len(data) {
-		if !npm.validateBlockBounds(data, offset) {
-			break
-		}
-
-		blockType, blockSize := npm.extractBlockHeader(data, offset)
-		if !npm.validateBlockSize(data, offset, blockSize) {
+		blockType, blockSize, ok := npm.validateBlockAtOffset(data, offset)
+		if !ok {
 			break
 		}
 
@@ -199,6 +195,20 @@ func (npm *NTCP2PaddingModifier) extractBlockHeader(data []byte, offset int) (by
 // validateBlockSize ensures the block size doesn't exceed the available data.
 func (npm *NTCP2PaddingModifier) validateBlockSize(data []byte, offset, blockSize int) bool {
 	return offset+3+blockSize <= len(data)
+}
+
+// validateBlockAtOffset validates header and size bounds, then returns parsed fields.
+func (npm *NTCP2PaddingModifier) validateBlockAtOffset(data []byte, offset int) (blockType byte, blockSize int, ok bool) {
+	if !npm.validateBlockBounds(data, offset) {
+		return 0, 0, false
+	}
+
+	blockType, blockSize = npm.extractBlockHeader(data, offset)
+	if !npm.validateBlockSize(data, offset, blockSize) {
+		return 0, 0, false
+	}
+
+	return blockType, blockSize, true
 }
 
 // SetPaddingRatio updates the padding ratio for dynamic adjustment during connection.
@@ -279,13 +289,8 @@ func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool {
 	hasPadding := false
 
 	for offset < len(data) {
-		if !npm.validateFrameBlockHeader(data, offset) {
-			return false
-		}
-
-		blockType, blockSize := npm.parseFrameBlockHeader(data, offset)
-
-		if !npm.validateBlockSize(data, offset, blockSize) {
+		blockType, blockSize, ok := npm.validateBlockAtOffset(data, offset)
+		if !ok {
 			return false
 		}
 
@@ -297,18 +302,6 @@ func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool {
 	}
 
 	return true
-}
-
-// validateFrameBlockHeader checks if there's enough data for a complete block header
-func (npm *NTCP2PaddingModifier) validateFrameBlockHeader(data []byte, offset int) bool {
-	return offset+3 <= len(data)
-}
-
-// parseFrameBlockHeader extracts block type and size from the header
-func (npm *NTCP2PaddingModifier) parseFrameBlockHeader(data []byte, offset int) (byte, int) {
-	blockType := data[offset]
-	blockSize := int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
-	return blockType, blockSize
 }
 
 // validateFramePaddingRules enforces I2P NTCP2 padding block ordering rules

@@ -218,7 +218,7 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 				In("ntcp2").
 				Wrapf(err, "LocalRouterInfo does not advertise the static key (strict mode enabled; see PROMPT.md)")
 		}
-		flog("performInitiatorHandshake", logger.Fields{"event": "static_key_ri_mismatch", "err":   err.Error()}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
+		flog("performInitiatorHandshake", logger.Fields{"event": "static_key_ri_mismatch", "err": err.Error()}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
 	}
 
 	if err := sendInitiatorMsg1(cfg, nc, m3p2Len); err != nil {
@@ -286,7 +286,7 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 		return err
 	}
 	// Debug-level breadcrumb for interop diagnostics. Redacted for anonymity.
-	flog("receiveResponderMsg2", logger.Fields{"event":        "msg2_processed", "bob_padlen":   bobPadLen, "bob_opts_len": len(bobOpts)}).Debug("NTCP2 msg2 processed; bob padlen extracted")
+	flog("receiveResponderMsg2", logger.Fields{"event": "msg2_processed", "bob_padlen": bobPadLen, "bob_opts_len": len(bobOpts)}).Debug("NTCP2 msg2 processed; bob padlen extracted")
 	return nil
 }
 
@@ -373,7 +373,7 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 	// Terminate after AEAD/block check). If they are seconds apart, the peer
 	// accepted msg3 and closed later for an unrelated reason. See
 	// libi2pd/NTCP2.cpp:634 (HandleSessionConfirmedReceived).
-	flog("sendInitiatorMsg3", logger.Fields{"event":    "msg3_sent", "msg3_len": len(msg3), "m3p1_len": msg3Part1Size, "m3p2_len": int(m3p2Len), "ri_len":   len(riBytes)}).Debug("NTCP2 msg3 written to wire; awaiting first data-phase frame")
+	flog("sendInitiatorMsg3", logger.Fields{"event": "msg3_sent", "msg3_len": len(msg3), "m3p1_len": msg3Part1Size, "m3p2_len": int(m3p2Len), "ri_len": len(riBytes)}).Debug("NTCP2 msg3 written to wire; awaiting first data-phase frame")
 	return nil
 }
 
@@ -617,10 +617,7 @@ func buildMessage1Options(m3p2Len uint16) ([]byte, int, error) {
 }
 
 func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
-	// Generate random padding length [0, 223] per i2pd distribution.
-	// Use rejection sampling from a single random byte to ensure uniform distribution.
-	const maxPadLen = 223 // per NTCP2 spec §4.3
-	padLen, err := randomPaddingLength(maxPadLen)
+	padLen, err := randomNTCP2PaddingLength()
 	if err != nil {
 		return nil, 0, err
 	}
@@ -634,6 +631,13 @@ func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
 	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
 
 	return opts, padLen, nil
+}
+
+func randomNTCP2PaddingLength() (int, error) {
+	// Per NTCP2 spec §4.3 and i2pd/Java behavior, message options use a
+	// randomized cleartext padding length in [0, 223].
+	const ntcp2MaxPadLen = 223
+	return randomPaddingLength(ntcp2MaxPadLen)
 }
 
 // buildMsg3Part2Payload wraps raw RouterInfo bytes in the NTCP2 block frame
