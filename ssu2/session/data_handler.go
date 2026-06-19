@@ -34,6 +34,9 @@ type DataHandler struct {
 	// blockRouter routes non-I2NP blocks to registered handlers
 	blockRouter *BlockRouter
 
+	// nonCriticalDispatch routes non-critical blocks to their handlers.
+	nonCriticalDispatch map[uint8]func(*SSU2Block) error
+
 	// callbackMu protects concurrent access to callbacks.
 	callbackMu sync.RWMutex
 
@@ -165,13 +168,16 @@ func NewDataHandler(queueSize int) *DataHandler {
 		queueSize = 100 // Default queue size
 	}
 
-	return &DataHandler{
-		messageQueue:    make(chan []byte, queueSize),
-		fragments:       make(map[uint32]*FragmentSet),
-		blockRouter:     NewBlockRouter(),
-		fragmentTimeout: 10 * time.Second,
-		stopReaper:      make(chan struct{}),
+	h := &DataHandler{
+		messageQueue:        make(chan []byte, queueSize),
+		fragments:           make(map[uint32]*FragmentSet),
+		blockRouter:         NewBlockRouter(),
+		nonCriticalDispatch: nil,
+		fragmentTimeout:     10 * time.Second,
+		stopReaper:          make(chan struct{}),
 	}
+	h.initNonCriticalDispatch()
+	return h
 }
 
 // newDataHandlerFromConfig creates a DataHandler using SSU2Config values.
@@ -187,6 +193,32 @@ func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 		dh.fragmentTimeout = config.FragmentTimeout
 	}
 	return dh
+}
+
+// initNonCriticalDispatch builds the block-type dispatch table for blocks whose
+// errors are logged instead of returned. Keeping the mapping in one place makes
+// the non-critical routing path easier to scan and extend.
+func (h *DataHandler) initNonCriticalDispatch() {
+	h.nonCriticalDispatch = map[uint8]func(*SSU2Block) error{
+		BlockTypeTermination:       func(block *SSU2Block) error { return h.handleTermination(block.Data) },
+		BlockTypeNewToken:          func(block *SSU2Block) error { return h.handleNewToken(block.Data) },
+		BlockTypeRelayRequest:      h.handleRelayRequest,
+		BlockTypeRelayResponse:     h.handleRelayResponse,
+		BlockTypeRelayIntro:        h.handleRelayIntro,
+		BlockTypeRelayTagRequest:   h.handleRelayTagRequest,
+		BlockTypeRelayTag:          h.handleRelayTag,
+		BlockTypePeerTest:          h.handlePeerTest,
+		BlockTypePathChallenge:     func(block *SSU2Block) error { return h.handlePathChallenge(block.Data) },
+		BlockTypePathResponse:      func(block *SSU2Block) error { return h.handlePathResponse(block.Data) },
+		BlockTypeDateTime:          func(block *SSU2Block) error { return h.handleDateTime(block.Data) },
+		BlockTypeOptions:           func(block *SSU2Block) error { return h.handleOptions(block.Data) },
+		BlockTypeRouterInfo:        func(block *SSU2Block) error { return h.handleRouterInfo(block.Data) },
+		BlockTypeAddress:           func(block *SSU2Block) error { return h.handleAddress(block.Data) },
+		BlockTypeACK:               h.handleACK,
+		BlockTypeNextNonce:         func(block *SSU2Block) error { return h.handleNextNonce(block.Data) },
+		BlockTypeFirstPacketNumber: func(block *SSU2Block) error { return h.handleFirstPacketNumber(block.Data) },
+		BlockTypeCongestion:        func(block *SSU2Block) error { return h.handleCongestion(block.Data) },
+	}
 }
 
 // StartReaper launches a background goroutine that periodically removes
@@ -316,51 +348,14 @@ func (h *DataHandler) processBlock(block *SSU2Block) error {
 
 // dispatchNonCriticalBlock handles blocks where errors are logged, not propagated.
 func (h *DataHandler) dispatchNonCriticalBlock(block *SSU2Block) {
-	var err error
-	switch block.Type {
-	case BlockTypeTermination:
-		err = h.handleTermination(block.Data)
-	case BlockTypeNewToken:
-		err = h.handleNewToken(block.Data)
-	case BlockTypeRelayRequest:
-		err = h.handleRelayRequest(block)
-	case BlockTypeRelayResponse:
-		err = h.handleRelayResponse(block)
-	case BlockTypeRelayIntro:
-		err = h.handleRelayIntro(block)
-	case BlockTypeRelayTagRequest:
-		err = h.handleRelayTagRequest(block)
-	case BlockTypeRelayTag:
-		err = h.handleRelayTag(block)
-	case BlockTypePeerTest:
-		err = h.handlePeerTest(block)
-	case BlockTypePathChallenge:
-		err = h.handlePathChallenge(block.Data)
-	case BlockTypePathResponse:
-		err = h.handlePathResponse(block.Data)
-	case BlockTypeDateTime:
-		err = h.handleDateTime(block.Data)
-	case BlockTypeOptions:
-		err = h.handleOptions(block.Data)
-	case BlockTypeRouterInfo:
-		err = h.handleRouterInfo(block.Data)
-	case BlockTypeAddress:
-		err = h.handleAddress(block.Data)
-	case BlockTypeACK:
-		err = h.handleACK(block)
-	case BlockTypeNextNonce:
-		err = h.handleNextNonce(block.Data)
-	case BlockTypeFirstPacketNumber:
-		err = h.handleFirstPacketNumber(block.Data)
-	case BlockTypeCongestion:
-		err = h.handleCongestion(block.Data)
-	default:
+	handler, ok := h.nonCriticalDispatch[block.Type]
+	if !ok {
 		h.incrementStat(&h.stats.UnknownBlocks)
-		flog("dispatchNonCriticalBlock", logger.Fields{"blockType":  block.Type, "dataLength": len(block.Data)}).Warn("Received unknown block type")
+		flog("dispatchNonCriticalBlock", logger.Fields{"blockType": block.Type, "dataLength": len(block.Data)}).Warn("Received unknown block type")
 		return
 	}
-	if err != nil {
-		flog("dispatchNonCriticalBlock", logger.Fields{"blockType": block.Type, "error":     err}).Debug("Error handling block")
+	if err := handler(block); err != nil {
+		flog("dispatchNonCriticalBlock", logger.Fields{"blockType": block.Type, "error": err}).Debug("Error handling block")
 	}
 }
 
