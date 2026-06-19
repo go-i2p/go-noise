@@ -42,6 +42,45 @@ var responderHandlers = buildResponderHandlers()
 
 type connPatternMethod func(*Conn, context.Context, string) error
 
+type patternGroupSpec struct {
+	patterns     []string
+	messageCount int
+}
+
+var patternGroupSpecs = []patternGroupSpec{
+	{patterns: onewayPatterns, messageCount: 1},
+	{patterns: twoMessagePatterns, messageCount: 2},
+	{patterns: threeMessagePatterns, messageCount: 3},
+}
+
+var handshakePatternsByName = buildHandshakePatternMap()
+
+func addHandshakeAliases(m map[string]noise.HandshakePattern, pattern noise.HandshakePattern, short string) {
+	m["Noise_"+short+"_25519_AESGCM_SHA256"] = pattern
+	m["Noise_"+short+"_25519_ChaChaPoly_SHA256"] = pattern
+	m[short] = pattern
+}
+
+func buildHandshakePatternMap() map[string]noise.HandshakePattern {
+	patterns := make(map[string]noise.HandshakePattern, 45)
+	addHandshakeAliases(patterns, noise.HandshakeNN, "NN")
+	addHandshakeAliases(patterns, noise.HandshakeNK, "NK")
+	addHandshakeAliases(patterns, noise.HandshakeNX, "NX")
+	addHandshakeAliases(patterns, noise.HandshakeXN, "XN")
+	addHandshakeAliases(patterns, noise.HandshakeXK, "XK")
+	addHandshakeAliases(patterns, noise.HandshakeXX, "XX")
+	addHandshakeAliases(patterns, noise.HandshakeKN, "KN")
+	addHandshakeAliases(patterns, noise.HandshakeKK, "KK")
+	addHandshakeAliases(patterns, noise.HandshakeKX, "KX")
+	addHandshakeAliases(patterns, noise.HandshakeIN, "IN")
+	addHandshakeAliases(patterns, noise.HandshakeIK, "IK")
+	addHandshakeAliases(patterns, noise.HandshakeIX, "IX")
+	addHandshakeAliases(patterns, noise.HandshakeN, "N")
+	addHandshakeAliases(patterns, noise.HandshakeK, "K")
+	addHandshakeAliases(patterns, noise.HandshakeX, "X")
+	return patterns
+}
+
 func addPatternGroupHandlers(handlers map[string]PatternHandlerFunc, patterns []string, method connPatternMethod) {
 	for _, pattern := range patterns {
 		p := pattern // capture loop variable
@@ -54,28 +93,13 @@ func addPatternGroupHandlers(handlers map[string]PatternHandlerFunc, patterns []
 func buildHandlers(isInitiator bool) map[string]PatternHandlerFunc {
 	handlers := make(map[string]PatternHandlerFunc)
 
-	onewayMethod := func(nc *Conn, ctx context.Context, pattern string) error {
-		if isInitiator {
-			return nc.performOnewayInitiator(ctx, pattern)
+	for _, group := range patternGroupSpecs {
+		messageCount := group.messageCount
+		method := func(nc *Conn, ctx context.Context, pattern string) error {
+			return nc.performPatternTemplate(ctx, messageCount, isInitiator, pattern)
 		}
-		return nc.performOnewayResponder(ctx, pattern)
+		addPatternGroupHandlers(handlers, group.patterns, method)
 	}
-	twoMessageMethod := func(nc *Conn, ctx context.Context, pattern string) error {
-		if isInitiator {
-			return nc.performTwoMsgInitiator(ctx, pattern)
-		}
-		return nc.performTwoMsgResponder(ctx, pattern)
-	}
-	threeMessageMethod := func(nc *Conn, ctx context.Context, pattern string) error {
-		if isInitiator {
-			return nc.performThreeMsgInitiator(ctx, pattern)
-		}
-		return nc.performThreeMsgResponder(ctx, pattern)
-	}
-
-	addPatternGroupHandlers(handlers, onewayPatterns, onewayMethod)
-	addPatternGroupHandlers(handlers, twoMessagePatterns, twoMessageMethod)
-	addPatternGroupHandlers(handlers, threeMessagePatterns, threeMessageMethod)
 
 	return handlers
 }
@@ -178,44 +202,14 @@ func RegisterPattern(name string, initiator, responder PatternHandlerFunc) {
 // Accepts short names (e.g., "XX") and full Noise protocol names for both
 // AESGCM and ChaChaPoly cipher suites (e.g., "Noise_XX_25519_ChaChaPoly_SHA256").
 func parseHandshakePattern(patternName string) (noise.HandshakePattern, error) {
-	switch patternName {
-	case "Noise_NN_25519_AESGCM_SHA256", "Noise_NN_25519_ChaChaPoly_SHA256", "NN":
-		return noise.HandshakeNN, nil
-	case "Noise_NK_25519_AESGCM_SHA256", "Noise_NK_25519_ChaChaPoly_SHA256", "NK":
-		return noise.HandshakeNK, nil
-	case "Noise_NX_25519_AESGCM_SHA256", "Noise_NX_25519_ChaChaPoly_SHA256", "NX":
-		return noise.HandshakeNX, nil
-	case "Noise_XN_25519_AESGCM_SHA256", "Noise_XN_25519_ChaChaPoly_SHA256", "XN":
-		return noise.HandshakeXN, nil
-	case "Noise_XK_25519_AESGCM_SHA256", "Noise_XK_25519_ChaChaPoly_SHA256", "XK":
-		return noise.HandshakeXK, nil
-	case "Noise_XX_25519_AESGCM_SHA256", "Noise_XX_25519_ChaChaPoly_SHA256", "XX":
-		return noise.HandshakeXX, nil
-	case "Noise_KN_25519_AESGCM_SHA256", "Noise_KN_25519_ChaChaPoly_SHA256", "KN":
-		return noise.HandshakeKN, nil
-	case "Noise_KK_25519_AESGCM_SHA256", "Noise_KK_25519_ChaChaPoly_SHA256", "KK":
-		return noise.HandshakeKK, nil
-	case "Noise_KX_25519_AESGCM_SHA256", "Noise_KX_25519_ChaChaPoly_SHA256", "KX":
-		return noise.HandshakeKX, nil
-	case "Noise_IN_25519_AESGCM_SHA256", "Noise_IN_25519_ChaChaPoly_SHA256", "IN":
-		return noise.HandshakeIN, nil
-	case "Noise_IK_25519_AESGCM_SHA256", "Noise_IK_25519_ChaChaPoly_SHA256", "IK":
-		return noise.HandshakeIK, nil
-	case "Noise_IX_25519_AESGCM_SHA256", "Noise_IX_25519_ChaChaPoly_SHA256", "IX":
-		return noise.HandshakeIX, nil
-	case "Noise_N_25519_AESGCM_SHA256", "Noise_N_25519_ChaChaPoly_SHA256", "N":
-		return noise.HandshakeN, nil
-	case "Noise_K_25519_AESGCM_SHA256", "Noise_K_25519_ChaChaPoly_SHA256", "K":
-		return noise.HandshakeK, nil
-	case "Noise_X_25519_AESGCM_SHA256", "Noise_X_25519_ChaChaPoly_SHA256", "X":
-		return noise.HandshakeX, nil
-	default:
-		return noise.HandshakePattern{}, oops.
-			Code("UNSUPPORTED_PATTERN").
-			In("noise").
-			With("pattern", patternName).
-			Errorf("unsupported handshake pattern: %s", patternName)
+	if pattern, ok := handshakePatternsByName[patternName]; ok {
+		return pattern, nil
 	}
+	return noise.HandshakePattern{}, oops.
+		Code("UNSUPPORTED_PATTERN").
+		In("noise").
+		With("pattern", patternName).
+		Errorf("unsupported handshake pattern: %s", patternName)
 }
 
 // ValidateHandshakePattern reports whether pattern is a known Noise handshake

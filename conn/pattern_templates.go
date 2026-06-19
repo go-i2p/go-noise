@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/go-i2p/go-noise/handshake"
+	"github.com/samber/oops"
 )
 
 // MessageOp represents a single send or receive operation in a handshake.
@@ -11,6 +12,27 @@ type MessageOp struct {
 	isSend bool // true for send, false for receive
 	phase  handshake.HandshakePhase
 	label  string
+}
+
+type templateStep struct {
+	phase          handshake.HandshakePhase
+	initiatorSends bool
+	labelPrefix    string
+}
+
+var patternTemplateSteps = map[int][]templateStep{
+	1: {
+		{phase: handshake.PhaseInitial, initiatorSends: true, labelPrefix: ""},
+	},
+	2: {
+		{phase: handshake.PhaseInitial, initiatorSends: true, labelPrefix: "first "},
+		{phase: handshake.PhaseExchange, initiatorSends: false, labelPrefix: "second "},
+	},
+	3: {
+		{phase: handshake.PhaseInitial, initiatorSends: true, labelPrefix: "first "},
+		{phase: handshake.PhaseExchange, initiatorSends: false, labelPrefix: "second "},
+		{phase: handshake.PhaseFinal, initiatorSends: true, labelPrefix: "third "},
+	},
 }
 
 // performPatternMessages executes a sequence of handshake operations in order.
@@ -31,68 +53,39 @@ func (nc *Conn) performPatternMessages(_ context.Context, ops []MessageOp) error
 	return nil
 }
 
-// performOnewayInitiator handles any one-message Noise pattern as initiator.
-// The initiator sends the single handshake message.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performOnewayInitiator(ctx context.Context, label string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: true, phase: handshake.PhaseInitial, label: label},
-	})
+func buildPatternMessageOps(messageCount int, isInitiator bool, patternLabel string) ([]MessageOp, error) {
+	steps, ok := patternTemplateSteps[messageCount]
+	if !ok {
+		return nil, oops.
+			Code("UNSUPPORTED_TEMPLATE").
+			In("noise").
+			With("message_count", messageCount).
+			Errorf("unsupported message template count: %d", messageCount)
+	}
+
+	ops := make([]MessageOp, 0, len(steps))
+	for _, step := range steps {
+		label := patternLabel
+		if step.labelPrefix != "" {
+			label = step.labelPrefix + patternLabel
+		}
+		op := MessageOp{
+			isSend: step.initiatorSends == isInitiator,
+			phase:  step.phase,
+			label:  label,
+		}
+		ops = append(ops, op)
+	}
+
+	return ops, nil
 }
 
-// performOnewayResponder handles any one-message Noise pattern as responder.
-// The responder receives the single handshake message.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performOnewayResponder(ctx context.Context, label string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: false, phase: handshake.PhaseInitial, label: label},
-	})
-}
-
-// performTwoMsgInitiator handles any two-message Noise pattern as initiator.
-// The initiator sends message 1 then receives message 2.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performTwoMsgInitiator(ctx context.Context, p string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: true, phase: handshake.PhaseInitial, label: "first " + p},
-		{isSend: false, phase: handshake.PhaseExchange, label: "second " + p},
-	})
-}
-
-// performTwoMsgResponder handles any two-message Noise pattern as responder.
-// The responder receives message 1 then sends message 2.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performTwoMsgResponder(ctx context.Context, p string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: false, phase: handshake.PhaseInitial, label: "first " + p},
-		{isSend: true, phase: handshake.PhaseExchange, label: "second " + p},
-	})
-}
-
-// performThreeMsgInitiator handles any three-message Noise pattern as initiator.
-// The initiator sends message 1, receives message 2, then sends message 3.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performThreeMsgInitiator(ctx context.Context, p string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: true, phase: handshake.PhaseInitial, label: "first " + p},
-		{isSend: false, phase: handshake.PhaseExchange, label: "second " + p},
-		{isSend: true, phase: handshake.PhaseFinal, label: "third " + p},
-	})
-}
-
-// performThreeMsgResponder handles any three-message Noise pattern as responder.
-// The responder receives message 1, sends message 2, then receives message 3.
-// Note: context is accepted for API compatibility but is not directly used here.
-// The context deadline is enforced at the socket level by executeRoleBasedHandshake().
-func (nc *Conn) performThreeMsgResponder(ctx context.Context, p string) error {
-	return nc.performPatternMessages(ctx, []MessageOp{
-		{isSend: false, phase: handshake.PhaseInitial, label: "first " + p},
-		{isSend: true, phase: handshake.PhaseExchange, label: "second " + p},
-		{isSend: false, phase: handshake.PhaseFinal, label: "third " + p},
-	})
+// performPatternTemplate executes one of the metadata-defined handshake
+// templates (1, 2, or 3 messages) for either role.
+func (nc *Conn) performPatternTemplate(ctx context.Context, messageCount int, isInitiator bool, patternLabel string) error {
+	ops, err := buildPatternMessageOps(messageCount, isInitiator, patternLabel)
+	if err != nil {
+		return err
+	}
+	return nc.performPatternMessages(ctx, ops)
 }
