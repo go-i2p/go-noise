@@ -134,7 +134,7 @@ func (aom *AESObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase
 func (aom *AESObfuscationModifier) saveAESState(data []byte) {
 	aom.aesState = make([]byte, IVSize)
 	// Defensive: explicit slice expression would panic on nil, catching bugs early
-	copy(aom.aesState[:], data[IVSize:StaticKeySize])
+	copy(aom.aesState, data[IVSize:StaticKeySize])
 }
 
 // ModifyInbound removes AES obfuscation from ephemeral keys in handshake messages.

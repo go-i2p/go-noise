@@ -181,9 +181,9 @@ func TestXKHandshake_NTCP2_FullE2E(t *testing.T) {
 
 	// ── Step 10: Verify handshake metadata ────────────────────────────
 	// PeerStatic: initiator sees responder's public key, responder sees initiator's
-	assert.Equal(t, responderKP.Public[:], initiatorNTCP2.PeerStaticKey(),
+	assert.Equal(t, responderKP.Public, initiatorNTCP2.PeerStaticKey(),
 		"initiator PeerStatic should be responder's public key")
-	assert.Equal(t, initiatorKP.Public[:], responderNTCP2.PeerStaticKey(),
+	assert.Equal(t, initiatorKP.Public, responderNTCP2.PeerStaticKey(),
 		"responder PeerStatic should be initiator's public key")
 
 	// HandshakeHash: both sides should have the same channel binding
@@ -514,9 +514,9 @@ func TestInboundRouterHash(t *testing.T) {
 		"responder RouterHash should equal SHA-256(PeerStaticKey) after PropagatePeerStaticKey")
 
 	// Verify SHA-256(initiator static public key) matches independently.
-	expectedHashBytes := sha256.Sum256(initiatorKP.Public[:])
+	expectedHashBytes := sha256.Sum256(initiatorKP.Public)
 	rhBytes := responderRemoteHash.Bytes()
-	assert.Equal(t, expectedHashBytes[:], rhBytes[:],
+	assert.Equal(t, expectedHashBytes[:], rhBytes,
 		"responder RouterHash should be SHA-256 of the initiator's actual static public key")
 }
 
@@ -677,9 +677,9 @@ func TestXKHandshake_NTCP2_AESObfuscation(t *testing.T) {
 		"initiator should receive responder's reply intact")
 
 	// ── Step 11: Verify handshake metadata ────────────────────────────
-	assert.Equal(t, responderKP.Public[:], initiatorNTCP2.PeerStaticKey(),
+	assert.Equal(t, responderKP.Public, initiatorNTCP2.PeerStaticKey(),
 		"initiator PeerStatic should be responder's public key")
-	assert.Equal(t, initiatorKP.Public[:], responderNTCP2.PeerStaticKey(),
+	assert.Equal(t, initiatorKP.Public, responderNTCP2.PeerStaticKey(),
 		"responder PeerStatic should be initiator's public key")
 
 	assert.Equal(t, initiatorNTCP2.HandshakeHash(), responderNTCP2.HandshakeHash(),
