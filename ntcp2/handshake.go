@@ -71,83 +71,22 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 
 	nc := c.UnderlyingConn()
 	nc.StartHandshake()
-
-	// Apply a handshake deadline to the underlying TCP connection so that
-	// blocking Read/Write calls in performInitiatorHandshake / performResponderHandshake
-	// are bounded. Without this, a misbehaving peer can cause the handshake to block
-	// indefinitely (the ctx was previously accepted but never used).
 	raw := nc.Underlying()
-	hsCtx := ctx
-	timeout := cfg.HandshakeTimeout
-	if timeout <= 0 {
-		// AUDIT 4.1: never allow an unbounded handshake. If no timeout is
-		// configured and the caller's context carries no deadline, fall back
-		// to the default so a peer that completes the TCP connect but stalls
-		// the Noise exchange cannot pin this goroutine (and, for serial
-		// AcceptWithHandshake callers, the whole accept loop) forever.
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			timeout = DefaultHandshakeTimeoutSeconds * time.Second
-		}
+
+	_, clearOnSuccess, err := c.configureHandshakeDeadline(ctx, cfg, raw)
+	if err != nil {
+		nc.FailHandshake()
+		return err
 	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		hsCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	var deadlineSet bool
-	if deadline, ok := hsCtx.Deadline(); ok {
-		// BUG-RC-2 / BUG-SM-2: if Accept() already set an authoritative deadline,
-		// use the EARLIER of the two so a caller delay between Accept and Handshake
-		// cannot extend the total window beyond one HandshakeTimeout.
-		if !c.handshakeDeadline.IsZero() && c.handshakeDeadline.Before(deadline) {
-			deadline = c.handshakeDeadline
-		}
-		if err := raw.SetDeadline(deadline); err != nil {
-			nc.FailHandshake()
-			return oops.
-				Code("SET_DEADLINE_FAILED").
-				In("ntcp2").
-				Wrapf(err, "failed to set handshake deadline on underlying connection")
-		}
-		deadlineSet = true
-	} else if !c.handshakeDeadline.IsZero() {
-		// No ctx deadline but Accept set one — honour it (BUG-RC-2 / BUG-SM-2).
-		if err := raw.SetDeadline(c.handshakeDeadline); err != nil {
-			nc.FailHandshake()
-			return oops.
-				Code("SET_DEADLINE_FAILED").
-				In("ntcp2").
-				Wrapf(err, "failed to set handshake deadline on underlying connection")
-		}
-		deadlineSet = true
-	}
-	if deadlineSet {
-		// BUG-SM-1: clear the deadline only on success. On failure the caller
-		// should close the connection immediately, so lifting the deadline would
-		// leave a brief window with no deadline before Close(). Keying off
-		// retErr (named return) ensures the defer runs the clear only when the
-		// handshake completes without error.
+	if clearOnSuccess != nil {
 		defer func() {
 			if retErr == nil {
-				_ = raw.SetDeadline(time.Time{})
+				clearOnSuccess()
 			}
 		}()
 	}
 
-	var err error
-	var msg3Payload []byte
-	if cfg.Initiator {
-		if len(cfg.LocalRouterInfo) == 0 {
-			nc.FailHandshake()
-			return oops.
-				Code("MISSING_LOCAL_ROUTER_INFO").
-				In("ntcp2").
-				Errorf("LocalRouterInfo must be set in NTCP2Config for outbound connections")
-		}
-		err = performInitiatorHandshake(cfg, nc)
-	} else {
-		msg3Payload, err = performResponderHandshake(cfg, nc)
-	}
+	msg3Payload, err := c.executeHandshakeRole(cfg, nc)
 	if err != nil {
 		nc.FailHandshake()
 		return err
@@ -158,11 +97,7 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	// layer can parse it via PeerMessage3Payload() / PeerRouterInfoBytes().
 	// Without this, the OBEP/responder has no way to learn Alice's NTCP2
 	// address for direct delivery of replies (e.g. ShortTunnelBuildReply).
-	if msg3Payload != nil {
-		buf := make([]byte, len(msg3Payload))
-		copy(buf, msg3Payload)
-		c.peerMsg3Payload.Store(&buf)
-	}
+	c.storePeerMessage3Payload(msg3Payload)
 
 	// Run the PostHandshakeHook to derive SipHash keys from the ASK master and h.
 	if err := nc.RunPostHandshakeHook(); err != nil {
@@ -189,6 +124,96 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	c.established.Store(true)
 
 	return nil
+}
+
+// configureHandshakeDeadline creates a bounded handshake context and applies the
+// effective deadline to the underlying connection.
+//
+// It preserves existing semantics:
+// - add a default timeout when neither config nor ctx provide a deadline
+// - use the earlier of ctx deadline and accept-time handshakeDeadline
+// - return a cleanup callback that clears the raw connection deadline
+func (c *Conn) configureHandshakeDeadline(ctx context.Context, cfg *Config, raw net.Conn) (context.Context, func(), error) {
+	hsCtx := ctx
+	timeout := cfg.HandshakeTimeout
+	if timeout <= 0 {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			timeout = DefaultHandshakeTimeoutSeconds * time.Second
+		}
+	}
+
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		hsCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+
+	deadline, hasDeadline := c.resolveHandshakeDeadline(hsCtx)
+	if !hasDeadline {
+		if cancel != nil {
+			return hsCtx, cancel, nil
+		}
+		return hsCtx, nil, nil
+	}
+
+	if err := raw.SetDeadline(deadline); err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return hsCtx, nil, oops.
+			Code("SET_DEADLINE_FAILED").
+			In("ntcp2").
+			Wrapf(err, "failed to set handshake deadline on underlying connection")
+	}
+
+	return hsCtx, func() {
+		if cancel != nil {
+			cancel()
+		}
+		_ = raw.SetDeadline(time.Time{})
+	}, nil
+}
+
+// resolveHandshakeDeadline picks the effective handshake deadline, preferring
+// the earlier deadline when both context and accept path provided one.
+func (c *Conn) resolveHandshakeDeadline(hsCtx context.Context) (time.Time, bool) {
+	if deadline, ok := hsCtx.Deadline(); ok {
+		if !c.handshakeDeadline.IsZero() && c.handshakeDeadline.Before(deadline) {
+			return c.handshakeDeadline, true
+		}
+		return deadline, true
+	}
+	if !c.handshakeDeadline.IsZero() {
+		return c.handshakeDeadline, true
+	}
+	return time.Time{}, false
+}
+
+// executeHandshakeRole runs initiator/responder message flow and returns
+// responder message-3 payload when available.
+func (c *Conn) executeHandshakeRole(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
+	if cfg.Initiator {
+		if len(cfg.LocalRouterInfo) == 0 {
+			return nil, oops.
+				Code("MISSING_LOCAL_ROUTER_INFO").
+				In("ntcp2").
+				Errorf("LocalRouterInfo must be set in NTCP2Config for outbound connections")
+		}
+		if err := performInitiatorHandshake(cfg, nc); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	return performResponderHandshake(cfg, nc)
+}
+
+func (c *Conn) storePeerMessage3Payload(msg3Payload []byte) {
+	if msg3Payload == nil {
+		return
+	}
+	buf := make([]byte, len(msg3Payload))
+	copy(buf, msg3Payload)
+	c.peerMsg3Payload.Store(&buf)
 }
 
 // performInitiatorHandshake executes the three-message NTCP2 XK exchange.
