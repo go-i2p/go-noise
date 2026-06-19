@@ -65,6 +65,10 @@ type KeepaliveManager struct {
 //   - interval: Time between keepalive checks (use 15*time.Second per ssu2.rst)
 //   - timeout: Dead connection timeout (use 3*interval, typically 45 seconds)
 //
+// Defaults applied for defensive construction:
+//   - interval <= 0: defaults to 15s
+//   - timeout <= 0: defaults to 3*interval
+//
 // Returns an initialized but not yet started manager.
 func NewKeepaliveManager(conn SendReceiver, interval, timeout time.Duration) *KeepaliveManager {
 	flog("NewKeepaliveManager", logger.Fields{"interval": interval, "timeout": timeout}).Debug("Creating new KeepaliveManager")

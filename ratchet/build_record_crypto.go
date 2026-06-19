@@ -259,10 +259,3 @@ func prepareChaCha20Poly1305Input(input []byte, expectedLen int, inputName strin
 
 	return aead, nonce, nil
 }
-
-func validateSize(label string, actual, expected int) error {
-	if actual != expected {
-		return oops.Errorf("invalid %s size: expected %d bytes, got %d", label, expected, actual)
-	}
-	return nil
-}

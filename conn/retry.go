@@ -36,6 +36,14 @@ func (nc *Conn) logHandshakeEvent(level, fnName, message string, fields i2plogge
 	}
 }
 
+// retryAttemptFields returns common retry-attempt log metadata.
+func (nc *Conn) retryAttemptFields(attempt int) i2plogger.Fields {
+	return i2plogger.Fields{
+		"attempt":     attempt + 1,
+		"max_retries": nc.config.HandshakeRetries,
+	}
+}
+
 // HandshakeWithRetry performs a handshake with retry logic based on configuration.
 // It uses the HandshakeRetries and RetryBackoff fields from ConnConfig to control
 // the number of attempts and exponential backoff delay between retries.
@@ -122,13 +130,14 @@ func (nc *Conn) waitForRetry(ctx context.Context, attempt int) error {
 		"debug",
 		"NoiseConn.waitForRetry",
 		"waiting before handshake retry with exponential backoff",
-		i2plogger.Fields{
-			"attempt":            attempt + 1,
-			"delay_ms":           delay.Milliseconds(),
-			"backoff_multiplier": math.Pow(2, float64(attempt)),
-			"capped_at_max":      delay >= maxDelay,
-			"max_delay_ms":       maxDelay.Milliseconds(),
-		},
+		func() i2plogger.Fields {
+			fields := nc.retryAttemptFields(attempt)
+			fields["delay_ms"] = delay.Milliseconds()
+			fields["backoff_multiplier"] = math.Pow(2, float64(attempt))
+			fields["capped_at_max"] = delay >= maxDelay
+			fields["max_delay_ms"] = maxDelay.Milliseconds()
+			return fields
+		}(),
 	)
 
 	timer := time.NewTimer(delay)
@@ -154,12 +163,12 @@ func (nc *Conn) logRetryAttempt(attempt int, lastErr error) {
 		"warn",
 		"NoiseConn.logRetryAttempt",
 		"handshake failed, retrying with exponential backoff",
-		i2plogger.Fields{
-			"attempt":         attempt + 1,
-			"max_retries":     nc.config.HandshakeRetries,
-			"last_error":      lastErr.Error(),
-			"last_error_code": errorCode,
-		},
+		func() i2plogger.Fields {
+			fields := nc.retryAttemptFields(attempt)
+			fields["last_error"] = lastErr.Error()
+			fields["last_error_code"] = errorCode
+			return fields
+		}(),
 	)
 }
 

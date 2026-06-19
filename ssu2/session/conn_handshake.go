@@ -718,6 +718,8 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 }
 
 // matchesAny returns true if t equals one of the types in accepted.
+// This is intentionally a linear scan because accepted is handshake-local and
+// bounded to a tiny list (typically 1-2 message types).
 func matchesAny(t uint8, accepted []uint8) bool {
 	for _, a := range accepted {
 		if t == a {

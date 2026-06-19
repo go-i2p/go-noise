@@ -26,6 +26,8 @@ func (sc *SSU2Config) WithAllowLoopback(allow bool) *SSU2Config {
 
 // WithStaticKey sets the static key for this connection.
 // key must be 32 bytes for Curve25519.
+// If key length is invalid, this setter is a no-op and validation will fail
+// later in Validate().
 func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {
 	if len(key) == 32 {
 		sc.StaticKey = make([]byte, 32)
@@ -59,6 +61,8 @@ func (sc *SSU2Config) WithRemoteRouterHash(hash data.Hash) *SSU2Config {
 // Required for initiator connections. The key must be 32 bytes (Curve25519).
 // This is the "s" parameter from the peer's RouterAddress options, NOT the
 // router hash.
+// If key length is invalid, this setter is a no-op and validation will fail
+// later in Validate().
 func (sc *SSU2Config) WithRemoteStaticKey(key []byte) *SSU2Config {
 	if len(key) == 32 {
 		sc.RemoteStaticKey = make([]byte, 32)

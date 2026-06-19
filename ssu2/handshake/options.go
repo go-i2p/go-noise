@@ -22,14 +22,15 @@ type OptionsParams struct {
 	RDelay    uint16  // receive delay (ms)
 }
 
-// fixedPointToFloat decodes a 4.4 fixed-point byte: upper nibble is the
-// integer part, lower nibble is the fractional part (sixteenths).
-func fixedPointToFloat(b byte) float64 {
+// FixedPointField encodes/decodes 4.4 fixed-point option values.
+// Value = integer nibble + fractional nibble/16, range 0.0-15.9375.
+type FixedPointField struct{}
+
+func (FixedPointField) Decode(b byte) float64 {
 	return float64(b>>4) + float64(b&0x0F)/16.0
 }
 
-// floatToFixedPoint encodes a float as a 4.4 fixed-point byte.
-func floatToFixedPoint(f float64) byte {
+func (FixedPointField) Encode(f float64) byte {
 	if f < 0 {
 		f = 0
 	}
@@ -39,6 +40,19 @@ func floatToFixedPoint(f float64) byte {
 	intPart := int(f)
 	fracPart := int((f - float64(intPart)) * 16)
 	return byte(intPart<<4 | fracPart)
+}
+
+var fixedPoint44 FixedPointField
+
+// fixedPointToFloat decodes a 4.4 fixed-point byte: upper nibble is the
+// integer part, lower nibble is the fractional part (sixteenths).
+func fixedPointToFloat(b byte) float64 {
+	return fixedPoint44.Decode(b)
+}
+
+// floatToFixedPoint encodes a float as a 4.4 fixed-point byte.
+func floatToFixedPoint(f float64) byte {
+	return fixedPoint44.Encode(f)
 }
 
 // ParseOptionsBlock decodes a 12+ byte Options block into OptionsParams.

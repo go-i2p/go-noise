@@ -10,6 +10,52 @@ import (
 	"github.com/samber/oops"
 )
 
+// SessionRequestCreateOption configures optional behavior for
+// CreateSessionRequest.
+type SessionRequestCreateOption func(*sessionRequestCreateConfig) error
+
+type sessionRequestCreateConfig struct {
+	retryToken []byte
+}
+
+// WithSessionRequestRetryToken injects an 8-byte non-zero Retry token into
+// bytes 24-31 of the SessionRequest header. When set, CreateSessionRequest
+// automatically resets the Noise state for Retry and uses the tokened header.
+func WithSessionRequestRetryToken(token []byte) SessionRequestCreateOption {
+	return func(cfg *sessionRequestCreateConfig) error {
+		if len(token) != 8 {
+			return oops.Errorf("retry token must be exactly 8 bytes, got %d", len(token))
+		}
+		if isAllZeroToken(token) {
+			return oops.Errorf("retry token must be nonzero per SSU2 spec")
+		}
+		cfg.retryToken = copyBytes(token)
+		return nil
+	}
+}
+
+func parseSessionRequestCreateOptions(opts ...SessionRequestCreateOption) (*sessionRequestCreateConfig, error) {
+	cfg := &sessionRequestCreateConfig{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if err := opt(cfg); err != nil {
+			return nil, err
+		}
+	}
+	return cfg, nil
+}
+
+func isAllZeroToken(token []byte) bool {
+	for _, b := range token {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // CreateSessionRequest creates a SessionRequest message (Message 0, XK pattern message 1).
 // This is the first handshake message sent by the initiator.
 //
@@ -19,16 +65,31 @@ import (
 // - Encrypted blocks (DateTime, Options)
 //
 // XK pattern message 1: → e, es
-func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64) (*SSU2Packet, error) {
+//
+// Optional behavior can be supplied via opts, e.g. Retry tokens.
+func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64, opts ...SessionRequestCreateOption) (*SSU2Packet, error) {
 	flog("CreateSessionRequest", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionRequest")
 	if !h.initiator {
 		return nil, oops.Errorf("only initiator can create SessionRequest")
 	}
 
+	cfg, err := parseSessionRequestCreateOptions(opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Per SSU2 spec §Retry, tokened requests must start from a fresh
+	// handshake state (message index 0 with fresh ephemeral key).
+	if len(cfg.retryToken) == 8 {
+		if err := h.ResetForRetry(); err != nil {
+			return nil, oops.Wrapf(err, "failed to reset handshake state for Retry")
+		}
+	}
+
 	// Create payload blocks for SessionRequest
 	blocks := h.createHandshakeBlocks(MessageTypeSessionRequest)
 
-	return h.buildHandshakePacket(blocks, MessageTypeSessionRequest, sourceConnID, destConnID, nil)
+	return h.buildHandshakePacket(blocks, MessageTypeSessionRequest, sourceConnID, destConnID, cfg.retryToken)
 }
 
 // CreateSessionRequestWithToken creates a SessionRequest with a Retry token
@@ -41,33 +102,7 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64)
 // with a new ephemeral key and clean chaining key (C-3).
 func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnID uint64, token []byte) (*SSU2Packet, error) {
 	flog("CreateSessionRequestWithToken", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID, "tokenLen": len(token)}).Debug("Creating SessionRequest with retry token")
-	if !h.initiator {
-		return nil, oops.Errorf("only initiator can create SessionRequest")
-	}
-	if len(token) != 8 {
-		return nil, oops.Errorf("retry token must be exactly 8 bytes, got %d", len(token))
-	}
-	// Per SSU2 spec §Session Request: token must be nonzero when retrying (G-5).
-	allZero := true
-	for _, b := range token {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		return nil, oops.Errorf("retry token must be nonzero per SSU2 spec")
-	}
-
-	// Reset the Noise handshake state so the new SessionRequest
-	// starts from a clean message index 0 with a fresh ephemeral key (C-3).
-	if err := h.ResetForRetry(); err != nil {
-		return nil, oops.Wrapf(err, "failed to reset handshake state for Retry")
-	}
-
-	blocks := h.createHandshakeBlocks(MessageTypeSessionRequest)
-
-	return h.buildHandshakePacket(blocks, MessageTypeSessionRequest, sourceConnID, destConnID, token)
+	return h.CreateSessionRequest(sourceConnID, destConnID, WithSessionRequestRetryToken(token))
 }
 
 // ResetForRetry recreates the internal Noise handshake state from scratch,

@@ -345,6 +345,8 @@ func (h *SSU2Conn) IsInitiator() bool {
 // is dead or unreachable (e.g., broken pipe, connection refused, no such host).
 // AUDIT 5.4: Used to short-circuit the destroy wait when sending Termination
 // fails because the socket is already dead.
+// Covered cases include common platform variants such as EPIPE, ECONNREFUSED,
+// ECONNRESET, and closed-network-connection errors.
 func isSocketDeadError(err error) bool {
 	if err == nil {
 		return false
@@ -361,17 +363,20 @@ func isSocketDeadError(err error) bool {
 		}
 		// Also check the underlying error
 		if opErr.Err != nil {
-			errStr := opErr.Err.Error()
-			switch errStr {
-			case "connection refused", "broken pipe", "connection reset by peer",
-				"no such host", "connection timed out":
+			errStr := strings.ToLower(opErr.Err.Error())
+			switch {
+			case strings.Contains(errStr, "connection refused"),
+				strings.Contains(errStr, "broken pipe"),
+				strings.Contains(errStr, "connection reset by peer"),
+				strings.Contains(errStr, "no such host"),
+				strings.Contains(errStr, "connection timed out"):
 				return true
 			}
 		}
 	}
 
 	// Check for simple string patterns in error message (fallback)
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 	deadPatterns := []string{
 		"broken pipe",
 		"connection refused",
