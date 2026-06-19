@@ -247,26 +247,17 @@ func (sm *ShutdownManager) executeShutdownSequence() error {
 		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(shutdownErr).Error("error closing listeners during shutdown")
 	}
 
-	// Handle connection draining with timeout and force close if needed
-	if err := sm.handleConnectionDraining(); err != nil {
-		if shutdownErr == nil {
-			shutdownErr = err
+	if err := sm.waitForConnectionsDrain(); err != nil {
+		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(err).Warn("timeout waiting for connections to drain, forcing close")
+		if forceErr := sm.forceCloseConnections(); forceErr != nil {
+			sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.executeShutdownSequence"}).WithError(forceErr).Error("error force closing connections")
+			if shutdownErr == nil {
+				shutdownErr = forceErr
+			}
 		}
 	}
 
 	return shutdownErr
-}
-
-// handleConnectionDraining waits for connections to drain or forces closure on timeout.
-func (sm *ShutdownManager) handleConnectionDraining() error {
-	if err := sm.waitForConnectionsDrain(); err != nil {
-		sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.handleConnectionDraining"}).WithError(err).Warn("timeout waiting for connections to drain, forcing close")
-		if forceErr := sm.forceCloseConnections(); forceErr != nil {
-			sm.logger.WithFields(i2plogger.Fields{"pkg": "noise", "func": "ShutdownManager.handleConnectionDraining"}).WithError(forceErr).Error("error force closing connections")
-			return forceErr
-		}
-	}
-	return nil
 }
 
 // Wait blocks until shutdown is complete.
