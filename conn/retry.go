@@ -11,6 +11,31 @@ import (
 	"github.com/samber/oops"
 )
 
+func (nc *Conn) logHandshakeEvent(level, fnName, message string, fields i2plogger.Fields) {
+	logFields := i2plogger.Fields{
+		"pkg":     "noise",
+		"func":    fnName,
+		"pattern": nc.config.Pattern,
+		"role":    baseconfig.RoleString(nc.config.Initiator),
+	}
+	if remoteAddr := nc.RemoteAddr(); remoteAddr != nil {
+		logFields["remote_addr"] = remoteAddr.String()
+	}
+	for k, v := range fields {
+		logFields[k] = v
+	}
+
+	entry := nc.logger.WithFields(logFields)
+	switch level {
+	case "info":
+		entry.Info(message)
+	case "warn":
+		entry.Warn(message)
+	default:
+		entry.Debug(message)
+	}
+}
+
 // HandshakeWithRetry performs a handshake with retry logic based on configuration.
 // It uses the HandshakeRetries and RetryBackoff fields from ConnConfig to control
 // the number of attempts and exponential backoff delay between retries.
@@ -58,13 +83,12 @@ func (nc *Conn) executeRetryLoop(ctx context.Context) error {
 // logSuccessAfterRetries logs successful handshake completion after retries.
 func (nc *Conn) logSuccessAfterRetries(attempt int) {
 	if attempt > 0 {
-		nc.logger.WithFields(i2plogger.Fields{
-			"pkg":  "noise",
-			"func": "NoiseConn.logSuccessAfterRetries", "attempts": attempt + 1,
-			"pattern":     nc.config.Pattern,
-			"remote_addr": nc.RemoteAddr().String(),
-			"role":        baseconfig.RoleString(nc.config.Initiator),
-		}).Info("handshake succeeded after retries")
+		nc.logHandshakeEvent(
+			"info",
+			"NoiseConn.logSuccessAfterRetries",
+			"handshake succeeded after retries",
+			i2plogger.Fields{"attempts": attempt + 1},
+		)
 	}
 }
 
@@ -94,16 +118,18 @@ func (nc *Conn) waitForRetry(ctx context.Context, attempt int) error {
 		delay = maxDelay
 	}
 
-	nc.logger.WithFields(i2plogger.Fields{
-		"pkg":                "noise",
-		"func":               "NoiseConn.waitForRetry",
-		"attempt":            attempt + 1,
-		"delay_ms":           delay.Milliseconds(),
-		"pattern":            nc.config.Pattern,
-		"backoff_multiplier": math.Pow(2, float64(attempt)),
-		"capped_at_max":      delay >= maxDelay,
-		"max_delay_ms":       maxDelay.Milliseconds(),
-	}).Debug("waiting before handshake retry with exponential backoff")
+	nc.logHandshakeEvent(
+		"debug",
+		"NoiseConn.waitForRetry",
+		"waiting before handshake retry with exponential backoff",
+		i2plogger.Fields{
+			"attempt":            attempt + 1,
+			"delay_ms":           delay.Milliseconds(),
+			"backoff_multiplier": math.Pow(2, float64(attempt)),
+			"capped_at_max":      delay >= maxDelay,
+			"max_delay_ms":       maxDelay.Milliseconds(),
+		},
+	)
 
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -124,17 +150,17 @@ func (nc *Conn) logRetryAttempt(attempt int, lastErr error) {
 		errorCode = oe.Code()
 	}
 
-	nc.logger.WithFields(i2plogger.Fields{
-		"pkg":             "noise",
-		"func":            "NoiseConn.logRetryAttempt",
-		"attempt":         attempt + 1,
-		"max_retries":     nc.config.HandshakeRetries,
-		"pattern":         nc.config.Pattern,
-		"last_error":      lastErr.Error(),
-		"last_error_code": errorCode,
-		"remote_addr":     nc.RemoteAddr().String(),
-		"role":            baseconfig.RoleString(nc.config.Initiator),
-	}).Warn("handshake failed, retrying with exponential backoff")
+	nc.logHandshakeEvent(
+		"warn",
+		"NoiseConn.logRetryAttempt",
+		"handshake failed, retrying with exponential backoff",
+		i2plogger.Fields{
+			"attempt":         attempt + 1,
+			"max_retries":     nc.config.HandshakeRetries,
+			"last_error":      lastErr.Error(),
+			"last_error_code": errorCode,
+		},
+	)
 }
 
 // wrapRetryError wraps the final error with retry context information.

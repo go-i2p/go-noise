@@ -45,13 +45,18 @@ func (t *Transport) GracefulShutdown() error {
 	return shutdownErr
 }
 
-// Dial creates a Noise-wrapped connection to the given address using this Transport's
-// ShutdownManager and Pool. It is the Transport-scoped equivalent of DialNoise.
-func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, error) {
-	flog("Transport.Dial", logger.Fields{"network": network, "address": addr}).Debug("starting")
+func (t *Transport) withShutdownManager(network, addr, op string) Shutdowner {
+	flog(op, logger.Fields{"network": network, "address": addr}).Debug("starting")
 	t.mu.RLock()
 	sm := t.sm
 	t.mu.RUnlock()
+	return sm
+}
+
+// Dial creates a Noise-wrapped connection to the given address using this Transport's
+// ShutdownManager and Pool. It is the Transport-scoped equivalent of DialNoise.
+func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, error) {
+	sm := t.withShutdownManager(network, addr, "Transport.Dial")
 	return openAndWrapTransport(
 		sm,
 		func() error { return validateDialParams(network, addr, config) },
@@ -65,10 +70,7 @@ func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, 
 // Listen creates a Noise-wrapped listener on the given address using this Transport's
 // ShutdownManager. It is the Transport-scoped equivalent of ListenNoise.
 func (t *Transport) Listen(network, addr string, config *ListenerConfig) (*NoiseListener, error) {
-	flog("Transport.Listen", logger.Fields{"network": network, "address": addr}).Debug("starting")
-	t.mu.RLock()
-	sm := t.sm
-	t.mu.RUnlock()
+	sm := t.withShutdownManager(network, addr, "Transport.Listen")
 	return openAndWrapTransport(
 		sm,
 		func() error { return validateListenParams(network, addr, config) },

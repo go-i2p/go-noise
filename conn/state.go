@@ -46,7 +46,6 @@ func getHandshakeStateAttr[T any](
 
 	var zero T
 	if nc.handshakeState == nil {
-		log.WithFields(i2plogger.Fields{"pkg": "noise", "func": funcName}).Debug(nilMessage)
 		return zero
 	}
 
@@ -57,7 +56,7 @@ func getHandshakeStateAttr[T any](
 			fields[k] = v
 		}
 	}
-	log.WithFields(fields).Debug(successMessage)
+	log.WithFields(fields).Trace(successMessage)
 	return value
 }
 
