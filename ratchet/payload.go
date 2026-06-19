@@ -140,7 +140,7 @@ func NewNextKeyBlock(keyID uint16, pubKey *[32]byte, reverse, requestReverse boo
 	data[0] = flags
 	binary.BigEndian.PutUint16(data[1:3], keyID)
 	if pubKey != nil {
-		copy(data[3:], pubKey[:])
+		writeArray32(data[3:35], *pubKey)
 	}
 	return PayloadBlock{Type: BlockNextKey, Data: data}
 }
@@ -248,7 +248,7 @@ func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
 		if len(b.Data) < 35 {
 			return NextKeyInfo{}, oops.Errorf("NextKey block has key-present flag but only %d bytes", len(b.Data))
 		}
-		copy(info.PublicKey[:], b.Data[3:35])
+		readArray32(&info.PublicKey, b.Data[3:35])
 	}
 	return info, nil
 }

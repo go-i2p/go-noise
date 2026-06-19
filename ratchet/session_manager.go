@@ -62,6 +62,14 @@ type SessionManager struct {
 	nsReplayCache *replaycache.TTLCache
 }
 
+// Lock ordering invariant for ratchet session code:
+// 1) Acquire sm.mu before any session.mu when both are needed.
+// 2) Never acquire sm.mu while holding session.mu.
+// 3) Expensive ratchet/HKDF work should run under session.mu only, then install
+//    results under a brief sm.mu critical section.
+// This order is required to avoid deadlocks across tag lookup, replenishment,
+// and session cleanup paths.
+
 // NewSessionManager creates a new session manager with the given private key.
 func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*SessionManager, error) {
 	flog("NewSessionManager").Debug("Creating new garlic session manager")

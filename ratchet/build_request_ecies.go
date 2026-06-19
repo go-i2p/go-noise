@@ -52,12 +52,12 @@ func (c *BuildRequestCrypto) EncryptBuildRequest(
 ) ([528]byte, error) {
 	var encrypted [528]byte
 
-	if len(cleartext) != 222 {
-		return encrypted, oops.Errorf("invalid cleartext size: expected 222 bytes, got %d", len(cleartext))
+	if err := validateSize("cleartext", len(cleartext), 222); err != nil {
+		return encrypted, err
 	}
 
 	// Copy first 16 bytes of identity hash (toPeer field)
-	copy(encrypted[0:16], recipientIdentityHash[:16])
+	writePrefix16FromArray32(encrypted[0:16], recipientIdentityHash)
 
 	// Encrypt using ECIES-X25519
 	// Output: ephemeral_pubkey(32) + nonce(12) + aead_ciphertext(222+16=238) = 282 bytes
@@ -90,8 +90,8 @@ func (c *BuildRequestCrypto) EncryptBuildRequest(
 //
 // Returns 222-byte cleartext.
 func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey []byte) ([]byte, error) {
-	if len(privateKey) != 32 {
-		return nil, oops.Errorf("invalid private key size: expected 32 bytes, got %d", len(privateKey))
+	if err := validateSize("private key", len(privateKey), 32); err != nil {
+		return nil, err
 	}
 
 	// Extract ECIES ciphertext portion (bytes 16-297)
@@ -104,8 +104,8 @@ func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey
 		return nil, oops.Wrapf(err, "ECIES decryption failed")
 	}
 
-	if len(cleartext) != 222 {
-		return nil, oops.Errorf("invalid decrypted size: expected 222 bytes, got %d", len(cleartext))
+	if err := validateSize("decrypted data", len(cleartext), 222); err != nil {
+		return nil, err
 	}
 
 	flog("DecryptBuildRequest", logger.Fields{"record_size": 528, "cleartext_size": len(cleartext)}).
@@ -134,7 +134,7 @@ func (c *BuildRequestCrypto) VerifyIdentityHash(encrypted [528]byte, ourIdentity
 // Useful for debugging and logging to identify the intended recipient.
 func ExtractIdentityHashPrefixRaw(encrypted [528]byte) [32]byte {
 	var hash [32]byte
-	copy(hash[:16], encrypted[0:16])
+	readPrefix16ToArray32(&hash, encrypted[0:16])
 	return hash
 }
 

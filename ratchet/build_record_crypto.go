@@ -85,8 +85,8 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 	replyKey [32]byte,
 	replyIV [16]byte,
 ) ([]byte, error) {
-	if len(cleartext) != buildRecordPlaintextSize {
-		return nil, oops.Errorf("invalid cleartext size: expected %d bytes, got %d", buildRecordPlaintextSize, len(cleartext))
+	if err := validateSize("cleartext", len(cleartext), buildRecordPlaintextSize); err != nil {
+		return nil, err
 	}
 
 	encrypted, err := c.encryptChaCha20Poly1305(cleartext, replyKey, replyIV)
@@ -109,8 +109,8 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 	replyKey [32]byte,
 	replyIV [16]byte,
 ) ([]byte, error) {
-	if len(encryptedData) != buildRecordCiphertextSize {
-		return nil, oops.Errorf("invalid encrypted data size: expected %d bytes, got %d", buildRecordCiphertextSize, len(encryptedData))
+	if err := validateSize("encrypted data", len(encryptedData), buildRecordCiphertextSize); err != nil {
+		return nil, err
 	}
 
 	cleartext, err := c.decryptChaCha20Poly1305(encryptedData, replyKey, replyIV)
@@ -118,8 +118,8 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 		return nil, oops.Wrapf(err, "ChaCha20-Poly1305 decryption failed")
 	}
 
-	if len(cleartext) != buildRecordPlaintextSize {
-		return nil, oops.Errorf("invalid decrypted data size: expected %d bytes, got %d", buildRecordPlaintextSize, len(cleartext))
+	if err := validateSize("decrypted data", len(cleartext), buildRecordPlaintextSize); err != nil {
+		return nil, err
 	}
 
 	flog("DecryptReplyRecord").Debug("Decrypted build response record")
@@ -136,8 +136,8 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []byte {
 	flog("SerializeResponseRecord", logger.Fields{"reply_code": reply}).Debug("Serializing response record")
 	buf := make([]byte, 528)
-	copy(buf[0:32], hash[:])
-	copy(buf[32:527], randomData[:])
+	writeArray32(buf[0:32], hash)
+	writeArray495(buf[32:527], randomData)
 	buf[527] = reply
 	return buf
 }
@@ -147,7 +147,7 @@ func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []
 // Layout: randomData[0:495] || reply byte.
 func buildResponseRecordHashInput(randomData [495]byte, reply byte) []byte {
 	data := make([]byte, 496)
-	copy(data[0:495], randomData[:])
+	writeArray495(data[0:495], randomData)
 	data[495] = reply
 	return data
 }
@@ -258,4 +258,11 @@ func prepareChaCha20Poly1305Input(input []byte, expectedLen int, inputName strin
 	}
 
 	return aead, nonce, nil
+}
+
+func validateSize(label string, actual, expected int) error {
+	if actual != expected {
+		return oops.Errorf("invalid %s size: expected %d bytes, got %d", label, expected, actual)
+	}
+	return nil
 }

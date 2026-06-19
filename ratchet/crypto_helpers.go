@@ -74,12 +74,10 @@ func encryptWithSessionKey(messageKey [32]byte, plaintext []byte, sessionTag [8]
 	defer func() { zero32(&messageKey) }() // M-7: Zero message key after use
 
 	flog("encryptWithSessionKey", logger.Fields{"plaintext_len": len(plaintext), "message_number": messageNumber}).Debug("encrypting with session key")
-	aead, err := chacha20poly1305.NewAEAD(messageKey)
+	aead, nonce, err := setupAEADWithNonce(messageKey, messageNumber)
 	if err != nil {
 		return nil, [16]byte{}, oops.Wrapf(err, "failed to create AEAD")
 	}
-
-	nonce := noise.BuildNonce(uint64(messageNumber))
 
 	ciphertext, tag, err = aead.Encrypt(plaintext, sessionTag[:], nonce[:])
 	if err != nil {
@@ -96,12 +94,10 @@ func decryptWithSessionTag(messageKey [32]byte, ciphertext []byte, tag [16]byte,
 	defer func() { zero32(&messageKey) }() // M-7: Zero message key after use
 
 	flog("decryptWithSessionTag", logger.Fields{"ciphertext_len": len(ciphertext), "message_number": messageNumber}).Debug("decrypting with session tag")
-	aead, err := chacha20poly1305.NewAEAD(messageKey)
+	aead, nonce, err := setupAEADWithNonce(messageKey, messageNumber)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create AEAD")
 	}
-
-	nonce := noise.BuildNonce(uint64(messageNumber))
 
 	plaintext, err := aead.Decrypt(ciphertext, tag[:], sessionTag[:], nonce[:])
 	if err != nil {
@@ -109,6 +105,16 @@ func decryptWithSessionTag(messageKey [32]byte, ciphertext []byte, tag [16]byte,
 	}
 
 	return plaintext, nil
+}
+
+func setupAEADWithNonce(messageKey [32]byte, messageNumber uint32) (*chacha20poly1305.AEAD, [12]byte, error) {
+	aead, err := chacha20poly1305.NewAEAD(messageKey)
+	if err != nil {
+		return nil, [12]byte{}, err
+	}
+
+	nonce := noise.BuildNonce(uint64(messageNumber))
+	return aead, nonce, nil
 }
 
 // buildExistingSessionMessage constructs the wire format for an Existing Session message.
