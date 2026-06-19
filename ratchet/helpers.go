@@ -89,7 +89,7 @@ func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) 
 func (sm *SessionManager) lookupLockedSession(sessionTag [8]byte) (*Session, error) {
 	flog("lookupLockedSession", logger.Fields{"session_tag": fmt.Sprintf("%x", sessionTag)}).Debug("looking up session by tag")
 	sm.mu.RLock()
-	session, exists := sm.tagIndex[sessionTag]
+	session, _, exists := sm.lookupSessionTaggedLocked(sessionTag)
 	sm.mu.RUnlock()
 
 	if !exists {
@@ -98,4 +98,20 @@ func (sm *SessionManager) lookupLockedSession(sessionTag [8]byte) (*Session, err
 
 	session.mu.Lock()
 	return session, nil
+}
+
+// lookupSessionTaggedLocked looks up a session and optional counter hint for a
+// session tag. The caller must hold sm.mu (read or write) while calling this.
+func (sm *SessionManager) lookupSessionTaggedLocked(tag [8]byte) (*Session, *uint32, bool) {
+	session, exists := sm.tagIndex[tag]
+	if !exists {
+		return nil, nil, false
+	}
+
+	if counter, hasCounter := sm.tagCounterIndex[tag]; hasCounter {
+		counterHint := counter
+		return session, &counterHint, true
+	}
+
+	return session, nil, true
 }

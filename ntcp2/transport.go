@@ -196,11 +196,8 @@ func validateWrapConnParams(conn net.Conn, config *Config) error {
 			Errorf("connection cannot be nil")
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ntcp2").
-			Errorf("config cannot be nil")
+	if err := validateConfigPresence(config); err != nil {
+		return err
 	}
 
 	return nil
@@ -239,11 +236,31 @@ func validateBasicParams(network, addr string, config *Config) error {
 		return err
 	}
 
+	if err := validateConfigPresence(config); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateConfigPresence(config *Config) error {
 	if config == nil {
 		return oops.
 			Code("INVALID_CONFIG").
 			In("ntcp2").
-			Errorf("config cannot be nil")
+			Errorf("ntcp2 config cannot be nil")
+	}
+
+	return nil
+}
+
+func validateConfigValue(config *Config) error {
+	if err := validateConfigPresence(config); err != nil {
+		return err
+	}
+
+	if err := config.Validate(); err != nil {
+		return err
 	}
 
 	return nil
@@ -275,7 +292,7 @@ func validateNTCP2Params(network, addr string, config *Config, requireInitiator 
 	}
 
 	// Validate the configuration
-	if err := config.Validate(); err != nil {
+	if err := validateConfigValue(config); err != nil {
 		return oops.
 			Code("CONFIG_VALIDATION_FAILED").
 			In("ntcp2").

@@ -73,6 +73,12 @@ func initNoiseIK(responderStaticPub [32]byte) *noise.SymmetricState {
 	return ns
 }
 
+func resumeNoiseHandshakeState(ns *noise.SymmetricState, hs *noiseHandshakeState) {
+	ns.SetCipherSuite(noise.ChaChaPoly_SHA256())
+	ns.SetHandshakeHash(hs.h)
+	ns.SetChainingKey(hs.ck)
+}
+
 // mixKeyCKOnly updates only the chaining key via a single-output HKDF.
 // Per I2P ratchet.md §1g, the "ee" handshake token in the NSR uses:
 //

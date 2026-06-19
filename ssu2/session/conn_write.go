@@ -544,10 +544,12 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 
 	// Trigger rekey exactly once when we cross the threshold,
 	// but only if NextNonce is enabled via config (G-1).
-	if h.config.EnableNextNonce && seq >= rekeyThreshold && !h.rekeyInFlight.Load() {
-		if h.rekeyInFlight.CompareAndSwap(false, true) {
-			go h.initiateRekey()
-		}
+	if !h.config.EnableNextNonce || seq < rekeyThreshold || h.rekeyInFlight.Load() {
+		return seq
+	}
+
+	if h.rekeyInFlight.CompareAndSwap(false, true) {
+		go h.initiateRekey()
 	}
 	return seq
 }

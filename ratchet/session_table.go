@@ -97,18 +97,15 @@ func (sm *SessionManager) FindSessionByTag(tag [8]byte) bool {
 // validation step.
 func (sm *SessionManager) lookupSessionByTag(tag [8]byte) (*Session, *uint32) {
 	flog("lookupSessionByTag").Debug("Looking up session by tag in index")
-	session, exists := sm.tagIndex[tag]
+	session, counterHint, exists := sm.lookupSessionTaggedLocked(tag)
 	if !exists {
 		return nil, nil
 	}
 	// Remove from global index now, under sm.mu, to prevent double-consumption.
 	delete(sm.tagIndex, tag)
-	counter, hasCounter := sm.tagCounterIndex[tag]
-	if hasCounter {
+	if counterHint != nil {
 		delete(sm.tagCounterIndex, tag)
-	}
-	if hasCounter {
-		return session, &counter
+		return session, counterHint
 	}
 	return session, nil
 }

@@ -94,6 +94,14 @@ type PayloadBlock struct {
 	Data []byte
 }
 
+// Constructor pattern for payload blocks:
+// - Create a minimally sized byte slice for the block body
+// - Encode fixed-width fields in network order when required
+// - Copy variable payload bytes directly into the body
+// - Return PayloadBlock{Type: ..., Data: body} without side effects
+// This keeps block creation uniform across New*Block helpers and makes wire
+// layout auditing straightforward.
+
 // NewDateTimeBlock creates a DateTime block with the given timestamp.
 // The timestamp is stored as a 4-byte unsigned big-endian Unix seconds value.
 func NewDateTimeBlock(t time.Time) PayloadBlock {

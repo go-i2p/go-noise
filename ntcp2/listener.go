@@ -59,14 +59,11 @@ func validateListenerInput(underlying net.Listener, config *Config) error {
 			Errorf("underlying listener cannot be nil")
 	}
 
-	if config == nil {
-		return oops.
-			Code("INVALID_CONFIG").
-			In("ntcp2").
-			Errorf("ntcp2 config cannot be nil")
+	if err := validateConfigPresence(config); err != nil {
+		return err
 	}
 
-	if err := config.Validate(); err != nil {
+	if err := validateConfigValue(config); err != nil {
 		return oops.
 			Code("INVALID_CONFIG").
 			In("ntcp2").

@@ -130,9 +130,7 @@ func writeNoiseIKMessage2(
 
 	// Continue Noise handshake from retained state
 	ns := &noise.SymmetricState{}
-	ns.SetCipherSuite(noise.ChaChaPoly_SHA256())
-	ns.SetHandshakeHash(hs.h)
-	ns.SetChainingKey(hs.ck)
+	resumeNoiseHandshakeState(ns, hs)
 
 	// MixHash(tag) — bind the tag into the handshake transcript
 	ns.MixHash(tag[:])
@@ -213,9 +211,7 @@ func readNoiseIKMessage2(
 
 	// Continue Noise handshake from retained state
 	ns := &noise.SymmetricState{}
-	ns.SetCipherSuite(noise.ChaChaPoly_SHA256())
-	ns.SetHandshakeHash(hs.h)
-	ns.SetChainingKey(hs.ck)
+	resumeNoiseHandshakeState(ns, hs)
 
 	// MixHash(tag)
 	ns.MixHash(nsrTag[:])

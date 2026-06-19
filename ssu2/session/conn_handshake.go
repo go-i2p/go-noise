@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/binary"
+	"sort"
 	"time"
 
 	"github.com/go-i2p/logger"
@@ -130,7 +131,7 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 		return nil, oops.Wrapf(err, "failed to create SessionRequest")
 	}
 
-	if err := h.installSessCreateHeaderKey(); err != nil {
+	if err := h.installBothHeaderKeys(); err != nil {
 		return nil, err
 	}
 
@@ -192,7 +193,7 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 		return nil, oops.Wrapf(err, "failed to create SessionRequest with Retry token")
 	}
 
-	if err := h.installSessCreateHeaderKey(); err != nil {
+	if err := h.installBothHeaderKeys(); err != nil {
 		return nil, err
 	}
 
@@ -239,6 +240,18 @@ func (h *SSU2Conn) processSessionCreated(response *SSU2Packet) error {
 // into the header protector, if available.
 func (h *SSU2Conn) installSessionConfirmedHeaderKey() error {
 	return h.installHeaderKey(h.handshakeHandler.SessionConfirmedHeaderKey, "SessionConfirmedHeaderKey")
+}
+
+// installBothHeaderKeys installs both known handshake header keys.
+// Each underlying install is a no-op if its key is not yet available.
+func (h *SSU2Conn) installBothHeaderKeys() error {
+	if err := h.installSessCreateHeaderKey(); err != nil {
+		return err
+	}
+	if err := h.installSessionConfirmedHeaderKey(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // sendSessionConfirmed creates and sends SessionConfirmed fragments.
@@ -333,7 +346,7 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	}
 	h.remoteConnectionID.Store(initiatorConnID)
 
-	if err := h.installSessCreateHeaderKey(); err != nil {
+	if err := h.installBothHeaderKeys(); err != nil {
 		return 0, err
 	}
 
@@ -351,7 +364,7 @@ func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Pac
 		return nil, oops.Wrapf(err, "failed to create SessionCreated")
 	}
 
-	if err := h.installSessionConfirmedHeaderKey(); err != nil {
+	if err := h.installBothHeaderKeys(); err != nil {
 		return nil, err
 	}
 
@@ -399,7 +412,7 @@ func (h *SSU2Conn) collectConfirmedFragments(ctx context.Context, first *SSU2Pac
 		return fragments, nil
 	}
 
-	totalFrags := int(first.Header[13] & 0x0F)
+	_, totalFrags := extractFragmentInfo(first.Header[13])
 	if totalFrags < 1 || totalFrags > 15 {
 		return nil, oops.Errorf("invalid SessionConfirmed total fragment count: %d (must be 1-15)", totalFrags)
 	}
@@ -408,7 +421,7 @@ func (h *SSU2Conn) collectConfirmedFragments(ctx context.Context, first *SSU2Pac
 	}
 
 	seen := make(map[int]bool)
-	firstIdx := int((first.Header[13] >> 4) & 0x0F)
+	firstIdx, _ := extractFragmentInfo(first.Header[13])
 	seen[firstIdx] = true
 
 	// AUDIT 4.2: Use a single deadline for all fragments to prevent a peer from
@@ -438,7 +451,7 @@ func (h *SSU2Conn) collectConfirmedFragments(ctx context.Context, first *SSU2Pac
 		if err := h.validateConfirmedFragment(frag, totalFrags); err != nil {
 			return nil, err
 		}
-		fragIdx := int((frag.Header[13] >> 4) & 0x0F)
+		fragIdx, _ := extractFragmentInfo(frag.Header[13])
 		if seen[fragIdx] {
 			continue
 		}
@@ -460,7 +473,7 @@ func (h *SSU2Conn) validateConfirmedFragment(frag *SSU2Packet, expectedTotal int
 	if len(frag.Header) < 14 {
 		return oops.Errorf("SessionConfirmed fragment has truncated header")
 	}
-	fragTotal := int(frag.Header[13] & 0x0F)
+	_, fragTotal := extractFragmentInfo(frag.Header[13])
 	if fragTotal != expectedTotal {
 		return oops.Errorf("SessionConfirmed fragment total mismatch: first=%d, got=%d", expectedTotal, fragTotal)
 	}
@@ -740,17 +753,15 @@ func (h *SSU2Conn) checkHandshakeCancelled(ctx context.Context) error {
 // index (bits 7-4 of header byte 13). This ensures ProcessSessionConfirmedFragments
 // receives fragments in the correct order regardless of arrival order.
 func sortFragmentsByIndex(fragments []*SSU2Packet) {
-	for i := 1; i < len(fragments); i++ {
-		for j := i; j > 0; j-- {
-			idxJ := int((fragments[j].Header[13] >> 4) & 0x0F)
-			idxPrev := int((fragments[j-1].Header[13] >> 4) & 0x0F)
-			if idxJ < idxPrev {
-				fragments[j], fragments[j-1] = fragments[j-1], fragments[j]
-			} else {
-				break
-			}
-		}
-	}
+	sort.Slice(fragments, func(i, j int) bool {
+		idxI, _ := extractFragmentInfo(fragments[i].Header[13])
+		idxJ, _ := extractFragmentInfo(fragments[j].Header[13])
+		return idxI < idxJ
+	})
+}
+
+func extractFragmentInfo(b byte) (index, total int) {
+	return int((b >> 4) & 0x0F), int(b & 0x0F)
 }
 
 // installHeaderKey installs a derived header key into the header protector,

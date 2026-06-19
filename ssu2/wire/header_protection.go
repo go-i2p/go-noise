@@ -130,6 +130,8 @@ func NewHeaderProtectorFromIntroKey(introKey []byte, headerType HeaderType) (*He
 // EncryptHeader encrypts the header bytes of an SSU2 packet in place.
 // The packet must be the complete SSU2 packet including header, payload, and MAC.
 // Per SSU2 spec, encryption order: ChaCha20 extension first, then XOR masks.
+// This order is intentionally asymmetric with DecryptHeader because the XOR
+// masks derive from packet tail bytes that are part of the ciphertext layout.
 func (hp *HeaderProtector) EncryptHeader(packet []byte) error {
 	flog("EncryptHeader", logger.Fields{"packetLen": len(packet)}).Debug("Encrypting header")
 	hp.mu.Lock()
@@ -154,6 +156,8 @@ func (hp *HeaderProtector) EncryptHeader(packet []byte) error {
 
 // DecryptHeader decrypts the header bytes of an SSU2 packet in place.
 // Per SSU2 spec, decryption order: XOR masks first, then ChaCha20 extension.
+// Reversing this order would use masked bytes as ChaCha input and produce an
+// invalid long-header extension.
 func (hp *HeaderProtector) DecryptHeader(packet []byte) error {
 	flog("DecryptHeader", logger.Fields{"packetLen": len(packet)}).Debug("Decrypting header")
 	hp.mu.Lock()
