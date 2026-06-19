@@ -430,6 +430,21 @@ func (nc *Conn) HandshakeHash() []byte {
 	return nc.noiseConn.ChannelBinding()
 }
 
+// snapshotNonces returns a consistent copy of the current write/read nonces.
+// Callers use this for threshold checks without duplicating lock-read-unlock
+// blocks across methods.
+func (nc *Conn) snapshotNonces() (writeNonce, readNonce uint64) {
+	nc.writeMu.Lock()
+	writeNonce = nc.writeNonce
+	nc.writeMu.Unlock()
+
+	nc.readMu.Lock()
+	readNonce = nc.readNonce
+	nc.readMu.Unlock()
+
+	return writeNonce, readNonce
+}
+
 // NonceExhaustionImminent returns true if either the read or write nonce
 // counter has reached NonceRekeyThreshold, indicating that the connection
 // is approaching the maximum nonce limit and should be replaced.
@@ -438,14 +453,7 @@ func (nc *Conn) HandshakeHash() []byte {
 // so the correct response to imminent exhaustion is to establish a new
 // connection rather than attempt a rekey.
 func (nc *Conn) NonceExhaustionImminent() bool {
-	nc.writeMu.Lock()
-	wn := nc.writeNonce
-	nc.writeMu.Unlock()
-
-	nc.readMu.Lock()
-	rn := nc.readNonce
-	nc.readMu.Unlock()
-
+	wn, rn := nc.snapshotNonces()
 	return wn >= NonceRekeyThreshold || rn >= NonceRekeyThreshold
 }
 
