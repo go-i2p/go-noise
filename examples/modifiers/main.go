@@ -103,7 +103,7 @@ func demonstrateModifierChaining(originalData []byte, xorModifier, paddingModifi
 	}
 	fmt.Printf("  Original: %d bytes\n", len(originalData))
 	fmt.Printf("  After Chain: %d bytes (%+d bytes added)\n", len(chainResult), len(chainResult)-len(originalData))
-	fmt.Printf("  Transformed Data: %x...\n", chainResult[:min(32, len(chainResult))])
+	fmt.Printf("  Transformed Data: %x...\n", chainResult[:minInt(32, len(chainResult))])
 	fmt.Println()
 
 	// Reverse chain transformations (Padding removal then XOR)
@@ -176,7 +176,7 @@ func demonstratePerformanceCharacteristics(chain *handshake.ModifierChain) {
 }
 
 // min returns the minimum of two integers
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}

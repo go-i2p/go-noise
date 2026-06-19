@@ -736,24 +736,24 @@ func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
 }
 
 // randomPaddingLength generates a cryptographically secure random integer in the
-// range [0, max] inclusive using rejection sampling to avoid modulo bias.
+// range [0, upper] inclusive using rejection sampling to avoid modulo bias.
 // This function is used to generate randomized handshake padding lengths that
 // match the i2pd/Java I2P distribution per NTCP2 spec §4.3.
 //
-// Returns an error only if the underlying CSPRNG fails (extremely rare). If max
+// Returns an error only if the underlying CSPRNG fails (extremely rare). If upper
 // is 0, always returns 0 without error.
-func randomPaddingLength(max int) (int, error) {
-	if max == 0 {
+func randomPaddingLength(upper int) (int, error) {
+	if upper == 0 {
 		return 0, nil
 	}
-	if max < 0 || max > 255 {
+	if upper < 0 || upper > 255 {
 		return 0, oops.Code("INVALID_PAD_MAX").In("ntcp2").
-			Errorf("randomPaddingLength: max must be in range [0, 255], got %d", max)
+			Errorf("randomPaddingLength: max must be in range [0, 255], got %d", upper)
 	}
 
 	// Use rejection sampling with a single byte to ensure uniform distribution.
-	// Find the largest multiple of (max+1) that fits in a byte.
-	limit := 256 - (256 % (max + 1))
+	// Find the largest multiple of (upper+1) that fits in a byte.
+	limit := 256 - (256 % (upper + 1))
 
 	for {
 		buf, err := cryptorand.RandomBytes(1)
@@ -763,7 +763,7 @@ func randomPaddingLength(max int) (int, error) {
 		}
 		val := int(buf[0])
 		if val < limit {
-			return val % (max + 1), nil
+			return val % (upper + 1), nil
 		}
 		// val >= limit: reject and retry to avoid modulo bias
 	}

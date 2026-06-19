@@ -9,23 +9,23 @@ const (
 	AboveRange
 )
 
-// CompareIntRange compares an integer against an inclusive [min, max] range.
-func CompareIntRange(value, min, max int) RangeComparison {
-	if value < min {
+// CompareIntRange compares an integer against an inclusive [lower, upper] range.
+func CompareIntRange(value, lower, upper int) RangeComparison {
+	if value < lower {
 		return BelowRange
 	}
-	if value > max {
+	if value > upper {
 		return AboveRange
 	}
 	return InRange
 }
 
-// CompareFloat64Range compares a float64 against an inclusive [min, max] range.
-func CompareFloat64Range(value, min, max float64) RangeComparison {
-	if value < min {
+// CompareFloat64Range compares a float64 against an inclusive [lower, upper] range.
+func CompareFloat64Range(value, lower, upper float64) RangeComparison {
+	if value < lower {
 		return BelowRange
 	}
-	if value > max {
+	if value > upper {
 		return AboveRange
 	}
 	return InRange
