@@ -137,7 +137,10 @@ func (h *SSU2Conn) recvLoop() {
 	// never truncate legitimate packets regardless of the configured MTU.
 	buf := make([]byte, MaxPacketSizeIPv4)
 	for {
-		n, addr, err := h.readInboundDatagram(buf)
+		n, addr, stop, err := h.readInboundDatagram(buf)
+		if stop {
+			return
+		}
 		if err != nil {
 			continue
 		}
@@ -146,7 +149,7 @@ func (h *SSU2Conn) recvLoop() {
 	}
 }
 
-func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, error) {
+func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, bool, error) {
 	if h.ownsUnderlying {
 		// BUG-TO-1: For sessions that own the underlying socket (DialSSU2),
 		// block directly on ReadFrom. CloseWithReason closes the socket after
@@ -156,13 +159,13 @@ func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, error) {
 		if err != nil {
 			select {
 			case <-h.closeChan:
-				return 0, nil, oops.Errorf("connection closed")
+				return 0, nil, true, nil
 			default:
 			}
 			h.readErrors.Add(1)
-			return 0, nil, err
+			return 0, nil, false, err
 		}
-		return n, addr, nil
+		return n, addr, false, nil
 	}
 
 	// Shared socket path: this connection does not own the PacketConn but
@@ -179,7 +182,7 @@ func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, error) {
 	// branch must be revisited (RACE-4).
 	select {
 	case <-h.closeChan:
-		return 0, nil, oops.Errorf("connection closed")
+		return 0, nil, true, nil
 	default:
 	}
 	_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
@@ -187,19 +190,19 @@ func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, error) {
 	n, addr, err := h.underlying.ReadFrom(buf)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return 0, nil, oops.Errorf("read deadline exceeded")
+			return 0, nil, false, nil
 		}
 		// Non-timeout error: check if we're closing before counting it.
 		select {
 		case <-h.closeChan:
-			return 0, nil, oops.Errorf("connection closed")
+			return 0, nil, true, nil
 		default:
 		}
 		h.readErrors.Add(1)
-		return 0, nil, err
+		return 0, nil, false, err
 	}
 
-	return n, addr, nil
+	return n, addr, false, nil
 }
 
 // parseInboundPacket validates the source address, deserializes, and decrypts an
