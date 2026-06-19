@@ -23,6 +23,14 @@ type PayloadBuilder struct {
 	blocks []PayloadBlock
 }
 
+func newSessionPayloadBuilder(includeDateTime bool) *PayloadBuilder {
+	pb := NewPayloadBuilder()
+	if includeDateTime {
+		pb.AddBlock(NewDateTimeBlock(nowFunc()))
+	}
+	return pb
+}
+
 // NewPayloadBuilder creates an empty PayloadBuilder.
 func NewPayloadBuilder() *PayloadBuilder {
 	return &PayloadBuilder{}
@@ -150,13 +158,13 @@ func (pb *PayloadBuilder) checkTerminationPosition(terminationIdx, paddingIdx in
 // Spec ref: ratchet.md §"Block Ordering Rules" — "In the New Session message,
 // the DateTime block is required, and must be the first block."
 func NewSessionPayloadBuilder() *PayloadBuilder {
-	return NewPayloadBuilder().AddBlock(NewDateTimeBlock(nowFunc()))
+	return newSessionPayloadBuilder(true)
 }
 
 // ExistingSessionPayloadBuilder creates an empty PayloadBuilder for Existing Session
 // messages, which have no required blocks and allow all block types.
 func ExistingSessionPayloadBuilder() *PayloadBuilder {
-	return NewPayloadBuilder()
+	return newSessionPayloadBuilder(false)
 }
 
 // ValidateNewSessionPayload checks that payload is a valid New Session body:

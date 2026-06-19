@@ -7,6 +7,17 @@ import (
 	"github.com/go-i2p/logger"
 )
 
+func absDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func ewmaDuration(current, sample time.Duration, alpha float64) time.Duration {
+	return time.Duration(float64(current)*(1-alpha) + float64(sample)*alpha)
+}
+
 // RTTEstimator tracks round-trip time measurements for congestion control.
 // It implements the algorithm from RFC 6298 (Computing TCP's Retransmission Timer)
 // with exponentially weighted moving averages for smoothed RTT and variance.
@@ -107,18 +118,13 @@ func (r *RTTEstimator) Update(sample time.Duration) {
 
 	// Subsequent measurements (RFC 6298 section 2.3)
 	// Calculate absolute difference for variance
-	var diff time.Duration
-	if sample > r.smoothedRTT {
-		diff = sample - r.smoothedRTT
-	} else {
-		diff = r.smoothedRTT - sample
-	}
+	diff := absDuration(sample, r.smoothedRTT)
 
 	// RTTVAR = (1-beta) * RTTVAR + beta * |SRTT - sample|
-	r.rttVariance = time.Duration(float64(r.rttVariance)*(1-rttBeta) + float64(diff)*rttBeta)
+	r.rttVariance = ewmaDuration(r.rttVariance, diff, rttBeta)
 
 	// SRTT = (1-alpha) * SRTT + alpha * sample
-	r.smoothedRTT = time.Duration(float64(r.smoothedRTT)*(1-rttAlpha) + float64(sample)*rttAlpha)
+	r.smoothedRTT = ewmaDuration(r.smoothedRTT, sample, rttAlpha)
 
 	// Update minimum RTT
 	if sample < r.minRTT {
