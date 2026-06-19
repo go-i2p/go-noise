@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/binary"
+	"fmt"
 
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -46,7 +47,7 @@ func (h *DataHandler) handleTermination(data []byte) error {
 	reason := data[8]
 	additionalData := data[9:]
 
-	flog("handleTermination", logger.Fields{"validDataReceived": validDataReceived, "reason":            reason, "additionalDataLen": len(additionalData)}).Info("Received Termination block")
+	flog("handleTermination", logger.Fields{"validDataReceived": validDataReceived, "reason": reason, "additionalDataLen": len(additionalData)}).Info("Received Termination block")
 
 	cbs := h.getCallbacks()
 	if cbs.OnTermination != nil {
@@ -166,6 +167,36 @@ func (h *DataHandler) handleSignedRelayBlock(
 	return nil
 }
 
+// verifyConditionalSignature enforces the common fail-closed signature flow
+// used by blocks where signatures are required only for specific subtypes.
+func (h *DataHandler) verifyConditionalSignature(
+	requiresSignature bool,
+	signature []byte,
+	missingSignatureErr string,
+	verifier func() error,
+	verifierMissingErr string,
+	verificationFailedErr string,
+) error {
+	if !requiresSignature {
+		return nil
+	}
+
+	if len(signature) == 0 {
+		return oops.Code("MISSING_SIGNATURE").Errorf("%s", missingSignatureErr)
+	}
+
+	// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+	if verifier == nil {
+		return oops.Code("VERIFIER_MISSING").Errorf("%s", verifierMissingErr)
+	}
+
+	if err := verifier(); err != nil {
+		return oops.Code("SIGNATURE_INVALID").Wrapf(err, "%s", verificationFailedErr)
+	}
+
+	return nil
+}
+
 // handleRelayRequest processes a RelayRequest block (Type 7).
 // Per SSU2 spec §Relay Request, signatures MUST be verified before acting (G-2).
 func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
@@ -207,18 +238,20 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 		return oops.Wrapf(err, "failed to decode RelayResponse block")
 	}
 
-	// Codes 0 (accepted) and >= 64 (Charlie rejection) carry signatures
-	if decoded.Code == 0 || decoded.Code >= 64 {
-		if len(decoded.Signature) == 0 {
-			return oops.Code("MISSING_SIGNATURE").Errorf("RelayResponse (code %d) has no signature", decoded.Code)
-		}
-		// Fail-closed (M-5): If signature is present, verifier MUST be configured.
-		if cbs.VerifyRelayResponseSignature == nil {
-			return oops.Code("VERIFIER_MISSING").Errorf("RelayResponse (code %d) has signature but verifier callback is not configured", decoded.Code)
-		}
-		if err := cbs.VerifyRelayResponseSignature(decoded); err != nil {
-			return oops.Code("SIGNATURE_INVALID").Wrapf(err, "RelayResponse signature verification failed")
-		}
+	if err := h.verifyConditionalSignature(
+		decoded.Code == 0 || decoded.Code >= 64,
+		decoded.Signature,
+		fmt.Sprintf("RelayResponse (code %d) has no signature", decoded.Code),
+		func() error {
+			if cbs.VerifyRelayResponseSignature != nil {
+				return cbs.VerifyRelayResponseSignature(decoded)
+			}
+			return nil
+		},
+		fmt.Sprintf("RelayResponse (code %d) has signature but verifier callback is not configured", decoded.Code),
+		"RelayResponse signature verification failed",
+	); err != nil {
+		return err
 	}
 
 	if cbs.OnRelayResponse != nil {
@@ -292,18 +325,20 @@ func (h *DataHandler) handlePeerTest(block *SSU2Block) error {
 		return oops.Wrapf(err, "failed to decode PeerTest block")
 	}
 
-	// Messages 1-4 MUST carry signatures per spec
-	if decoded.MessageCode >= PeerTestRequest && decoded.MessageCode <= PeerTestResult {
-		if len(decoded.Signature) == 0 {
-			return oops.Code("MISSING_SIGNATURE").Errorf("PeerTest message %d has no signature", decoded.MessageCode)
-		}
-		// Fail-closed (M-5): If signature is present, verifier MUST be configured.
-		if cbs.VerifyPeerTestSignature == nil {
-			return oops.Code("VERIFIER_MISSING").Errorf("PeerTest message %d has signature but verifier callback is not configured", decoded.MessageCode)
-		}
-		if err := cbs.VerifyPeerTestSignature(decoded); err != nil {
-			return oops.Code("SIGNATURE_INVALID").Wrapf(err, "PeerTest message %d signature verification failed", decoded.MessageCode)
-		}
+	if err := h.verifyConditionalSignature(
+		decoded.MessageCode >= PeerTestRequest && decoded.MessageCode <= PeerTestResult,
+		decoded.Signature,
+		fmt.Sprintf("PeerTest message %d has no signature", decoded.MessageCode),
+		func() error {
+			if cbs.VerifyPeerTestSignature != nil {
+				return cbs.VerifyPeerTestSignature(decoded)
+			}
+			return nil
+		},
+		fmt.Sprintf("PeerTest message %d has signature but verifier callback is not configured", decoded.MessageCode),
+		fmt.Sprintf("PeerTest message %d signature verification failed", decoded.MessageCode),
+	); err != nil {
+		return err
 	}
 
 	if cbs.OnPeerTest != nil {
