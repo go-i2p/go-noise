@@ -259,23 +259,31 @@ func isAllZeros(b []byte) bool {
 	return true
 }
 
+// noiseIKMessage1Result is the parsed/decrypted output of a received
+// New Session (message 1) handshake packet.
+type noiseIKMessage1Result struct {
+	plaintext          []byte
+	initiatorStaticPub [32]byte
+	keys               *sessionKeys
+	hs                 *noiseHandshakeState
+	isUnbound          bool
+}
+
 // readNoiseIKMessage1 processes a received New Session message using the Noise
 // IK pattern. The responder calls this to decrypt the initiator's payload.
 // It handles both the bound (IK, with initiator static key) and unbound (N,
 // flags section all-zeros) variants; isUnbound signals which was detected.
 //
-// For bound messages: returns initiator's static public key and handshake state.
-// For unbound messages: initiatorStaticPub is [32]byte{} (zero), hs is nil.
-//
-// Returns the decrypted payload, initiator's static public key, session keys,
-// handshake state for the New Session Reply (nil for unbound), isUnbound, and error.
+// For bound messages: result includes initiator's static public key and
+// handshake state.
+// For unbound messages: result has zero initiatorStaticPub and nil hs.
 func readNoiseIKMessage1(
 	ourStaticPriv, ourStaticPub [32]byte,
 	message []byte,
-) ([]byte, [32]byte, *sessionKeys, *noiseHandshakeState, bool, error) {
+) (*noiseIKMessage1Result, error) {
 	flog("readNoiseIKMessage1").Debug("Processing received Noise IK New Session message")
 	if len(message) < noiseIKMinMessageSize {
-		return nil, [32]byte{}, nil, nil, false, oops.Errorf(
+		return nil, oops.Errorf(
 			"new session message too short: %d bytes (minimum %d)", len(message), noiseIKMinMessageSize,
 		)
 	}
@@ -284,13 +292,13 @@ func readNoiseIKMessage1(
 
 	initiatorEphPub, err := readEphemeralKey(ns, message[0:32])
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, err
+		return nil, err
 	}
 
 	// Token es: DH(our_static_private, ephemeral). Sets k, resets n=0.
 	sharedES, err := curve25519.SharedKey(ourStaticPriv[:], initiatorEphPub[:])
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, oops.Wrapf(err, "failed to compute DH(s, re)")
+		return nil, oops.Wrapf(err, "failed to compute DH(s, re)")
 	}
 	ns.MixKey(sharedES)
 
@@ -298,7 +306,7 @@ func readNoiseIKMessage1(
 	encryptedStatic := message[32 : 32+noiseEncryptedStaticSize]
 	initiatorStaticBytes, err := ns.DecryptAndHash(nil, encryptedStatic)
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, oops.Wrapf(err, "failed to decrypt initiator static key / flags section")
+		return nil, oops.Wrapf(err, "failed to decrypt initiator static key / flags section")
 	}
 
 	encryptedPayload := message[32+noiseEncryptedStaticSize:]
@@ -323,17 +331,21 @@ func readEphemeralKey(ns *noise.SymmetricState, ephEncoded []byte) ([32]byte, er
 }
 
 // readUnboundPayload handles the unbound (N-pattern) variant of the IK message.
-func readUnboundPayload(ns *noise.SymmetricState, encryptedPayload []byte) ([]byte, [32]byte, *sessionKeys, *noiseHandshakeState, bool, error) {
+func readUnboundPayload(ns *noise.SymmetricState, encryptedPayload []byte) (*noiseIKMessage1Result, error) {
 	flog("readUnboundPayload", logger.Fields{"encrypted_len": len(encryptedPayload)}).Debug("Processing unbound (N-pattern) payload")
 	payload, err := ns.DecryptAndHash(nil, encryptedPayload)
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, true, oops.Wrapf(err, "failed to decrypt unbound payload")
+		return nil, oops.Wrapf(err, "failed to decrypt unbound payload")
 	}
 	keys, err := deriveSessionKeysFromSecret(ns.ChainingKey())
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, true, oops.Wrapf(err, "failed to derive session keys from unbound handshake")
+		return nil, oops.Wrapf(err, "failed to derive session keys from unbound handshake")
 	}
-	return payload, [32]byte{}, keys, nil, true, nil
+	return &noiseIKMessage1Result{
+		plaintext: payload,
+		keys:      keys,
+		isUnbound: true,
+	}, nil
 }
 
 // readBoundPayload handles the bound (IK) variant of the message.
@@ -341,7 +353,7 @@ func readBoundPayload(
 	ns *noise.SymmetricState, ourStaticPriv [32]byte,
 	initiatorEphPub [32]byte, initiatorStaticBytes []byte,
 	encryptedPayload []byte,
-) ([]byte, [32]byte, *sessionKeys, *noiseHandshakeState, bool, error) {
+) (*noiseIKMessage1Result, error) {
 	flog("readBoundPayload", logger.Fields{"encrypted_len": len(encryptedPayload)}).Debug("Processing bound (IK-pattern) payload")
 	var initiatorStaticPub [32]byte
 	copy(initiatorStaticPub[:], initiatorStaticBytes)
@@ -349,13 +361,13 @@ func readBoundPayload(
 	// Token ss: DH(our_static_private, initiator_static). Resets n=0.
 	sharedSS, err := curve25519.SharedKey(ourStaticPriv[:], initiatorStaticPub[:])
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, oops.Wrapf(err, "failed to compute DH(s, rs)")
+		return nil, oops.Wrapf(err, "failed to compute DH(s, rs)")
 	}
 	ns.MixKey(sharedSS)
 
 	payload, err := ns.DecryptAndHash(nil, encryptedPayload)
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, oops.Wrapf(err, "failed to decrypt payload")
+		return nil, oops.Wrapf(err, "failed to decrypt payload")
 	}
 
 	hs := &noiseHandshakeState{
@@ -366,7 +378,13 @@ func readBoundPayload(
 	}
 	keys, err := deriveSessionKeysFromSecret(ns.ChainingKey())
 	if err != nil {
-		return nil, [32]byte{}, nil, nil, false, oops.Wrapf(err, "failed to derive session keys from handshake")
+		return nil, oops.Wrapf(err, "failed to derive session keys from handshake")
 	}
-	return payload, initiatorStaticPub, keys, hs, false, nil
+	return &noiseIKMessage1Result{
+		plaintext:          payload,
+		initiatorStaticPub: initiatorStaticPub,
+		keys:               keys,
+		hs:                 hs,
+		isUnbound:          false,
+	}, nil
 }

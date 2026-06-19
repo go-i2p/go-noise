@@ -165,7 +165,7 @@ func (sm *SessionManager) tryDecryptOneTimeKey(msgTag [8]byte, msg []byte) ([]by
 // For unbound messages: no session state is stored (non-repliable) and
 // sessionHash is nil.
 func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, error) {
-	plaintext, initiatorStaticPub, keys, hs, isUnbound, err := readNoiseIKMessage1(
+	result, err := readNoiseIKMessage1(
 		sm.ourPrivateKey, sm.ourPublicKey, msg,
 	)
 	if err != nil {
@@ -176,15 +176,15 @@ func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, erro
 	// so there is no identity to key the session on and no NSR can be sent.
 	// Spec §1c: "Bob ratchets once when creating an unbound inbound session,
 	// and does not create a corresponding outbound session."
-	if isUnbound {
+	if result.isUnbound {
 		flog("decryptNewSession").Debug("Received unbound (N-pattern) New Session message — no session state stored")
-		return plaintext, nil, nil
+		return result.plaintext, nil, nil
 	}
 
 	// Spec §1b / replay-prevention: reject NS messages whose DateTime block
 	// is too old or too far in the future. A captured NS can otherwise be
 	// replayed to reset the active session keyed on the initiator's static key.
-	if err := sm.validateNSDateTimeFreshness(plaintext); err != nil {
+	if err := sm.validateNSDateTimeFreshness(result.plaintext); err != nil {
 		return nil, nil, oops.Wrapf(err, "New Session message rejected")
 	}
 
@@ -202,12 +202,12 @@ func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, erro
 		}
 	}
 
-	if err := sm.initializeInboundRatchetState(initiatorStaticPub, keys, hs); err != nil {
+	if err := sm.initializeInboundRatchetState(result.initiatorStaticPub, result.keys, result.hs); err != nil {
 		return nil, nil, err
 	}
 
-	sessionHash := types.SHA256(initiatorStaticPub[:])
-	return plaintext, &sessionHash, nil
+	sessionHash := types.SHA256(result.initiatorStaticPub[:])
+	return result.plaintext, &sessionHash, nil
 }
 
 // initializeInboundRatchetState creates and stores ratchet state for incoming sessions.
@@ -240,7 +240,7 @@ func (sm *SessionManager) initializeInboundRatchetState(remotePubKey [32]byte, k
 		return oops.Wrapf(err, "failed to generate inbound tag window")
 	}
 
-	flog("initializeInboundRatchetState", logger.Fields{"session_count": len(sm.sessions), "tag_count":     len(sm.tagIndex)}).Debug("Inbound ratchet session stored")
+	flog("initializeInboundRatchetState", logger.Fields{"session_count": len(sm.sessions), "tag_count": len(sm.tagIndex)}).Debug("Inbound ratchet session stored")
 
 	return nil
 }
@@ -571,7 +571,7 @@ func (sm *SessionManager) processAckRequest(session *Session) {
 	}})
 	session.pendingAcks = append(session.pendingAcks, ackBlock)
 
-	flog("processAckRequest", logger.Fields{"recv_key":  session.recvKeyID, "highest_n": highestConsumed}).Debug("Queued Ack block in response to AckRequest")
+	flog("processAckRequest", logger.Fields{"recv_key": session.recvKeyID, "highest_n": highestConsumed}).Debug("Queued Ack block in response to AckRequest")
 }
 
 // processAck records Ack entries received from the peer.
