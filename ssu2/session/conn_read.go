@@ -54,12 +54,29 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 		}
 	}
 
-	// Check if we have a pending message from a previous truncated Read.
-	// This mirrors the buffering in conn.Conn.pendingPlaintext.
-	if n, drained := iobuf.DrainPendingBuffer(&h.pendingMessage, b, true); drained || n > 0 {
-		flog("Read", logger.Fields{"copied_len": n, "remaining": len(h.pendingMessage)}).Debug("Data read from pending message buffer")
+	if n, drained := h.readFromPendingMessage(b); drained || n > 0 {
 		return n, nil
 	}
+
+	msg, err := h.waitForInboundMessage()
+	if err != nil {
+		return 0, err
+	}
+
+	return h.copyInboundMessageToBuffer(b, msg)
+}
+
+func (h *SSU2Conn) readFromPendingMessage(b []byte) (int, bool) {
+	// Check if we have a pending message from a previous truncated Read.
+	// This mirrors the buffering in conn.Conn.pendingPlaintext.
+	n, drained := iobuf.DrainPendingBuffer(&h.pendingMessage, b, true)
+	if drained || n > 0 {
+		flog("Read", logger.Fields{"copied_len": n, "remaining": len(h.pendingMessage)}).Debug("Data read from pending message buffer")
+	}
+	return n, drained
+}
+
+func (h *SSU2Conn) waitForInboundMessage() ([]byte, error) {
 
 	// Block until a message arrives, the connection closes, or the deadline expires.
 	// Use a stoppable timer (rather than time.After) so the timer is released
@@ -69,16 +86,17 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 		defer timer.Stop()
 		deadlineCh = timer.C
 	}
-	var msg []byte
 	select {
-	case msg = <-h.dataHandler.MessageChan():
-		// Message received
+	case msg := <-h.dataHandler.MessageChan():
+		return msg, nil
 	case <-h.closeChan:
-		return 0, oops.Errorf("connection closed")
+		return nil, oops.Errorf("connection closed")
 	case <-deadlineCh:
-		return 0, oops.Errorf("read deadline exceeded")
+		return nil, oops.Errorf("read deadline exceeded")
 	}
+}
 
+func (h *SSU2Conn) copyInboundMessageToBuffer(b, msg []byte) (int, error) {
 	// Copy message to buffer
 	n := copy(b, msg)
 	if n < len(msg) {
@@ -119,64 +137,69 @@ func (h *SSU2Conn) recvLoop() {
 	// never truncate legitimate packets regardless of the configured MTU.
 	buf := make([]byte, MaxPacketSizeIPv4)
 	for {
+		n, addr, err := h.readInboundDatagram(buf)
+		if err != nil {
+			continue
+		}
+		flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
+		h.readOnePacket(buf[:n], addr)
+	}
+}
+
+func (h *SSU2Conn) readInboundDatagram(buf []byte) (int, net.Addr, error) {
+	if h.ownsUnderlying {
 		// BUG-TO-1: For sessions that own the underlying socket (DialSSU2),
 		// block directly on ReadFrom. CloseWithReason closes the socket after
 		// signalling closeChan, which unblocks ReadFrom. This eliminates the
 		// 100 ms CPU wakeup cycle for dial sessions.
-		// For shared-socket sessions (ownsUnderlying=false), fall back to the
-		// 100 ms poll so the loop can still exit when closeChan fires.
-		if h.ownsUnderlying {
-			n, addr, err := h.underlying.ReadFrom(buf)
-			if err != nil {
-				select {
-				case <-h.closeChan:
-					return
-				default:
-				}
-				h.readErrors.Add(1)
-				continue
-			}
-			flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
-			h.readOnePacket(buf[:n], addr)
-		} else {
-			// Shared socket path: this connection does not own the PacketConn but
-			// is its sole reader (DialSSU2WithConn contract). We cannot block
-			// indefinitely on ReadFrom because that would prevent closeChan from
-			// being checked. Use a 100 ms read deadline on this socket to achieve
-			// periodic wakeup.
-			//
-			// NOTE: SetReadDeadline here is safe because the DialSSU2WithConn API
-			// contract guarantees this connection is the SOLE reader of the socket.
-			// Listener-accepted connections never enter this branch because
-			// readsOwnSocket is false for them, so recvLoop is never started.
-			// If a future use case shares this socket with other readers, this
-			// branch must be revisited (RACE-4).
+		n, addr, err := h.underlying.ReadFrom(buf)
+		if err != nil {
 			select {
 			case <-h.closeChan:
-				return
+				return 0, nil, oops.Errorf("connection closed")
 			default:
 			}
-			_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-
-			n, addr, err := h.underlying.ReadFrom(buf)
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				// Non-timeout error: check if we're closing before counting it.
-				select {
-				case <-h.closeChan:
-					return
-				default:
-				}
-				h.readErrors.Add(1)
-				continue
-			}
-
-			flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
-			h.readOnePacket(buf[:n], addr)
+			h.readErrors.Add(1)
+			return 0, nil, err
 		}
+		return n, addr, nil
 	}
+
+	// Shared socket path: this connection does not own the PacketConn but
+	// is its sole reader (DialSSU2WithConn contract). We cannot block
+	// indefinitely on ReadFrom because that would prevent closeChan from
+	// being checked. Use a 100 ms read deadline on this socket to achieve
+	// periodic wakeup.
+	//
+	// NOTE: SetReadDeadline here is safe because the DialSSU2WithConn API
+	// contract guarantees this connection is the SOLE reader of the socket.
+	// Listener-accepted connections never enter this branch because
+	// readsOwnSocket is false for them, so recvLoop is never started.
+	// If a future use case shares this socket with other readers, this
+	// branch must be revisited (RACE-4).
+	select {
+	case <-h.closeChan:
+		return 0, nil, oops.Errorf("connection closed")
+	default:
+	}
+	_ = h.underlying.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+
+	n, addr, err := h.underlying.ReadFrom(buf)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return 0, nil, oops.Errorf("read deadline exceeded")
+		}
+		// Non-timeout error: check if we're closing before counting it.
+		select {
+		case <-h.closeChan:
+			return 0, nil, oops.Errorf("connection closed")
+		default:
+		}
+		h.readErrors.Add(1)
+		return 0, nil, err
+	}
+
+	return n, addr, nil
 }
 
 // parseInboundPacket validates the source address, deserializes, and decrypts an
@@ -185,23 +208,14 @@ func (h *SSU2Conn) recvLoop() {
 // verification, the remote address is updated (per spec §Connection Migration).
 func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 	flog("parseInboundPacket", logger.Fields{"data_len": len(data), "from": addr}).Debug("parsing inbound UDP datagram")
-	udpAddr, ok := addr.(*net.UDPAddr)
-	if !ok {
+	udpAddr := h.asUDPAddr(addr)
+	if udpAddr == nil {
 		return nil
 	}
 
-	// Check if the source address has changed (requires lock to read remoteAddr).
-	// Per spec §Connection Migration: packets from a new address require path
-	// validation before accepting the address change.
-	h.remoteAddrLock.RLock()
-	addrChanged := !udpAddr.IP.Equal(h.remoteAddr.IP) || udpAddr.Port != h.remoteAddr.Port
-	h.remoteAddrLock.RUnlock()
-
 	// Decrypt header protection before parsing
 	if h.headerProtector != nil {
-		hType := h.expectedInboundHeaderType()
-		if err := h.headerProtector.DecryptInboundHeader(data, hType); err != nil {
-			h.parseErrors.Add(1)
+		if !h.decryptInboundHeader(data) {
 			return nil
 		}
 	}
@@ -213,44 +227,85 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 	// nothing to deobfuscate here. The bytes are zeroed before AEAD below.
 
 	packet := &SSU2Packet{}
-	if err := packet.Deserialize(data); err != nil {
-		h.parseErrors.Add(1)
+	if !h.deserializeInboundPacket(packet, data) {
 		return nil
 	}
 
-	h.cipherMutex.Lock()
-	cipher := h.recvCipher
-	if cipher != nil && packet.MessageType == MessageTypeData && len(packet.Payload) > 0 {
-		// Per SSU2 spec: nonce is the packet number, AD is the 16-byte header.
-		// Bytes 14-15 must be zeroed before AEAD decryption because the sender
-		// encrypts with bytes 14-15 = 0 (they are set to the obfuscated length
-		// only AFTER encryption). Without this, the AD mismatch causes every
-		// data packet to fail AEAD verification.
-		binary.BigEndian.PutUint16(packet.Header[14:16], 0)
-		cipher.SetNonce(uint64(packet.PacketNumber))
-		decrypted, err := cipher.Decrypt(nil, packet.Header[:ShortHeaderSize], packet.Payload)
-		if err != nil {
-			h.cipherMutex.Unlock()
-			h.decryptErrors.Add(1)
-			return nil
-		}
-		packet.Payload = decrypted
+	if !h.decryptInboundPayload(packet) {
+		return nil
 	}
-	h.cipherMutex.Unlock()
 
-	// If the address changed but AEAD passed, initiate path validation (G-7).
-	// Per spec §Connection Migration: packets from a new address require
-	// path validation before accepting the address change.
-	if addrChanged && h.pathValidator != nil {
-		if _, err := h.pathValidator.InitiatePathValidation(udpAddr); err != nil {
-			// Do not silently swallow: a failure to start validation means
-			// the address migration is not being verified (AUDIT 5.2).
-			flog("parseInboundPacket", logger.Fields{"new_addr": udpAddr.String()}).WithError(err).Warn("failed to initiate path validation for migrated address")
-		}
+	if h.shouldValidateMigratedAddress(udpAddr) {
+		h.initiatePathValidation(udpAddr)
 	}
 
 	h.updateActivity()
 	return packet
+}
+
+func (h *SSU2Conn) asUDPAddr(addr net.Addr) *net.UDPAddr {
+	udpAddr, ok := addr.(*net.UDPAddr)
+	if !ok {
+		return nil
+	}
+	return udpAddr
+}
+
+func (h *SSU2Conn) decryptInboundHeader(data []byte) bool {
+	hType := h.expectedInboundHeaderType()
+	if err := h.headerProtector.DecryptInboundHeader(data, hType); err != nil {
+		h.parseErrors.Add(1)
+		return false
+	}
+	return true
+}
+
+func (h *SSU2Conn) deserializeInboundPacket(packet *SSU2Packet, data []byte) bool {
+	if err := packet.Deserialize(data); err != nil {
+		h.parseErrors.Add(1)
+		return false
+	}
+	return true
+}
+
+func (h *SSU2Conn) decryptInboundPayload(packet *SSU2Packet) bool {
+	h.cipherMutex.Lock()
+	defer h.cipherMutex.Unlock()
+
+	cipher := h.recvCipher
+	if cipher == nil || packet.MessageType != MessageTypeData || len(packet.Payload) == 0 {
+		return true
+	}
+
+	// Per SSU2 spec: nonce is the packet number, AD is the 16-byte header.
+	// Bytes 14-15 must be zeroed before AEAD decryption because the sender
+	// encrypts with bytes 14-15 = 0 (they are set to the obfuscated length
+	// only AFTER encryption). Without this, the AD mismatch causes every
+	// data packet to fail AEAD verification.
+	binary.BigEndian.PutUint16(packet.Header[14:16], 0)
+	cipher.SetNonce(uint64(packet.PacketNumber))
+	decrypted, err := cipher.Decrypt(nil, packet.Header[:ShortHeaderSize], packet.Payload)
+	if err != nil {
+		h.decryptErrors.Add(1)
+		return false
+	}
+	packet.Payload = decrypted
+	return true
+}
+
+func (h *SSU2Conn) shouldValidateMigratedAddress(udpAddr *net.UDPAddr) bool {
+	h.remoteAddrLock.RLock()
+	addrChanged := !udpAddr.IP.Equal(h.remoteAddr.IP) || udpAddr.Port != h.remoteAddr.Port
+	h.remoteAddrLock.RUnlock()
+	return addrChanged && h.pathValidator != nil
+}
+
+func (h *SSU2Conn) initiatePathValidation(udpAddr *net.UDPAddr) {
+	if _, err := h.pathValidator.InitiatePathValidation(udpAddr); err != nil {
+		// Do not silently swallow: a failure to start validation means
+		// the address migration is not being verified (AUDIT 5.2).
+		flog("parseInboundPacket", logger.Fields{"new_addr": udpAddr.String()}).WithError(err).Warn("failed to initiate path validation for migrated address")
+	}
 }
 
 // keepaliveLoop manages connection keepalive.
@@ -298,76 +353,88 @@ func (h *SSU2Conn) keepaliveLoop() {
 func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 	switch packet.MessageType {
 	case MessageTypeData:
-		// Enforce receive window: reject duplicate, old, and out-of-window packets
-		var readyPackets []*SSU2Packet
-		if h.recvWindow != nil {
-			var err error
-			readyPackets, err = h.recvWindow.Insert(packet)
-			if err != nil {
-				return // silently drop
-			}
-		} else {
-			// No receive window; treat this packet as immediately ready
-			readyPackets = []*SSU2Packet{packet}
-		}
-
-		// Process all ready packets (including the current one and any that were buffered)
-		for _, readyPacket := range readyPackets {
-			h.validDataPacketsReceived.Add(1)
-
-			// Record for ACK only after window acceptance
-			if readyPacket.PacketNumber > 0 {
-				h.ackHandler.RecordReceived(readyPacket.PacketNumber)
-
-				// H-2: Check if a delayed ACK should be sent immediately.
-				// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
-				// Otherwise, rely on timer or next batch of packets (see H-2 TODO).
-				rtt := h.rttEstimator.GetSmoothedRTT()
-				if rtt == 0 {
-					rtt = 50 * time.Millisecond // Default if not yet measured
-				}
-				if h.ackHandler.ShouldSendACK(rtt) {
-					h.sendImmediateACK()
-				}
-			}
-
-			// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
-			// checked via CongestionFlagRequestACK in the Congestion block handler,
-			// providing redundant but harmless ACK triggering)
-			if len(readyPacket.Header) > 13 && readyPacket.Header[13]&0x01 != 0 {
-				h.sendImmediateACK()
-			}
-			h.processDataPacket(readyPacket)
-		}
+		h.processDataPackets(packet)
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
-		// Handshake packets bypass receive window
-		if packet.PacketNumber > 0 {
-			h.ackHandler.RecordReceived(packet.PacketNumber)
+		h.processHandshakePacket(packet)
+	}
+}
+
+func (h *SSU2Conn) processDataPackets(packet *SSU2Packet) {
+	// Enforce receive window: reject duplicate, old, and out-of-window packets
+	readyPackets := h.collectReadyDataPackets(packet)
+	for _, readyPacket := range readyPackets {
+		h.handleReadyDataPacket(readyPacket)
+	}
+}
+
+func (h *SSU2Conn) collectReadyDataPackets(packet *SSU2Packet) []*SSU2Packet {
+	if h.recvWindow == nil {
+		// No receive window; treat this packet as immediately ready
+		return []*SSU2Packet{packet}
+	}
+	readyPackets, err := h.recvWindow.Insert(packet)
+	if err != nil {
+		return nil // silently drop
+	}
+	return readyPackets
+}
+
+func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
+	h.validDataPacketsReceived.Add(1)
+
+	// Record for ACK only after window acceptance
+	if readyPacket.PacketNumber > 0 {
+		h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+
+		// H-2: Check if a delayed ACK should be sent immediately.
+		// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
+		// Otherwise, rely on timer or next batch of packets (see H-2 TODO).
+		rtt := h.rttEstimator.GetSmoothedRTT()
+		if rtt == 0 {
+			rtt = 50 * time.Millisecond // Default if not yet measured
 		}
-		// Handshake packets are scarce and progress the state machine; dropping
-		// one forces reliance on the (slow) retransmit schedule and inflates
-		// handshake latency. Briefly block to enqueue rather than dropping on a
-		// transiently-full queue, but bound the wait so a stalled handshake
-		// reader cannot pin this worker indefinitely (AUDIT 4.2).
+		if h.ackHandler.ShouldSendACK(rtt) {
+			h.sendImmediateACK()
+		}
+	}
+
+	// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
+	// checked via CongestionFlagRequestACK in the Congestion block handler,
+	// providing redundant but harmless ACK triggering)
+	if len(readyPacket.Header) > 13 && readyPacket.Header[13]&0x01 != 0 {
+		h.sendImmediateACK()
+	}
+	h.processDataPacket(readyPacket)
+}
+
+func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
+	// Handshake packets bypass receive window
+	if packet.PacketNumber > 0 {
+		h.ackHandler.RecordReceived(packet.PacketNumber)
+	}
+	// Handshake packets are scarce and progress the state machine; dropping
+	// one forces reliance on the (slow) retransmit schedule and inflates
+	// handshake latency. Briefly block to enqueue rather than dropping on a
+	// transiently-full queue, but bound the wait so a stalled handshake
+	// reader cannot pin this worker indefinitely (AUDIT 4.2).
+	select {
+	case h.recvQueue <- packet:
+	case <-h.closeChan:
+	default:
+		timer := time.NewTimer(handshakeEnqueueTimeout)
 		select {
 		case h.recvQueue <- packet:
 		case <-h.closeChan:
-		default:
-			timer := time.NewTimer(handshakeEnqueueTimeout)
-			select {
-			case h.recvQueue <- packet:
-			case <-h.closeChan:
-			case <-timer.C:
-				flog("processInboundPacket", logger.Fields{"msg_type": packet.MessageType}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
-			}
-			timer.Stop()
+		case <-timer.C:
+			flog("processInboundPacket", logger.Fields{"msg_type": packet.MessageType}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
 		}
+		timer.Stop()
 	}
 }
 
 // processDataPacket handles a data-phase packet: parses blocks and retires ACKed packets.
 func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) {
-	flog("processDataPacket", logger.Fields{"pkt_num":     packet.PacketNumber, "payload_len": len(packet.Payload)}).Debug("processing")
+	flog("processDataPacket", logger.Fields{"pkt_num": packet.PacketNumber, "payload_len": len(packet.Payload)}).Debug("processing")
 	blocks, err := h.dataHandler.ProcessDataPacket(packet)
 	if err != nil {
 		flog("processDataPacket", logger.Fields{"error": err.Error()}).Debug("ProcessDataPacket error")
