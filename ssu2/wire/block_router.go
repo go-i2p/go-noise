@@ -131,9 +131,9 @@ func (r *BlockRouter) RouteBlock(block *SSU2Block) error {
 	if exists {
 		// A registered handler was tried but returned handled==false; this is
 		// a legitimate outcome (e.g. handler ignores empty Data), not an error.
-		flog("RouteBlock", logger.Fields{"blockType":  block.Type, "blockName":  BlockTypeName(block.Type), "dataLength": len(block.Data)}).Debug("Registered handler declined block (handled=false)")
+		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": BlockTypeName(block.Type), "dataLength": len(block.Data)}).Debug("Registered handler declined block (handled=false)")
 	} else {
-		flog("RouteBlock", logger.Fields{"blockType":  block.Type, "blockName":  BlockTypeName(block.Type), "dataLength": len(block.Data)}).Warn("No handler registered for block type")
+		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": BlockTypeName(block.Type), "dataLength": len(block.Data)}).Warn("No handler registered for block type")
 	}
 
 	return nil
@@ -200,48 +200,13 @@ func (h *funcBlockHandler) SupportedTypes() []uint8 {
 // BlockTypeName returns a human-readable name for a block type.
 // This is useful for logging and debugging.
 func BlockTypeName(blockType uint8) string {
+	// Preserve legacy router-facing behavior: these internal/specialized block
+	// types were historically reported as Unknown by BlockTypeName.
 	switch blockType {
-	case BlockTypeDateTime:
-		return "DateTime"
-	case BlockTypeOptions:
-		return "Options"
-	case BlockTypeRouterInfo:
-		return "RouterInfo"
-	case BlockTypeI2NPMessage:
-		return "I2NPMessage"
-	case BlockTypeFirstFragment:
-		return "FirstFragment"
-	case BlockTypeFollowOnFragment:
-		return "FollowOnFragment"
-	case BlockTypeTermination:
-		return "Termination"
-	case BlockTypeRelayRequest:
-		return "RelayRequest"
-	case BlockTypeRelayResponse:
-		return "RelayResponse"
-	case BlockTypeRelayIntro:
-		return "RelayIntro"
-	case BlockTypePeerTest:
-		return "PeerTest"
-	case BlockTypeACK:
-		return "ACK"
-	case BlockTypeAddress:
-		return "Address"
-	case BlockTypeRelayTagRequest:
-		return "RelayTagRequest"
-	case BlockTypeRelayTag:
-		return "RelayTag"
-	case BlockTypeNewToken:
-		return "NewToken"
-	case BlockTypePathChallenge:
-		return "PathChallenge"
-	case BlockTypePathResponse:
-		return "PathResponse"
-	case BlockTypePadding:
-		return "Padding"
-	default:
+	case BlockTypeNextNonce, BlockTypeReserved14, BlockTypeFirstPacketNumber, BlockTypeCongestion:
 		return "Unknown"
 	}
+	return GetBlockTypeName(blockType)
 }
 
 // AllBlockTypes returns all defined SSU2 block types.

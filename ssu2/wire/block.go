@@ -75,6 +75,32 @@ const (
 	maxBlockLength           = 65535 // Maximum length field value (2 bytes)
 )
 
+var blockTypeNames = map[uint8]string{
+	BlockTypeDateTime:          "DateTime",
+	BlockTypeOptions:           "Options",
+	BlockTypeRouterInfo:        "RouterInfo",
+	BlockTypeI2NPMessage:       "I2NPMessage",
+	BlockTypeFirstFragment:     "FirstFragment",
+	BlockTypeFollowOnFragment:  "FollowOnFragment",
+	BlockTypeTermination:       "Termination",
+	BlockTypeRelayRequest:      "RelayRequest",
+	BlockTypeRelayResponse:     "RelayResponse",
+	BlockTypeRelayIntro:        "RelayIntro",
+	BlockTypePeerTest:          "PeerTest",
+	BlockTypeNextNonce:         "NextNonce",
+	BlockTypeACK:               "ACK",
+	BlockTypeAddress:           "Address",
+	BlockTypeReserved14:        "Reserved14",
+	BlockTypeRelayTagRequest:   "RelayTagRequest",
+	BlockTypeRelayTag:          "RelayTag",
+	BlockTypeNewToken:          "NewToken",
+	BlockTypePathChallenge:     "PathChallenge",
+	BlockTypePathResponse:      "PathResponse",
+	BlockTypeFirstPacketNumber: "FirstPacketNumber",
+	BlockTypeCongestion:        "Congestion",
+	BlockTypePadding:           "Padding",
+}
+
 // NewSSU2Block creates a new block with the specified type and data.
 //
 // Parameters:
@@ -321,86 +347,14 @@ func DeserializeBlocks(data []byte) ([]*SSU2Block, error) {
 
 // IsKnownBlockType returns true if the block type is defined in the SSU2 specification.
 func IsKnownBlockType(blockType uint8) bool {
-	switch blockType {
-	case BlockTypeDateTime,
-		BlockTypeOptions,
-		BlockTypeRouterInfo,
-		BlockTypeI2NPMessage,
-		BlockTypeFirstFragment,
-		BlockTypeFollowOnFragment,
-		BlockTypeTermination,
-		BlockTypeRelayRequest,
-		BlockTypeRelayResponse,
-		BlockTypeRelayIntro,
-		BlockTypePeerTest,
-		BlockTypeNextNonce,
-		BlockTypeACK,
-		BlockTypeAddress,
-		BlockTypeReserved14,
-		BlockTypeRelayTagRequest,
-		BlockTypeRelayTag,
-		BlockTypeNewToken,
-		BlockTypePathChallenge,
-		BlockTypePathResponse,
-		BlockTypeFirstPacketNumber,
-		BlockTypeCongestion,
-		BlockTypePadding:
-		return true
-	default:
-		return false
-	}
+	_, ok := blockTypeNames[blockType]
+	return ok
 }
 
 // GetBlockTypeName returns a human-readable name for the block type.
 func GetBlockTypeName(blockType uint8) string {
-	switch blockType {
-	case BlockTypeDateTime:
-		return "DateTime"
-	case BlockTypeOptions:
-		return "Options"
-	case BlockTypeRouterInfo:
-		return "RouterInfo"
-	case BlockTypeI2NPMessage:
-		return "I2NPMessage"
-	case BlockTypeFirstFragment:
-		return "FirstFragment"
-	case BlockTypeFollowOnFragment:
-		return "FollowOnFragment"
-	case BlockTypeTermination:
-		return "Termination"
-	case BlockTypeRelayRequest:
-		return "RelayRequest"
-	case BlockTypeRelayResponse:
-		return "RelayResponse"
-	case BlockTypeRelayIntro:
-		return "RelayIntro"
-	case BlockTypePeerTest:
-		return "PeerTest"
-	case BlockTypeNextNonce:
-		return "NextNonce"
-	case BlockTypeACK:
-		return "ACK"
-	case BlockTypeAddress:
-		return "Address"
-	case BlockTypeReserved14:
-		return "Reserved14"
-	case BlockTypeRelayTagRequest:
-		return "RelayTagRequest"
-	case BlockTypeRelayTag:
-		return "RelayTag"
-	case BlockTypeNewToken:
-		return "NewToken"
-	case BlockTypePathChallenge:
-		return "PathChallenge"
-	case BlockTypePathResponse:
-		return "PathResponse"
-	case BlockTypeFirstPacketNumber:
-		return "FirstPacketNumber"
-	case BlockTypeCongestion:
-		return "Congestion"
-	case BlockTypePadding:
-		return "Padding"
-	default:
-		return "Unknown"
+	if name, ok := blockTypeNames[blockType]; ok {
+		return name
 	}
+	return "Unknown"
 }

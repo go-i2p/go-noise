@@ -30,56 +30,36 @@ const (
 	TerminationReplacedByNewSession  TerminationReason = 22 // Replaced by new session
 )
 
+var terminationReasonNames = map[TerminationReason]string{
+	TerminationNormalClose:           "NormalClose",
+	TerminationReceived:              "TerminationReceived",
+	TerminationIdleTimeout:           "IdleTimeout",
+	TerminationRouterShutdown:        "RouterShutdown",
+	TerminationDataPhaseAEADFailure:  "DataPhaseAEADFailure",
+	TerminationIncompatibleOptions:   "IncompatibleOptions",
+	TerminationIncompatibleSignature: "IncompatibleSignature",
+	TerminationClockSkew:             "ClockSkew",
+	TerminationPaddingViolation:      "PaddingViolation",
+	TerminationAEADFramingError:      "AEADFramingError",
+	TerminationPayloadFormatError:    "PayloadFormatError",
+	TerminationSessionRequestError:   "SessionRequestError",
+	TerminationSessionCreatedError:   "SessionCreatedError",
+	TerminationSessionConfirmedError: "SessionConfirmedError",
+	TerminationTimeout:               "Timeout",
+	TerminationRISigVerifyFail:       "RISigVerifyFail",
+	TerminationSParamMissing:         "SParamMissing",
+	TerminationBanned:                "Banned",
+	TerminationBadToken:              "BadToken",
+	TerminationConnectionLimits:      "ConnectionLimits",
+	TerminationIncompatibleVersion:   "IncompatibleVersion",
+	TerminationWrongNetID:            "WrongNetID",
+	TerminationReplacedByNewSession:  "ReplacedByNewSession",
+}
+
 // String returns the human-readable name for the termination reason.
 func (r TerminationReason) String() string {
-	switch r {
-	case TerminationNormalClose:
-		return "NormalClose"
-	case TerminationReceived:
-		return "TerminationReceived"
-	case TerminationIdleTimeout:
-		return "IdleTimeout"
-	case TerminationRouterShutdown:
-		return "RouterShutdown"
-	case TerminationDataPhaseAEADFailure:
-		return "DataPhaseAEADFailure"
-	case TerminationIncompatibleOptions:
-		return "IncompatibleOptions"
-	case TerminationIncompatibleSignature:
-		return "IncompatibleSignature"
-	case TerminationClockSkew:
-		return "ClockSkew"
-	case TerminationPaddingViolation:
-		return "PaddingViolation"
-	case TerminationAEADFramingError:
-		return "AEADFramingError"
-	case TerminationPayloadFormatError:
-		return "PayloadFormatError"
-	case TerminationSessionRequestError:
-		return "SessionRequestError"
-	case TerminationSessionCreatedError:
-		return "SessionCreatedError"
-	case TerminationSessionConfirmedError:
-		return "SessionConfirmedError"
-	case TerminationTimeout:
-		return "Timeout"
-	case TerminationRISigVerifyFail:
-		return "RISigVerifyFail"
-	case TerminationSParamMissing:
-		return "SParamMissing"
-	case TerminationBanned:
-		return "Banned"
-	case TerminationBadToken:
-		return "BadToken"
-	case TerminationConnectionLimits:
-		return "ConnectionLimits"
-	case TerminationIncompatibleVersion:
-		return "IncompatibleVersion"
-	case TerminationWrongNetID:
-		return "WrongNetID"
-	case TerminationReplacedByNewSession:
-		return "ReplacedByNewSession"
-	default:
-		return "Unknown"
+	if name, ok := terminationReasonNames[r]; ok {
+		return name
 	}
+	return "Unknown"
 }
