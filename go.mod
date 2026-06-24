@@ -3,11 +3,11 @@ module github.com/go-i2p/go-noise
 go 1.26.3
 
 require (
-	github.com/go-i2p/common v0.1.60000-0.20260612012818-ffa84716e922
-	github.com/go-i2p/crypto v0.1.60000-0.20260612012729-bcf561943886
-	github.com/go-i2p/logger v0.1.60000-0.20260612012503-bec4044a2b0d
-	github.com/go-i2p/noise v0.1.6
-	github.com/go-i2p/path v0.1.6
+	github.com/go-i2p/common v0.1.59999
+	github.com/go-i2p/crypto v0.1.59999
+	github.com/go-i2p/logger v0.1.59999
+	github.com/go-i2p/noise v0.1.59999
+	github.com/go-i2p/path v0.1.59999
 	github.com/go-i2p/pool v0.1.59999
 	github.com/samber/oops v1.22.0
 	github.com/stretchr/testify v1.11.1
