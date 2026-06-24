@@ -5,5 +5,7 @@ import (
 	"github.com/go-i2p/logger"
 )
 
-var flog = logutil.MakePackageLogger("handshake/siphash")
-var log = logger.GetGoI2PLogger()
+var (
+	flog = logutil.MakePackageLogger("handshake/siphash")
+	log  = logger.GetGoI2PLogger()
+)

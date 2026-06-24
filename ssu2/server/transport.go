@@ -83,7 +83,7 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 	// on this interface, recommend using DialSSU2WithConn for multiplexing.
 	// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
 	if conn.LocalAddr() != nil {
-		flog("DialSSU2", logger.Fields{"ephemeral_bind":   true, "local_addr":       conn.LocalAddr().String(), "ephemeral_source": "new UDP socket"}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
+		flog("DialSSU2", logger.Fields{"ephemeral_bind": true, "local_addr": conn.LocalAddr().String(), "ephemeral_source": "new UDP socket"}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
 	}
 
 	return conn, nil
@@ -256,7 +256,7 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 	// Set buffer to a larger value (e.g., 8 MB) to improve packet handling
 	// under burst traffic and flood conditions.
 	if err := packetConn.SetReadBuffer(8 * 1024 * 1024); err != nil {
-		flog("ListenSSU2", logger.Fields{"address": addr, "error":   err}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
+		flog("ListenSSU2", logger.Fields{"address": addr, "error": err}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
 		// BUG-PB-2: record the failure in the listener so Stats() can expose it
 		// to monitoring without relying on log scraping.
 		listener.readBufferFailed.Store(true)

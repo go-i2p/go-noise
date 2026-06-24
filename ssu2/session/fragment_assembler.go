@@ -59,7 +59,7 @@ func (h *DataHandler) evictOldestFragment() {
 		return fs.CreatedAt
 	})
 
-	flog("evictOldestFragment", logger.Fields{"message_id": oldestID, "age":        time.Since(oldestTime)}).Warn("evicting oldest fragment set due to capacity limit")
+	flog("evictOldestFragment", logger.Fields{"message_id": oldestID, "age": time.Since(oldestTime)}).Warn("evicting oldest fragment set due to capacity limit")
 
 	h.incrementStat(&h.stats.MessagesDropped)
 }
@@ -77,7 +77,7 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 	shortExpiration := binary.BigEndian.Uint32(data[5:9])
 	fragmentData := data[9:]
 
-	flog("handleFirstFragment", logger.Fields{"i2np_type":  i2npType, "message_id": messageID, "short_exp":  shortExpiration, "frag_len":   len(fragmentData)}).Debug("parsed header")
+	flog("handleFirstFragment", logger.Fields{"i2np_type": i2npType, "message_id": messageID, "short_exp": shortExpiration, "frag_len": len(fragmentData)}).Debug("parsed header")
 
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
@@ -206,7 +206,7 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	// only checked at reassembly time. This prevents an attacker from flooding
 	// a single MessageID with large fragments to exhaust per-connection memory.
 	if fragmentSet.ReceivedSize > maxI2NPMessageSize {
-		flog("handleFollowOnFragment", logger.Fields{"message_id":    messageID, "received_size": fragmentSet.ReceivedSize, "max_size":      maxI2NPMessageSize}).Warn("dropping oversized reassembled message (exceeds 64 KB limit)")
+		flog("handleFollowOnFragment", logger.Fields{"message_id": messageID, "received_size": fragmentSet.ReceivedSize, "max_size": maxI2NPMessageSize}).Warn("dropping oversized reassembled message (exceeds 64 KB limit)")
 		delete(h.fragments, messageID)
 		h.incrementStat(&h.stats.MessagesDropped)
 		return nil
@@ -263,11 +263,11 @@ func (h *DataHandler) reassembleMessage(messageID uint32) error {
 	if len(message) > maxI2NPMessageSize {
 		h.incrementStat(&h.stats.MessagesDropped)
 		delete(h.fragments, messageID)
-		flog("reassembleMessage", logger.Fields{"message_id": messageID, "size":       len(message), "max_size":   maxI2NPMessageSize}).Warn("dropping oversized reassembled message")
+		flog("reassembleMessage", logger.Fields{"message_id": messageID, "size": len(message), "max_size": maxI2NPMessageSize}).Warn("dropping oversized reassembled message")
 		return nil // Silent drop, not an error
 	}
 
-	flog("reassembleMessage", logger.Fields{"message_id": messageID, "total_len":  len(message), "num_frags":  fragmentSet.LastFragNum + 1}).Debug("reassembled")
+	flog("reassembleMessage", logger.Fields{"message_id": messageID, "total_len": len(message), "num_frags": fragmentSet.LastFragNum + 1}).Debug("reassembled")
 
 	// Queue complete message
 	select {

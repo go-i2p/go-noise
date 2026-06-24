@@ -441,7 +441,7 @@ func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, re
 	l.sessionMutex.RUnlock()
 
 	if existingConn != nil {
-		flog("findExistingSessionByInitiator", logger.Fields{"dedup_key":   dedupKey, "remote_addr": remoteAddr.String()}).Debug("routing retransmit to existing pending session")
+		flog("findExistingSessionByInitiator", logger.Fields{"dedup_key": dedupKey, "remote_addr": remoteAddr.String()}).Debug("routing retransmit to existing pending session")
 	}
 	return existingConn
 }
@@ -573,7 +573,7 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 		}
 
 		if attempt < maxRetries-1 {
-			flog("generateUniqueConnectionID", logger.Fields{"attempt":     attempt + 1, "max_retries": maxRetries}).Debug("connection ID collision, retrying")
+			flog("generateUniqueConnectionID", logger.Fields{"attempt": attempt + 1, "max_retries": maxRetries}).Debug("connection ID collision, retrying")
 		}
 	}
 

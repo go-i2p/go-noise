@@ -14,7 +14,7 @@ func withLock[T any](mu *sync.Mutex, fn func() T) T {
 	return fn()
 }
 
-func withLock2[T1 any, T2 any](mu *sync.Mutex, fn func() (T1, T2)) (T1, T2) {
+func withLock2[T1, T2 any](mu *sync.Mutex, fn func() (T1, T2)) (T1, T2) {
 	mu.Lock()
 	defer mu.Unlock()
 	return fn()

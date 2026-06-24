@@ -77,7 +77,6 @@ func (h *SSU2Conn) readFromPendingMessage(b []byte) (int, bool) {
 }
 
 func (h *SSU2Conn) waitForInboundMessage() ([]byte, error) {
-
 	// Block until a message arrives, the connection closes, or the deadline expires.
 	// Use a stoppable timer (rather than time.After) so the timer is released
 	// promptly instead of lingering until it fires (AUDIT 4.4).

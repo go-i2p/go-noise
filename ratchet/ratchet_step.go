@@ -98,7 +98,7 @@ func performDHRatchetStep(session *Session) error {
 	// Safe: guarded >= MaxKeyID above.
 	session.sendKeyID++
 
-	flog("performDHRatchetStep", logger.Fields{"message_counter": session.MessageCounter, "send_key_id":     session.sendKeyID, "new_pub_key":     fmt.Sprintf("%x", newPubKey[:8])}).Debug("DH ratchet rotation completed, NextKey block queued")
+	flog("performDHRatchetStep", logger.Fields{"message_counter": session.MessageCounter, "send_key_id": session.sendKeyID, "new_pub_key": fmt.Sprintf("%x", newPubKey[:8])}).Debug("DH ratchet rotation completed, NextKey block queued")
 
 	return nil
 }

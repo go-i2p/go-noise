@@ -539,7 +539,7 @@ func (nc *Config) createPostHandshakeHook() func(*noise.NoiseConn) error {
 		if nc.Initiator {
 			role = "initiator"
 		}
-		flog("NTCP2Config.createPostHandshakeHook", logger.Fields{"handshake_hash_len": len(h), "ask_master_len":     len(askMaster), "role":               role, "sipk1_ab":           sipKeysAB[0], "sipk2_ab":           sipKeysAB[1], "sipiv_ab":           sipIVAB, "sipk1_ba":           sipKeysBA[0], "sipk2_ba":           sipKeysBA[1], "sipiv_ba":           sipIVBA}).Debug("PostHandshakeHook: derived per-direction SipHash keys")
+		flog("NTCP2Config.createPostHandshakeHook", logger.Fields{"handshake_hash_len": len(h), "ask_master_len": len(askMaster), "role": role, "sipk1_ab": sipKeysAB[0], "sipk2_ab": sipKeysAB[1], "sipiv_ab": sipIVAB, "sipk1_ba": sipKeysBA[0], "sipk2_ba": sipKeysBA[1], "sipiv_ba": sipIVBA}).Debug("PostHandshakeHook: derived per-direction SipHash keys")
 
 		return nil
 	}

@@ -210,7 +210,7 @@ func (nc *Conn) readEncryptedData(b []byte) (encryptedData []byte, encryptedLen 
 		return nil, 0, err
 	}
 	encryptedLen = len(encryptedData)
-	return
+	return encryptedData, encryptedLen, err
 }
 
 // writeFramedMessage writes a 2-byte big-endian length prefix followed by

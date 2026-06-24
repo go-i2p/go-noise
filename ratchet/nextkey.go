@@ -143,7 +143,7 @@ func (sm *SessionManager) processNextKeyAck(session *Session, info NextKeyInfo) 
 		session.awaitingReverseKey = false
 	}
 
-	flog("processNextKeyAck", logger.Fields{"key_id":  info.KeyID, "reverse": info.Reverse}).Debug("Processed NextKey acknowledgment from peer")
+	flog("processNextKeyAck", logger.Fields{"key_id": info.KeyID, "reverse": info.Reverse}).Debug("Processed NextKey acknowledgment from peer")
 
 	return nil
 }

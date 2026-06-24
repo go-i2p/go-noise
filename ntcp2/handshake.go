@@ -433,7 +433,6 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 }
 
 func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16, error) {
-
 	// === Message 1 (Alice -> Bob) ============================================
 	buf1 := make([]byte, msg1Size)
 	if _, err := io.ReadFull(raw, buf1); err != nil {
@@ -524,7 +523,6 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 }
 
 func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
-
 	// === Message 2 (Bob -> Alice) ============================================
 	opts2, bobPadLen, err := buildMessage2Options()
 	if err != nil {
@@ -564,7 +562,6 @@ func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
 }
 
 func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]byte, error) {
-
 	// === Message 3 (Alice -> Bob) ============================================
 	msg3Len := msg3Part1Size + int(m3p2Len)
 	buf3 := make([]byte, msg3Len)

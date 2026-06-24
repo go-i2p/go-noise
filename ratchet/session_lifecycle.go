@@ -44,7 +44,7 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 	}
 
 	if removed > 0 {
-		flog("CleanupExpiredSessions", logger.Fields{"removed_sessions":       removed, "remaining_sessions":     len(sm.sessions), "remaining_indexed_tags": len(sm.tagIndex)}).Info("Expired sessions cleaned up")
+		flog("CleanupExpiredSessions", logger.Fields{"removed_sessions": removed, "remaining_sessions": len(sm.sessions), "remaining_indexed_tags": len(sm.tagIndex)}).Info("Expired sessions cleaned up")
 	}
 
 	return removed

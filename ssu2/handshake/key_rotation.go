@@ -318,7 +318,7 @@ func (krm *KeyRotationManager) rotateKeyLocked(keyName string, keySize int, curr
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					flog("rotateKeyLocked", logger.Fields{"key":   keyName, "panic": r}).Error("onRotation callback panicked")
+					flog("rotateKeyLocked", logger.Fields{"key": keyName, "panic": r}).Error("onRotation callback panicked")
 				}
 			}()
 			cb(keyName, oldKey, captured)

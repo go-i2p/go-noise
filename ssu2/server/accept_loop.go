@@ -89,7 +89,7 @@ func (l *SSU2Listener) receiveLoop() {
 		default:
 			// packetQueue is full - drop packet and warn
 			atomic.AddUint64(&l.droppedPackets, 1)
-			flog("receiveLoop", logger.Fields{"remoteAddr": udpAddr.String(), "dropped":    atomic.LoadUint64(&l.droppedPackets)}).Warn("packetQueue full, dropping packet")
+			flog("receiveLoop", logger.Fields{"remoteAddr": udpAddr.String(), "dropped": atomic.LoadUint64(&l.droppedPackets)}).Warn("packetQueue full, dropping packet")
 		}
 	}
 }
@@ -165,7 +165,7 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 		// inbound sessions are failing.  Data packets that fail routing are
 		// typically late arrivals for a closed session and are expected; log
 		// those at Debug to avoid production noise.
-		logEntry := flog("handleIncomingPacket", logger.Fields{"remote_addr":    remoteAddr.String(), "message_type":   packet.MessageType, "routing_errors": atomic.LoadUint64(&l.routingErrors)}).WithError(err)
+		logEntry := flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "message_type": packet.MessageType, "routing_errors": atomic.LoadUint64(&l.routingErrors)}).WithError(err)
 		if l.router.IsHandshakePacket(packet.MessageType) {
 			logEntry.Warn("handshake packet routing failed")
 		} else {

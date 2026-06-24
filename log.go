@@ -5,5 +5,7 @@ import (
 	"github.com/go-i2p/logger"
 )
 
-var flog = logutil.MakePackageLogger("noise")
-var log = logger.GetGoI2PLogger()
+var (
+	flog = logutil.MakePackageLogger("noise")
+	log  = logger.GetGoI2PLogger()
+)

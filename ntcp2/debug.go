@@ -221,6 +221,6 @@ func dumpMsg3IfEnabled(cfg *Config, raw interface{}, msg3, riBytes []byte, m3p2L
 	if m3p1End > len(msg3) {
 		m3p1End = len(msg3)
 	}
-	flog("dumpMsg3IfEnabled", logger.Fields{"event":    "ntcp2_msg3_wire_dump", "remote":   remote, "local":    local, "msg3_len": len(msg3), "m3p1_len": msg3Part1Size, "m3p2_len": int(m3p2Len), "ri_len":   len(riBytes), "m3p1_hex": hex.EncodeToString(msg3[:m3p1End]), "m3p2_hex": hex.EncodeToString(msg3[m3p1End:]), "ri_hex":   hex.EncodeToString(riBytes), "sent_ns":  time.Now().UnixNano()}).Info("NTCP2 msg3 hex dump (wire bytes about to be written)")
+	flog("dumpMsg3IfEnabled", logger.Fields{"event": "ntcp2_msg3_wire_dump", "remote": remote, "local": local, "msg3_len": len(msg3), "m3p1_len": msg3Part1Size, "m3p2_len": int(m3p2Len), "ri_len": len(riBytes), "m3p1_hex": hex.EncodeToString(msg3[:m3p1End]), "m3p2_hex": hex.EncodeToString(msg3[m3p1End:]), "ri_hex": hex.EncodeToString(riBytes), "sent_ns": time.Now().UnixNano()}).Info("NTCP2 msg3 hex dump (wire bytes about to be written)")
 	_ = cfg
 }

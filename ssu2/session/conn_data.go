@@ -107,7 +107,7 @@ func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 		sent := h.validDataPacketsSent.Load()
 		if sent > 0 {
 			lost := int64(sent) - int64(peerReceived)
-			flog("wrapTerminationCallback", logger.Fields{"sent":         sent, "peerReceived": peerReceived, "lost":         lost, "reason":       reason}).Info("Termination packet loss summary (G-7)")
+			flog("wrapTerminationCallback", logger.Fields{"sent": sent, "peerReceived": peerReceived, "lost": lost, "reason": reason}).Info("Termination packet loss summary (G-7)")
 		}
 		if existingOnTermination != nil {
 			existingOnTermination(peerReceived, reason, additionalData)

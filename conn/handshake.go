@@ -289,7 +289,7 @@ func createNoiseAddresses(underlying net.Conn, config *ConnConfig) (localAddr, r
 	selfRole, peerRole := roleForInitiator(config.Initiator)
 	localAddr = NewNoiseAddr(underlying.LocalAddr(), config.Pattern, selfRole)
 	remoteAddr = NewNoiseAddr(underlying.RemoteAddr(), config.Pattern, peerRole)
-	return
+	return localAddr, remoteAddr
 }
 
 // executeRoleBasedHandshake performs handshake based on initiator/responder role.
