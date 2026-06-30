@@ -257,7 +257,7 @@ func (c *Coordinator) IntroducerOptions() (map[string]string, error) {
 // directly-connected peer's hash, the peer's key is preferred (it was
 // authenticated by the handshake). Otherwise the configured KeyResolver is
 // consulted.
-func (c *Coordinator) resolveKey(hash data.Hash, peerHash data.Hash, peerKey ed25519.PublicKey) (ed25519.PublicKey, bool) {
+func (c *Coordinator) resolveKey(hash, peerHash data.Hash, peerKey ed25519.PublicKey) (ed25519.PublicKey, bool) {
 	if hash == peerHash && peerKey != nil {
 		return peerKey, true
 	}
