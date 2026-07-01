@@ -16,8 +16,8 @@ github.com/go-i2p/logger v0.1.60000-0.20260612012503-bec4044a2b0d h1:AJWfD1WSsIM
 github.com/go-i2p/logger v0.1.60000-0.20260612012503-bec4044a2b0d/go.mod h1:ygRTQPZmHNNfwEf+vPtJwJs/EjIW7al5OOo+hEY6KS0=
 github.com/go-i2p/noise v1.1.1-0.20260612013029-6d1ef3427561 h1:ygcYOpsJO6hvWjEzv4e4lPHvUqQ7d38syI4ar2cMWLU=
 github.com/go-i2p/noise v1.1.1-0.20260612013029-6d1ef3427561/go.mod h1:/79lUu1iKd1yW+zqLI7QjY2MUpsGkGStKM7XVDxPeEc=
-github.com/go-i2p/path v0.1.60000-0.20260630222843-bc6e8e3a8561 h1:xSARl+hrskdOuMAC9uW9+LLOMg7Ckr63/Unw9ZXAGVs=
-github.com/go-i2p/path v0.1.60000-0.20260630222843-bc6e8e3a8561/go.mod h1:x4e4zcEl9WmXxGjqcwqEBIW1huIVErX5EpIRFRftdJk=
+github.com/go-i2p/path v0.1.60000-0.20260701023528-b274f9e99ade h1:Qy0EwK6MuqJ1U6SJ3mzlEJHjv8C89m5ox5zNAHgDooc=
+github.com/go-i2p/path v0.1.60000-0.20260701023528-b274f9e99ade/go.mod h1:MyZ8aeWUgaq0DK919e9+nsD08+lTgnlQ+rl8kBLc+AI=
 github.com/go-i2p/pool v0.1.59999 h1:jWTzOypfVFvhcUPhrkzOq0i2rMtz8A1QJjzv9f8YIEg=
 github.com/go-i2p/pool v0.1.59999/go.mod h1:O1i9HtW0zSaoHAzVLmDTEvHYD9VzLnvfBDd/aKk2N7Y=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
