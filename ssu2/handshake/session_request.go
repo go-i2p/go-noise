@@ -56,6 +56,15 @@ func isAllZeroToken(token []byte) bool {
 	return true
 }
 
+func computeSessionRequestReplayToken(ephemeralKey, payload []byte) [32]byte {
+	h := sha256.New()
+	_, _ = h.Write(ephemeralKey)
+	_, _ = h.Write(payload)
+	var token [32]byte
+	copy(token[:], h.Sum(nil))
+	return token
+}
+
 // CreateSessionRequest creates a SessionRequest message (Message 0, XK pattern message 1).
 // This is the first handshake message sent by the initiator.
 //
@@ -177,12 +186,13 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 		return nil, oops.Errorf("SessionRequest missing ephemeral key")
 	}
 
+	replayToken := computeSessionRequestReplayToken(packet.EphemeralKey, packet.Payload)
+
 	// Replay protection: hash the ephemeral key + payload as a unique message ID.
 	// The ephemeral key is randomly generated per handshake attempt, so its
 	// hash is a reliable replay detection key.
 	if h.replayCache != nil {
-		digest := sha256.Sum256(append(packet.EphemeralKey, packet.Payload...))
-		if h.replayCache.CheckAndAdd(digest) {
+		if h.replayCache.CheckAndAdd(replayToken) {
 			return nil, oops.Errorf("replayed SessionRequest detected")
 		}
 	}
@@ -223,6 +233,10 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 
 	// Extract peer's Options block for padding negotiation (G-3).
 	h.extractPeerOptions(blocks)
+
+	// Expose only the minimum replay material needed by callers.
+	h.peerSessionRequestEphemeral = copyBytes(packet.EphemeralKey)
+	h.peerSessionRequestReplayToken = copyBytes(replayToken[:])
 
 	// In the XK pattern, the initiator's static key is transmitted encrypted
 	// in SessionConfirmed (message 3), not in SessionRequest (message 1).

@@ -260,6 +260,17 @@ type SSU2Conn struct {
 	// Compared against the peer's reported count in Termination blocks
 	// to detect packet loss during close (G-7).
 	validDataPacketsSent atomic.Uint64
+
+	// handshakeMaterialMutex protects access to inbound handshake replay material.
+	handshakeMaterialMutex sync.RWMutex
+
+	// peerEphemeralKey is the initiator ephemeral key from the validated inbound
+	// SessionRequest (responder side only).
+	peerEphemeralKey []byte
+
+	// replayToken is the deterministic token derived from the validated inbound
+	// SessionRequest and suitable for replay cache checks.
+	replayToken []byte
 }
 
 // PendingPacket tracks an outbound packet awaiting acknowledgment.

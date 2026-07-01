@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/sha256"
 	"net"
 	"runtime"
 	"testing"
@@ -953,6 +954,60 @@ func TestDataPhaseNonce_PacketNumberAsNonce(t *testing.T) {
 	decrypted, err := recvCS.Decrypt(nil, ad, ciphertext)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, decrypted, "round-trip with same nonce must recover plaintext")
+}
+
+func TestResponderReplayMaterialAvailableAfterSessionRequestValidation(t *testing.T) {
+	config := createTestConfig(t)
+
+	initDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	respDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+
+	config.StaticKey = respDH.Private
+	var remoteHash data.Hash
+	copy(remoteHash[:], initDH.Public)
+	config.RemoteRouterHash = &remoteHash
+	config.RemoteStaticKey = initDH.Public
+
+	responderConn, err := NewSSU2Conn(
+		newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}),
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5678},
+		config,
+		false,
+		respDH.Private,
+		nil,
+	)
+	require.NoError(t, err)
+
+	initiatorHS, err := NewHandshakeHandlerWithKeys(true, initDH, respDH.Public, nil)
+	require.NoError(t, err)
+
+	requestPacket, err := initiatorHS.CreateSessionRequest(11111, 0)
+	require.NoError(t, err)
+
+	// Before SessionRequest is validated by the responder, no replay material is exposed.
+	assert.Nil(t, responderConn.GetPeerEphemeralKey())
+	assert.Nil(t, responderConn.GetReplayToken())
+
+	responderConn.recvQueue <- requestPacket
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = responderConn.receiveSessionRequest(ctx)
+	require.NoError(t, err)
+
+	assert.Equal(t, requestPacket.EphemeralKey, responderConn.GetPeerEphemeralKey())
+
+	expected := sha256.Sum256(append(append([]byte{}, requestPacket.EphemeralKey...), requestPacket.Payload...))
+	assert.Equal(t, expected[:], responderConn.GetReplayToken())
+
+	// Returned values must be defensive copies.
+	ephemeralView := responderConn.GetPeerEphemeralKey()
+	replayView := responderConn.GetReplayToken()
+	ephemeralView[0] ^= 0x01
+	replayView[0] ^= 0x01
+	assert.Equal(t, requestPacket.EphemeralKey, responderConn.GetPeerEphemeralKey())
+	assert.Equal(t, expected[:], responderConn.GetReplayToken())
 }
 
 // setupHandshakePair creates an initiator/responder pair for tests.

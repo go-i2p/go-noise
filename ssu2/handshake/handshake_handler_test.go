@@ -1,6 +1,7 @@
 package handshake
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"testing"
 
@@ -179,6 +180,24 @@ func TestHandshakeHandler_ProcessSessionRequest(t *testing.T) {
 	_ = learnedKey   // May be nil
 	_ = initiatorPub // For future identity verification via payload blocks
 	_ = responder    // Handshake state is valid
+
+	assert.Equal(t, requestPacket.EphemeralKey, responder.GetPeerEphemeralKey())
+	expectedToken := computeSessionRequestReplayToken(requestPacket.EphemeralKey, requestPacket.Payload)
+	assert.Equal(t, expectedToken[:], responder.GetReplayToken())
+
+	// Accessors must return copies.
+	ephemeralView := responder.GetPeerEphemeralKey()
+	replayView := responder.GetReplayToken()
+	ephemeralView[0] ^= 0x01
+	replayView[0] ^= 0x01
+	assert.Equal(t, requestPacket.EphemeralKey, responder.GetPeerEphemeralKey())
+	assert.Equal(t, expectedToken[:], responder.GetReplayToken())
+
+	// Keep a direct hash assertion for clarity and external consumer parity.
+	h := sha256.New()
+	_, _ = h.Write(requestPacket.EphemeralKey)
+	_, _ = h.Write(requestPacket.Payload)
+	assert.Equal(t, h.Sum(nil), responder.GetReplayToken())
 }
 
 func TestHandshakeHandler_ProcessSessionRequest_InvalidType(t *testing.T) {

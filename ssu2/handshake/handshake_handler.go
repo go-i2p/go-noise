@@ -85,6 +85,14 @@ type HandshakeHandler struct {
 	// DateTime blocks whose timestamp differs from local time by more
 	// than this value. Set from SSU2Config.MaxClockSkew.
 	maxClockSkew time.Duration
+
+	// peerSessionRequestEphemeral is the inbound initiator ephemeral key from
+	// the most recently validated SessionRequest (responder side only).
+	peerSessionRequestEphemeral []byte
+
+	// peerSessionRequestReplayToken is the deterministic replay token derived
+	// from the most recently validated SessionRequest.
+	peerSessionRequestReplayToken []byte
 }
 
 // buildSSU2Prologue returns the Noise prologue for SSU2 handshakes.
@@ -351,6 +359,18 @@ func (h *HandshakeHandler) GetPeerRouterInfo() []byte {
 	copied := make([]byte, len(h.peerRouterInfo))
 	copy(copied, h.peerRouterInfo)
 	return copied
+}
+
+// GetPeerEphemeralKey returns the initiator ephemeral key from the most
+// recently validated inbound SessionRequest. For initiators, this is always nil.
+func (h *HandshakeHandler) GetPeerEphemeralKey() []byte {
+	return copyBytes(h.peerSessionRequestEphemeral)
+}
+
+// GetReplayToken returns the deterministic replay token from the most recently
+// validated inbound SessionRequest. For initiators, this is always nil.
+func (h *HandshakeHandler) GetReplayToken() []byte {
+	return copyBytes(h.peerSessionRequestReplayToken)
 }
 
 // createHandshakeBlocks creates the standard blocks for handshake messages.

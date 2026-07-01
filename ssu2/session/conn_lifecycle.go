@@ -341,6 +341,41 @@ func (h *SSU2Conn) IsInitiator() bool {
 	return h.initiator
 }
 
+// GetPeerEphemeralKey returns the initiator ephemeral key from the validated
+// inbound SessionRequest. Returns nil for initiator-side connections or before
+// the responder validates SessionRequest.
+func (h *SSU2Conn) GetPeerEphemeralKey() []byte {
+	h.handshakeMaterialMutex.RLock()
+	defer h.handshakeMaterialMutex.RUnlock()
+	if len(h.peerEphemeralKey) == 0 {
+		return nil
+	}
+	out := make([]byte, len(h.peerEphemeralKey))
+	copy(out, h.peerEphemeralKey)
+	return out
+}
+
+// GetReplayToken returns a deterministic replay token derived from the
+// validated inbound SessionRequest. Returns nil for initiator-side
+// connections or before the responder validates SessionRequest.
+func (h *SSU2Conn) GetReplayToken() []byte {
+	h.handshakeMaterialMutex.RLock()
+	defer h.handshakeMaterialMutex.RUnlock()
+	if len(h.replayToken) == 0 {
+		return nil
+	}
+	out := make([]byte, len(h.replayToken))
+	copy(out, h.replayToken)
+	return out
+}
+
+func (h *SSU2Conn) setInboundReplayMaterial(ephemeralKey, replayToken []byte) {
+	h.handshakeMaterialMutex.Lock()
+	h.peerEphemeralKey = append([]byte(nil), ephemeralKey...)
+	h.replayToken = append([]byte(nil), replayToken...)
+	h.handshakeMaterialMutex.Unlock()
+}
+
 // isSocketDeadError checks whether an error indicates the underlying socket
 // is dead or unreachable (e.g., broken pipe, connection refused, no such host).
 // AUDIT 5.4: Used to short-circuit the destroy wait when sending Termination

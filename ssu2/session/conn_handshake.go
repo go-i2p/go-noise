@@ -339,6 +339,10 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	if _, err = h.handshakeHandler.ProcessSessionRequest(sessionRequest); err != nil {
 		return 0, oops.Wrapf(err, "failed to process SessionRequest")
 	}
+	h.setInboundReplayMaterial(
+		h.handshakeHandler.GetPeerEphemeralKey(),
+		h.handshakeHandler.GetReplayToken(),
+	)
 
 	var initiatorConnID uint64
 	if len(sessionRequest.Header) >= 24 {
