@@ -61,6 +61,7 @@ const (
 //
 // Handshake must not be called concurrently on the same connection.
 func (c *Conn) Handshake(ctx context.Context) (retErr error) {
+	hsStart := time.Now()
 	cfg := c.ntcp2Config.Load()
 	if cfg == nil {
 		return oops.
@@ -73,7 +74,22 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	nc.StartHandshake()
 	raw := nc.Underlying()
 
-	_, clearOnSuccess, err := c.configureHandshakeDeadline(ctx, cfg, raw)
+	role := "responder"
+	if cfg.Initiator {
+		role = "initiator"
+	}
+	deadlineInfo := "none"
+	if dl, ok := ctx.Deadline(); ok {
+		deadlineInfo = dl.Format(time.RFC3339)
+	}
+	flog("Handshake", logger.Fields{
+		"event":    "handshake_start",
+		"role":     role,
+		"remote":   raw.RemoteAddr().String(),
+		"deadline": deadlineInfo,
+	}).Debug("NTCP2 handshake starting")
+
+	hsCtx, clearOnSuccess, err := c.configureHandshakeDeadline(ctx, cfg, raw)
 	if err != nil {
 		nc.FailHandshake()
 		return err
@@ -86,9 +102,40 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 		}()
 	}
 
+	// Spawn a goroutine that emits a Warn-level log when the handshake context
+	// is about to expire (5 s before deadline). This makes the stall point
+	// visible in production logs without adding overhead to the hot path.
+	// The goroutine exits early when the handshake context is cancelled
+	// (i.e., when Handshake returns, successfully or otherwise).
+	if dl, ok := hsCtx.Deadline(); ok {
+		if warnIn := time.Until(dl) - 5*time.Second; warnIn > 0 {
+			go func() {
+				select {
+				case <-time.After(warnIn):
+					flog("Handshake", logger.Fields{
+						"event":        "approaching_deadline",
+						"role":         role,
+						"remote":       raw.RemoteAddr().String(),
+						"elapsed_ms":   time.Since(hsStart).Milliseconds(),
+						"remaining_ms": time.Until(dl).Milliseconds(),
+					}).Warn("NTCP2 handshake approaching deadline — handshake likely stalled")
+				case <-hsCtx.Done():
+					// handshake completed or cancelled before deadline warning
+				}
+			}()
+		}
+	}
+
 	msg3Payload, err := c.executeHandshakeRole(cfg, nc)
 	if err != nil {
 		nc.FailHandshake()
+		flog("Handshake", logger.Fields{
+			"event":      "handshake_failed",
+			"role":       role,
+			"remote":     raw.RemoteAddr().String(),
+			"elapsed_ms": time.Since(hsStart).Milliseconds(),
+			"err":        err.Error(),
+		}).Warn("NTCP2 handshake failed")
 		return err
 	}
 
@@ -122,6 +169,13 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	// STATE-1 / RACE-3: mark the connection as fully established only after the
 	// SipHash keys are installed. Read() and Write() gate on this flag.
 	c.established.Store(true)
+
+	flog("Handshake", logger.Fields{
+		"event":      "handshake_complete",
+		"role":       role,
+		"remote":     raw.RemoteAddr().String(),
+		"elapsed_ms": time.Since(hsStart).Milliseconds(),
+	}).Debug("NTCP2 handshake complete")
 
 	return nil
 }
@@ -220,6 +274,8 @@ func (c *Conn) storePeerMessage3Payload(msg3Payload []byte) {
 // Each phase is delegated to sendInitiatorMsg1, receiveResponderMsg2, and
 // sendInitiatorMsg3 so each step can be tested independently.
 func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
+	t0 := time.Now()
+	raw := nc.Underlying()
 	riBytes := cfg.LocalRouterInfo
 	// m3p2Len includes the block header (3B), flag byte (1B), RouterInfo bytes, and the AEAD tag (16B).
 	// Per the NTCP2 spec, the RouterInfo block (type 2) data starts with a 1-byte flag field.
@@ -246,13 +302,37 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 		flog("performInitiatorHandshake", logger.Fields{"event": "static_key_ri_mismatch", "err": err.Error()}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
 	}
 
+	flog("performInitiatorHandshake", logger.Fields{
+		"event":    "initiator_start",
+		"remote":   raw.RemoteAddr().String(),
+		"m3p2_len": m3p2Len,
+		"ri_len":   len(riBytes),
+	}).Debug("NTCP2 initiator: sending msg1")
+
 	if err := sendInitiatorMsg1(cfg, nc, m3p2Len); err != nil {
 		return err
 	}
+	flog("performInitiatorHandshake", logger.Fields{
+		"event":      "msg1_done",
+		"elapsed_ms": time.Since(t0).Milliseconds(),
+	}).Debug("NTCP2 initiator: msg1 sent, waiting for msg2")
+
 	if err := receiveResponderMsg2(cfg, nc); err != nil {
 		return err
 	}
-	return sendInitiatorMsg3(cfg, nc, riBytes, m3p2Len)
+	flog("performInitiatorHandshake", logger.Fields{
+		"event":      "msg2_done",
+		"elapsed_ms": time.Since(t0).Milliseconds(),
+	}).Debug("NTCP2 initiator: msg2 received, sending msg3")
+
+	if err := sendInitiatorMsg3(cfg, nc, riBytes, m3p2Len); err != nil {
+		return err
+	}
+	flog("performInitiatorHandshake", logger.Fields{
+		"event":      "msg3_done",
+		"elapsed_ms": time.Since(t0).Milliseconds(),
+	}).Debug("NTCP2 initiator: msg3 sent, handshake complete")
+	return nil
 }
 
 // sendInitiatorMsg1 builds and sends the NTCP2 message 1 (AES-obfuscation step),
@@ -305,13 +385,23 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 // It uses a 1-byte probe read to distinguish early peer-close from partial
 // msg2, then MixHashes Bob's cleartext padding into the handshake state.
 func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
+	t2 := time.Now()
 	raw := nc.Underlying()
+	flog("receiveResponderMsg2", logger.Fields{
+		"event":  "msg2_read_start",
+		"remote": raw.RemoteAddr().String(),
+	}).Debug("NTCP2 initiator: blocking on msg2 read")
 	bobOpts, bobPadLen, err := readMessage2WithPadding(cfg, raw, nc)
 	if err != nil {
+		flog("receiveResponderMsg2", logger.Fields{
+			"event":      "msg2_read_failed",
+			"elapsed_ms": time.Since(t2).Milliseconds(),
+			"err":        err.Error(),
+		}).Warn("NTCP2 initiator: msg2 read failed")
 		return err
 	}
 	// Debug-level breadcrumb for interop diagnostics. Redacted for anonymity.
-	flog("receiveResponderMsg2", logger.Fields{"event": "msg2_processed", "bob_padlen": bobPadLen, "bob_opts_len": len(bobOpts)}).Debug("NTCP2 msg2 processed; bob padlen extracted")
+	flog("receiveResponderMsg2", logger.Fields{"event": "msg2_processed", "bob_padlen": bobPadLen, "bob_opts_len": len(bobOpts), "elapsed_ms": time.Since(t2).Milliseconds()}).Debug("NTCP2 msg2 processed; bob padlen extracted")
 	return nil
 }
 
@@ -421,24 +511,67 @@ func warnMissingReplayDetector() {
 }
 
 func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
+	t0 := time.Now()
 	raw := nc.Underlying()
+	flog("performResponderHandshake", logger.Fields{
+		"event":  "responder_start",
+		"remote": raw.RemoteAddr().String(),
+	}).Debug("NTCP2 responder: waiting for msg1")
+
 	m3p2Len, err := handleResponderMsg1(cfg, nc, raw)
 	if err != nil {
 		return nil, err
 	}
+	flog("performResponderHandshake", logger.Fields{
+		"event":      "msg1_done",
+		"elapsed_ms": time.Since(t0).Milliseconds(),
+		"m3p2_len":   m3p2Len,
+	}).Debug("NTCP2 responder: msg1 processed, sending msg2")
+
 	if err := handleResponderMsg2(nc, raw); err != nil {
 		return nil, err
 	}
-	return handleResponderMsg3(nc, raw, m3p2Len)
+	flog("performResponderHandshake", logger.Fields{
+		"event":      "msg2_done",
+		"elapsed_ms": time.Since(t0).Milliseconds(),
+	}).Debug("NTCP2 responder: msg2 sent, waiting for msg3")
+
+	payload, err := handleResponderMsg3(nc, raw, m3p2Len)
+	if err != nil {
+		flog("performResponderHandshake", logger.Fields{
+			"event":      "msg3_failed",
+			"elapsed_ms": time.Since(t0).Milliseconds(),
+			"err":        err.Error(),
+		}).Warn("NTCP2 responder: msg3 read/processing failed")
+		return nil, err
+	}
+	flog("performResponderHandshake", logger.Fields{
+		"event":       "msg3_done",
+		"elapsed_ms":  time.Since(t0).Milliseconds(),
+		"payload_len": len(payload),
+	}).Debug("NTCP2 responder: msg3 done, handshake complete")
+
+	return payload, nil
 }
 
 func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16, error) {
 	// === Message 1 (Alice -> Bob) ============================================
 	buf1 := make([]byte, msg1Size)
+	t1 := time.Now()
+	flog("handleResponderMsg1", logger.Fields{
+		"event":          "msg1_read_start",
+		"remote":         raw.RemoteAddr().String(),
+		"expected_bytes": msg1Size,
+	}).Debug("NTCP2 responder: blocking on msg1 ReadFull")
 	if _, err := io.ReadFull(raw, buf1); err != nil {
 		return 0, oops.Code("MSG1_READ_FAILED").In("ntcp2").
 			Wrapf(err, "failed to read NTCP2 message 1")
 	}
+	flog("handleResponderMsg1", logger.Fields{
+		"event":      "msg1_read_done",
+		"elapsed_ms": time.Since(t1).Milliseconds(),
+		"bytes":      msg1Size,
+	}).Debug("NTCP2 responder: msg1 read complete, processing")
 	aliceOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseInitial, buf1)
 	if err != nil {
 		dumpInboundMsg1IfEnabled(cfg, raw, buf1, nil, err)
@@ -537,6 +670,13 @@ func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
 		return oops.Code("MSG2_SIZE_MISMATCH").In("ntcp2").
 			Errorf("expected message 2 to be %d bytes, got %d", msg2Size, len(msg2))
 	}
+	t2 := time.Now()
+	flog("handleResponderMsg2", logger.Fields{
+		"event":   "msg2_write_start",
+		"remote":  raw.RemoteAddr().String(),
+		"msg_len": msg2Size,
+		"pad_len": bobPadLen,
+	}).Debug("NTCP2 responder: sending msg2")
 	if _, err := raw.Write(msg2); err != nil {
 		return oops.Code("MSG2_SEND_FAILED").In("ntcp2").
 			Wrapf(err, "failed to send NTCP2 message 2")
@@ -557,6 +697,11 @@ func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
 		}
 		nc.MixHashData(pad)
 	}
+	flog("handleResponderMsg2", logger.Fields{
+		"event":      "msg2_write_done",
+		"elapsed_ms": time.Since(t2).Milliseconds(),
+		"total_sent": msg2Size + bobPadLen,
+	}).Debug("NTCP2 responder: msg2 + padding sent")
 
 	return nil
 }
@@ -565,10 +710,27 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 	// === Message 3 (Alice -> Bob) ============================================
 	msg3Len := msg3Part1Size + int(m3p2Len)
 	buf3 := make([]byte, msg3Len)
+	t3 := time.Now()
+	flog("handleResponderMsg3", logger.Fields{
+		"event":          "msg3_read_start",
+		"remote":         raw.RemoteAddr().String(),
+		"expected_bytes": msg3Len,
+		"m3p2_len":       m3p2Len,
+	}).Debug("NTCP2 responder: blocking on msg3 ReadFull")
 	if _, err := io.ReadFull(raw, buf3); err != nil {
+		flog("handleResponderMsg3", logger.Fields{
+			"event":      "msg3_read_failed",
+			"elapsed_ms": time.Since(t3).Milliseconds(),
+			"err":        err.Error(),
+		}).Warn("NTCP2 responder: msg3 ReadFull failed — possible timeout or peer abort")
 		return nil, oops.Code("MSG3_READ_FAILED").In("ntcp2").
 			Wrapf(err, "failed to read NTCP2 message 3 (%d bytes)", msg3Len)
 	}
+	flog("handleResponderMsg3", logger.Fields{
+		"event":      "msg3_read_done",
+		"elapsed_ms": time.Since(t3).Milliseconds(),
+		"bytes":      msg3Len,
+	}).Debug("NTCP2 responder: msg3 read complete, processing Noise PhaseFinal")
 	payload, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseFinal, buf3)
 	if err != nil {
 		return nil, oops.Code("MSG3_PROCESS_FAILED").In("ntcp2").
