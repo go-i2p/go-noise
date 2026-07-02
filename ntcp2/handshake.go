@@ -662,6 +662,21 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 			Errorf("message 3 part 2 too large: %d > %d", m3p2Len, MaxNTCP2Message3Part2Len)
 	}
 
+	// Validate m3p2Len minimum: must be at least BlockHeaderSize(3) + flag(1) +
+	// Poly1305Overhead(16) = 20 bytes.  A value below this cannot hold a valid
+	// NTCP2 RouterInfo block even with zero RouterInfo bytes, so we reject it
+	// early to avoid allocating a buffer and then immediately hitting an AEAD
+	// failure inside ReadHandshakeMsgFromBytes.
+	const minMsg3Part2Len = BlockHeaderSize + 1 + Poly1305Overhead
+	if m3p2Len < minMsg3Part2Len {
+		return 0, oops.
+			Code("MSG3_PART2_TOO_SMALL").
+			In("ntcp2").
+			With("m3p2Len", m3p2Len).
+			With("min", minMsg3Part2Len).
+			Errorf("message 3 part 2 too small: %d < %d (minimum = BlockHeaderSize+flag+AEAD tag)", m3p2Len, minMsg3Part2Len)
+	}
+
 	// Read and MixHash Alice's cleartext padding after message 1.
 	// Per NTCP2 spec §4.1: "padding MUST be mixed into the handshake hash"
 	// even when padLen is 0 (no bytes to read, no MixHash needed).
@@ -730,6 +745,14 @@ func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
 
 func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]byte, error) {
 	// === Message 3 (Alice -> Bob) ============================================
+	// Read msg3 in two separate phases for diagnostic granularity:
+	//   Part 1 (48 bytes): EncryptedS = EncryptAndHash(s_pub) + AEAD tag
+	//   Part 2 (m3p2Len bytes): EncryptAndHash(RouterInfo block) + AEAD tag
+	//
+	// Splitting the read lets us distinguish:
+	//   - "Part 1 never arrived" → Alice did not send msg3 at all
+	//   - "Part 1 arrived, Part 2 stalled" → Alice sent msg3 partially
+	//     (possible split-write by another implementation, or partial delivery)
 	msg3Len := msg3Part1Size + int(m3p2Len)
 	buf3 := make([]byte, msg3Len)
 	t3 := time.Now()
@@ -738,16 +761,45 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 		"remote":         raw.RemoteAddr().String(),
 		"expected_bytes": msg3Len,
 		"m3p2_len":       m3p2Len,
-	}).Debug("NTCP2 responder: blocking on msg3 ReadFull")
-	if _, err := io.ReadFull(raw, buf3); err != nil {
+		"m3p1_len":       msg3Part1Size,
+	}).Debug("NTCP2 responder: blocking on msg3 part1 ReadFull (EncryptedS)")
+
+	// Phase 1: read msg3 part 1 (EncryptedS, always 48 bytes).
+	if _, err := io.ReadFull(raw, buf3[:msg3Part1Size]); err != nil {
 		flog("handleResponderMsg3", logger.Fields{
-			"event":      "msg3_read_failed",
+			"event":      "msg3_part1_failed",
 			"elapsed_ms": time.Since(t3).Milliseconds(),
 			"err":        err.Error(),
-		}).Warn("NTCP2 responder: msg3 ReadFull failed — possible timeout or peer abort")
+		}).Warn("NTCP2 responder: msg3 part1 (EncryptedS) read failed — peer did not send msg3 or connection was reset")
 		return nil, oops.Code("MSG3_READ_FAILED").In("ntcp2").
-			Wrapf(err, "failed to read NTCP2 message 3 (%d bytes)", msg3Len)
+			With("phase", "part1").
+			With("expected_bytes", msg3Part1Size).
+			Wrapf(err, "failed to read NTCP2 message 3 part 1 (%d bytes)", msg3Part1Size)
 	}
+	t3p1 := time.Since(t3)
+	flog("handleResponderMsg3", logger.Fields{
+		"event":      "msg3_part1_done",
+		"elapsed_ms": t3p1.Milliseconds(),
+		"bytes":      msg3Part1Size,
+	}).Debug("NTCP2 responder: msg3 part1 (EncryptedS) received; waiting for part2 (RouterInfo)")
+
+	// Phase 2: read msg3 part 2 (encrypted RouterInfo block).
+	if m3p2Len > 0 {
+		if _, err := io.ReadFull(raw, buf3[msg3Part1Size:]); err != nil {
+			flog("handleResponderMsg3", logger.Fields{
+				"event":           "msg3_part2_failed",
+				"elapsed_ms":      time.Since(t3).Milliseconds(),
+				"part1_elapsed_ms": t3p1.Milliseconds(),
+				"err":             err.Error(),
+				"m3p2_len":        m3p2Len,
+			}).Warn("NTCP2 responder: msg3 part2 (RouterInfo) read failed after part1 — possible split-write stall or timeout")
+			return nil, oops.Code("MSG3_READ_FAILED").In("ntcp2").
+				With("phase", "part2").
+				With("expected_bytes", m3p2Len).
+				Wrapf(err, "failed to read NTCP2 message 3 part 2 (%d bytes)", m3p2Len)
+		}
+	}
+
 	flog("handleResponderMsg3", logger.Fields{
 		"event":      "msg3_read_done",
 		"elapsed_ms": time.Since(t3).Milliseconds(),

@@ -229,6 +229,18 @@ func (nl *Listener) Accept() (net.Conn, error) {
 	// from the moment Accept() returns. Store it on the conn so Handshake() can
 	// use min(derived, acceptDeadline) rather than resetting to time.Now()+timeout
 	// (which would grant the peer an extra window if the caller delays).
+	//
+	// IMPORTANT — caller configuration note:
+	// The effective handshake timeout is driven by connConfig.HandshakeTimeout,
+	// which comes from the NTCP2Config passed to NewNTCP2Listener. To obtain a
+	// longer timeout (e.g. 60 s) the caller MUST use
+	//
+	//   cfg = cfg.WithHandshakeTimeout(60 * time.Second)
+	//
+	// before constructing the listener. Passing a longer-deadline context to
+	// Handshake() alone is NOT sufficient: this Accept() path sets the TCP
+	// deadline immediately from the config value, and Handshake() uses
+	// min(ctx_deadline, acceptDeadline) so the config value is the hard cap.
 	handshakeTimeout := connConfig.HandshakeTimeout
 	if handshakeTimeout <= 0 {
 		handshakeTimeout = DefaultHandshakeTimeoutSeconds * time.Second
