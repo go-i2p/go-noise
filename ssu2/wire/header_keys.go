@@ -350,5 +350,20 @@ func (hpm *HeaderProtectorManager) getDataInboundKeys() (k1, k2 []byte, err erro
 	return hpm.introKey, hpm.recvDataHeader2, nil
 }
 
+// GetDataInboundProtector returns a HeaderProtector configured for decrypting
+// inbound Data packets received by this endpoint.
+// k_header_1 = our intro key (receiver), k_header_2 = recvDataHeader2.
+// Returns an error when recvDataHeader2 has not yet been derived (i.e. before
+// finalizeHandshake calls deriveDataPhaseKeys / SetKDFKeys).
+func (hpm *HeaderProtectorManager) GetDataInboundProtector() (*HeaderProtector, error) {
+	hpm.mu.RLock()
+	defer hpm.mu.RUnlock()
+	k1, k2, err := hpm.getDataInboundKeys()
+	if err != nil {
+		return nil, err
+	}
+	return NewHeaderProtector(k1, k2, HeaderTypeData)
+}
+
 // ExtractConnectionID extracts the destination connection ID from a decrypted header.
 // This reads bytes 0-7 as a big-endian uint64.

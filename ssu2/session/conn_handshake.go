@@ -168,6 +168,50 @@ func (h *SSU2Conn) notifySessCreateKey() {
 	}
 }
 
+// notifySessConfirmedKey fires the sessConfirmedKeyNotifyCh (if set) with the
+// inbound SessionConfirmed HeaderProtector.  For a responder (isInitiator=false),
+// GetProtectorForType(SessionConfirmed) returns k_header_1=introKey and
+// k_header_2=sessionConfirmedHeader2, which are exactly the keys the listener
+// needs to deobfuscate the inbound SessionConfirmed from the initiator.
+// Called from createAndSendSessionCreated after installBothHeaderKeys, while
+// the responder still holds the socket-write goroutine — before the initiator
+// can send SessionConfirmed — so the listener registry is updated in time.
+// Non-blocking; only fires for responder-role connections.
+func (h *SSU2Conn) notifySessConfirmedKey() {
+	if h.sessConfirmedKeyNotifyCh == nil || h.headerProtector == nil {
+		return
+	}
+	p, err := h.headerProtector.GetProtectorForType(wire.HeaderTypeSessionConfirmed)
+	if err != nil {
+		flog("notifySessConfirmedKey").WithError(err).Warn("could not build SessionConfirmed inbound protector for listener notify")
+		return
+	}
+	select {
+	case h.sessConfirmedKeyNotifyCh <- p:
+	default:
+	}
+}
+
+// notifyRecvDataKey fires the recvDataKeyNotifyCh (if set) with the inbound
+// Data-phase HeaderProtector (k_header_1=introKey, k_header_2=recvDataHeader2).
+// Called from deriveDataPhaseKeys after SetKDFKeys installs recvDataHeader2.
+// Fires for both initiator and responder connections that share a listener socket.
+// Non-blocking.
+func (h *SSU2Conn) notifyRecvDataKey() {
+	if h.recvDataKeyNotifyCh == nil || h.headerProtector == nil {
+		return
+	}
+	p, err := h.headerProtector.GetDataInboundProtector()
+	if err != nil {
+		flog("notifyRecvDataKey").WithError(err).Warn("could not build inbound Data protector for listener notify")
+		return
+	}
+	select {
+	case h.recvDataKeyNotifyCh <- p:
+	default:
+	}
+}
+
 // awaitSessionCreated waits for a SessionCreated response, handling Retry
 // flow if the responder requires a token.
 // awaitSessionCreated waits for a SessionCreated response, handling Retry
@@ -253,6 +297,33 @@ func (h *SSU2Conn) installSessCreateHeaderKey() error {
 // The channel must have capacity ≥ 1; the send is non-blocking (best-effort).
 func (h *SSU2Conn) SetListenerKeyNotify(ch chan *wire.HeaderProtector) {
 	h.sessCreateKeyNotifyCh = ch
+}
+
+// SetAcceptedSessionConfirmedKeyNotify arms the SessionConfirmed inbound-key
+// notification channel for responder-role connections sharing a listener socket.
+// The listener calls this after creating an accepted session so it can install
+// the inbound SessionConfirmed header protector in AcceptedSessionRegistry as
+// soon as createAndSendSessionCreated derives the key.
+// The channel must have capacity ≥ 1; the send is non-blocking.
+func (h *SSU2Conn) SetAcceptedSessionConfirmedKeyNotify(ch chan *wire.HeaderProtector) {
+	h.sessConfirmedKeyNotifyCh = ch
+}
+
+// SetAcceptedDataKeyNotify arms the data-phase inbound-key notification channel
+// for connections sharing a listener socket (initiator or responder role).
+// The listener calls this so it can install the inbound Data header protector
+// in AcceptedSessionRegistry as soon as finalizeHandshake derives the data keys.
+// The channel must have capacity ≥ 1; the send is non-blocking.
+func (h *SSU2Conn) SetAcceptedDataKeyNotify(ch chan *wire.HeaderProtector) {
+	h.recvDataKeyNotifyCh = ch
+}
+
+// CloseChan returns the connection's close channel, which is closed when the
+// connection enters StateClosed. Listeners use this to unblock notification
+// goroutines waiting for key-derivation events, preventing goroutine leaks when
+// the handshake fails or times out before keys are ever derived.
+func (h *SSU2Conn) CloseChan() <-chan struct{} {
+	return h.closeChan
 }
 
 // processSessionCreated validates and processes the SessionCreated response,
@@ -412,6 +483,12 @@ func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Pac
 		return nil, err
 	}
 
+	// Notify the listener's AcceptedSessionRegistry with the SessionConfirmed
+	// inbound protector (k_header_1=introKey, k_header_2=sessionConfirmedHeader2).
+	// This must happen BEFORE sending SessionCreated and before the initiator
+	// can reply with SessionConfirmed, so the listener can decode it.
+	h.notifySessConfirmedKey()
+
 	if err := h.sendPacketDirect(sessionCreated); err != nil {
 		return nil, oops.Wrapf(err, "failed to send SessionCreated")
 	}
@@ -567,6 +644,11 @@ func (h *SSU2Conn) deriveDataPhaseKeys() (sendKHeader2, recvKHeader2 []byte, err
 			return nil, nil, oops.Wrapf(err, "failed to set header protection KDF keys")
 		}
 	}
+
+	// Notify the listener's AcceptedSessionRegistry with the inbound Data
+	// HeaderProtector (k_header_1=introKey, k_header_2=recvDataHeader2).
+	// Fires for both initiator and responder connections sharing a listener socket.
+	h.notifyRecvDataKey()
 
 	return sendKHeader2, recvKHeader2, nil
 }

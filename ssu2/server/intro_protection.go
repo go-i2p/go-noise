@@ -34,15 +34,17 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 // a defensive copy and re-tries Deserialize. Returns (packet, true) on success
 // or (nil, false) when the packet should be silently dropped.
 //
-// AUDIT C-1 & AUDIT 1.2: This two-stage parse accommodates:
-// 1. Plaintext (testing/legacy)
-// 2. Header-protected SessionRequest/TokenRequest (intro key)
-// 3. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
+// AUDIT C-1 & AUDIT 1.2: This four-stage parse accommodates:
+//  1. Plaintext (testing/legacy)
+//  2. Header-protected SessionRequest/TokenRequest (intro key)
+//  3. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
+//  4. Inbound SessionConfirmed/Data for accepted/established sessions via
+//     AcceptedSessionRegistry trial-deobfuscation
 //
-// For case 3 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup key
-// because header protection XOR-masks those bytes.  TrialDeobfuscate tries
-// every registered pending session's protectors in turn and accepts the first
-// whose decrypted dest conn ID matches the session's source conn ID.
+// For cases 3 and 4 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup
+// key because header protection XOR-masks those bytes.  TrialDeobfuscate tries
+// every registered session's protectors in turn and accepts the first whose
+// decrypted dest conn ID matches the session's own conn ID.
 func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	packet := &SSU2Packet{}
 	if err := packet.Deserialize(data); err == nil {
@@ -68,6 +70,19 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	// defensive copy, accepting the first whose decrypted dest conn ID
 	// matches the session's source conn ID.
 	if conn, deobfuscated, err := l.pendingOutbound.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
+		packet = &SSU2Packet{}
+		if err := packet.Deserialize(deobfuscated); err == nil {
+			return packet, true
+		}
+	}
+
+	// Try per-session inbound protectors for accepted/established sessions.
+	// Covers:
+	//   - SessionConfirmed (responder receives; k_header_2 = sessionConfirmedHeader2)
+	//   - Data (all roles; k_header_2 = recvDataHeader2)
+	// Both use KDF-derived keys that differ per session and are unknown to the
+	// listener until the session's Handshake goroutine derives and notifies them.
+	if conn, deobfuscated, err := l.acceptedSessions.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
 		packet = &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
 			return packet, true

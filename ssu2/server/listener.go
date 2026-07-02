@@ -102,6 +102,17 @@ type SSU2Listener struct {
 	// is cleaned up.
 	pendingOutbound *PendingOutboundRegistry
 
+	// acceptedSessions tracks all sessions (both accepted responder sessions and
+	// outbound initiator sessions) that share the listener socket and require
+	// per-session header-protector trial-deobfuscation for:
+	//   - Inbound SessionConfirmed (responder-role sessions awaiting message 3)
+	//   - Inbound Data packets (all roles once established)
+	// These packet types use KDF-derived keys (not the listener's intro key) so
+	// the intro-key protector cannot decode them; trial-deobfuscation against the
+	// per-session AcceptedSessionRegistry is the only viable decode path.
+	// Sessions are added in registerAndQueueConn and removed on Close().
+	acceptedSessions *AcceptedSessionRegistry
+
 	// sessionRateLimiter limits SessionRequest processing per source IP (M-6)
 	sessionRateLimiter *ipRateLimiter
 
@@ -174,6 +185,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		acceptQueue:        make(chan *SSU2Conn, 100), // Buffer 100 pending connections
 		packetQueue:        make(chan incomingPacket, packetQueueSize),
 		pendingOutbound:    NewPendingOutboundRegistry(config.MaxSessions, 30*time.Second),
+		acceptedSessions:   NewAcceptedSessionRegistry(config.MaxSessions * 2),
 		shutdownChan:       make(chan struct{}),
 	}
 
@@ -663,6 +675,9 @@ func (l *SSU2Listener) installCloseHook(conn *SSU2Conn, connID uint64, dedupKey 
 		l.sessionMutex.Lock()
 		delete(l.pendingByInitiator, dedupKey)
 		l.sessionMutex.Unlock()
+		// Remove from AcceptedSessionRegistry so the trial-deobfuscate scan does
+		// not keep probing a closed session's (now-stale) header protectors.
+		l.acceptedSessions.Remove(connID)
 	})
 	return &registered
 }
@@ -763,6 +778,57 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	if existing != conn {
 		_ = conn.CloseImmediate()
 		return existing, nil
+	}
+
+	// Register in AcceptedSessionRegistry so inbound SessionConfirmed and Data
+	// packets (which use per-session KDF-derived header keys not decodable via
+	// the listener's intro-key protector) can be trial-deobfuscated and routed.
+	// Ignore errors: capacity exceeded means we still queue the session but just
+	// won't be able to decode its header-protected inbound packets — the caller
+	// will see a handshake timeout rather than a listener-level hard failure.
+	if regErr := l.acceptedSessions.Register(connID, conn); regErr != nil {
+		flog("registerAndQueueConn", logger.Fields{"conn_id": connID}).WithError(regErr).Warn("failed to register session in AcceptedSessionRegistry; inbound SessionConfirmed/Data will not be decodable")
+	} else {
+		// Wire up SessionConfirmed key notification (responder path only, but
+		// harmless for initiators since notifySessConfirmedKey is a no-op when
+		// sessConfirmedKeyNotifyCh is nil — we set it here for all accepted
+		// sessions since they are all responders).
+		sessConfirmedKeyCh := make(chan *HeaderProtector, 1)
+		conn.SetAcceptedSessionConfirmedKeyNotify(sessConfirmedKeyCh)
+
+		// Wire up data-phase inbound key notification (both roles).
+		recvDataKeyCh := make(chan *HeaderProtector, 1)
+		conn.SetAcceptedDataKeyNotify(recvDataKeyCh)
+
+		// Background goroutines drain the key channels and install protectors.
+		// Each goroutine exits on: key received, session closed, or listener
+		// shutdown — whichever comes first.  l.wg is used so listener.Close()
+		// waits for these goroutines before closing the accept queue.
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			select {
+			case p := <-sessConfirmedKeyCh:
+				if err := l.acceptedSessions.SetSessionConfirmedProtector(connID, p); err != nil {
+					flog("sessConfirmedKeyNotify", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install SessionConfirmed protector in AcceptedSessionRegistry")
+				}
+			case <-conn.CloseChan():
+			case <-l.shutdownChan:
+			}
+		}()
+
+		l.wg.Add(1)
+		go func() {
+			defer l.wg.Done()
+			select {
+			case p := <-recvDataKeyCh:
+				if err := l.acceptedSessions.SetDataPhaseProtector(connID, p); err != nil {
+					flog("recvDataKeyNotify", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install data-phase protector in AcceptedSessionRegistry")
+				}
+			case <-conn.CloseChan():
+			case <-l.shutdownChan:
+			}
+		}()
 	}
 
 	// Connection successfully registered; now queue it for accept.

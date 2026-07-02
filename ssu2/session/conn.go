@@ -235,6 +235,22 @@ type SSU2Conn struct {
 	// The channel has capacity 1; the send is non-blocking (best-effort).
 	sessCreateKeyNotifyCh chan *wire.HeaderProtector
 
+	// sessConfirmedKeyNotifyCh, when non-nil, receives the inbound
+	// SessionConfirmed HeaderProtector (k_header_1 = our intro key,
+	// k_header_2 = KDF-derived sessionConfirmedHeader2) once the responder
+	// derives it in createAndSendSessionCreated. The listener's
+	// AcceptedSessionRegistry uses this to deobfuscate inbound
+	// SessionConfirmed packets.  Capacity 1; send is non-blocking.
+	sessConfirmedKeyNotifyCh chan *wire.HeaderProtector
+
+	// recvDataKeyNotifyCh, when non-nil, receives the inbound Data-phase
+	// HeaderProtector (k_header_1 = our intro key, k_header_2 = recvDataHeader2)
+	// once finalizeHandshake derives data-phase keys. The listener's
+	// AcceptedSessionRegistry uses this to deobfuscate inbound Data packets
+	// for all sessions (initiator and responder) sharing the listener socket.
+	// Capacity 1; send is non-blocking.
+	recvDataKeyNotifyCh chan *wire.HeaderProtector
+
 	// closeHook, if set, is invoked once during CloseWithReason after the
 	// connection's goroutines have been torn down. The listener wires this
 	// to deregister the session from its routing maps so that closed
