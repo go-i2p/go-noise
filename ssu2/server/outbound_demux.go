@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -27,9 +28,15 @@ type PendingOutboundSession struct {
 	// conn is the SSU2Conn in handshaking state
 	conn *session.SSU2Conn
 
-	// headerProtector is temporary, used during handshake to deobfuscate replies
-	// Set to nil once handshake completes or fails
+	// headerProtector is the SessionCreated protector derived from SessCreateHeaderKey.
+	// Installed via SetProtector after sendSessionRequest derives the key.
+	// Nil until the key is available.
 	headerProtector *HeaderProtector
+
+	// retryProtector is the header protector for Retry packets, keyed on
+	// the responder's intro key (known at connection creation time).
+	// Nil if the remote intro key was not provided.
+	retryProtector *HeaderProtector
 
 	// createdAt tracks when this pending session was registered
 	createdAt time.Time
@@ -87,10 +94,15 @@ func NewPendingOutboundRegistry(maxPending int, cleanupTimeout time.Duration) *P
 // Parameters:
 //   - sourceConnID: The initiator's source connection ID (routing key)
 //   - conn: The SSU2Conn in handshaking state
-//   - protector: Header protector for receiving replies (can be nil)
+//   - retryProtector: Header protector for Retry replies (built from remote intro
+//     key, available at registration time). May be nil when the remote intro key
+//     is not yet known.
+//
+// The SessionCreated protector is installed separately via SetProtector once
+// SessCreateHeaderKey is derived inside Handshake.
 //
 // Returns error if registration fails.
-func (r *PendingOutboundRegistry) Register(sourceConnID uint64, conn *session.SSU2Conn, protector *HeaderProtector) error {
+func (r *PendingOutboundRegistry) Register(sourceConnID uint64, conn *session.SSU2Conn, retryProtector *HeaderProtector) error {
 	flog("Register").Debug("Registering pending outbound session")
 	if conn == nil {
 		return oops.
@@ -122,10 +134,10 @@ func (r *PendingOutboundRegistry) Register(sourceConnID uint64, conn *session.SS
 	}
 
 	r.sessions[sourceConnID] = &PendingOutboundSession{
-		sourceConnID:    sourceConnID,
-		conn:            conn,
-		headerProtector: protector,
-		createdAt:       time.Now(),
+		sourceConnID:   sourceConnID,
+		conn:           conn,
+		retryProtector: retryProtector,
+		createdAt:      time.Now(),
 	}
 
 	return nil
@@ -153,8 +165,12 @@ func (r *PendingOutboundRegistry) GetSessionBySourceConnID(sourceConnID uint64) 
 }
 
 // LookupAndDeobfuscate searches for a pending outbound session by source connection ID
-// and attempts to deobfuscate the packet header using its stored protector.
+// and attempts to deobfuscate the packet header using its stored SessionCreated protector.
 // Returns (connection, deobfuscated_packet, error).
+//
+// NOTE: This method is keyed on the raw (possibly masked) dest conn ID; use
+// TrialDeobfuscate when the header bytes may be XOR-masked.  LookupAndDeobfuscate
+// is kept for post-parse routing where the conn ID is already decrypted.
 //
 // On success, the caller must manually remove the session from the registry when
 // the handshake completes (to transition it to the normal session router).
@@ -177,8 +193,14 @@ func (r *PendingOutboundRegistry) LookupAndDeobfuscate(sourceConnID uint64, pack
 	}
 
 	if pending.headerProtector == nil {
-		// No protector configured; assume plaintext headers (test/legacy mode)
-		return pending.conn, packetData, nil
+		// SessionCreated protector not yet installed (SessCreateHeaderKey not yet
+		// derived).  Return an error so the caller can distinguish "found but
+		// undeobfuscatable" from "not found", preventing silent plaintext passthrough.
+		return nil, nil, oops.
+			Code("MISSING_HEADER_PROTECTOR").
+			In("pending_outbound").
+			With("source_conn_id", sourceConnID).
+			Errorf("SessionCreated header protector not yet installed for pending session")
 	}
 
 	// Work on a defensive copy (deobfuscation mutates in place)
@@ -190,6 +212,95 @@ func (r *PendingOutboundRegistry) LookupAndDeobfuscate(sourceConnID uint64, pack
 	}
 
 	return pending.conn, deobfuscated, nil
+}
+
+// SetProtector installs or updates the SessionCreated header protector for a
+// registered pending session.  DialSSU2ViaListener calls this once
+// SessCreateHeaderKey is derived (signalled via SetListenerKeyNotify).
+//
+// Parameters:
+//   - sourceConnID: The source connection ID of the pending session to update
+//   - protector: The HeaderProtector built from the derived SessCreateHeaderKey
+//
+// Returns error if the session is not registered.
+func (r *PendingOutboundRegistry) SetProtector(sourceConnID uint64, protector *HeaderProtector) error {
+	flog("SetProtector").Debug("Installing SessionCreated protector for pending outbound session")
+	if protector == nil {
+		return oops.
+			Code("INVALID_PROTECTOR").
+			In("pending_outbound").
+			Errorf("protector cannot be nil")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	pending, ok := r.sessions[sourceConnID]
+	if !ok {
+		return oops.
+			Code("SESSION_NOT_FOUND").
+			In("pending_outbound").
+			With("source_conn_id", sourceConnID).
+			Errorf("pending session not found for protector update")
+	}
+	pending.headerProtector = protector
+	return nil
+}
+
+// TrialDeobfuscate attempts deobfuscation of packetData against every registered
+// pending outbound session's available protectors (SessionCreated and/or Retry).
+// Because header bytes 0–7 are XOR-masked, the dest conn ID cannot be read in
+// the clear before deobfuscation; this method tries each candidate in turn.
+//
+// For each session it tries:
+//  1. headerProtector (for SessionCreated)
+//  2. retryProtector (for Retry)
+//
+// A candidate succeeds when DecryptHeader leaves bytes 0–7 equal to that
+// session's sourceConnID.  The first matching deobfuscated copy is returned.
+//
+// Returns (conn, deobfuscated, nil) on match, (nil, nil, nil) when no session
+// matches (packet belongs to a different context).
+func (r *PendingOutboundRegistry) TrialDeobfuscate(packetData []byte) (*session.SSU2Conn, []byte, error) {
+	flog("TrialDeobfuscate").Debug("Trial-deobfuscating against pending outbound sessions")
+	if len(packetData) < 8 {
+		return nil, nil, nil
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, pending := range r.sessions {
+		if conn, data := trialDeobfuscateWithProtector(pending.headerProtector, pending.conn, pending.sourceConnID, packetData); conn != nil {
+			return conn, data, nil
+		}
+		if conn, data := trialDeobfuscateWithProtector(pending.retryProtector, pending.conn, pending.sourceConnID, packetData); conn != nil {
+			return conn, data, nil
+		}
+	}
+	return nil, nil, nil
+}
+
+// trialDeobfuscateWithProtector tries to deobfuscate packetData with protector
+// and checks whether the decrypted dest conn ID (bytes 0–7) matches expectedID.
+// Returns (conn, decrypted) on success, (nil, nil) on nil protector or mismatch.
+func trialDeobfuscateWithProtector(protector *HeaderProtector, conn *session.SSU2Conn, expectedID uint64, packetData []byte) (*session.SSU2Conn, []byte) {
+	if protector == nil || conn == nil {
+		return nil, nil
+	}
+	candidate := make([]byte, len(packetData))
+	copy(candidate, packetData)
+	if err := protector.DecryptHeader(candidate); err != nil {
+		return nil, nil
+	}
+	if len(candidate) < 8 {
+		return nil, nil
+	}
+	decryptedDestID := binary.BigEndian.Uint64(candidate[0:8])
+	if decryptedDestID != expectedID {
+		return nil, nil
+	}
+	return conn, candidate
 }
 
 // Remove unregisters a pending outbound session from the registry.
@@ -239,6 +350,56 @@ func (r *PendingOutboundRegistry) String() string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return fmt.Sprintf("PendingOutboundRegistry{sessions=%d, maxPending=%d}", len(r.sessions), r.maxPending)
+}
+
+// StartCleanup launches the stale-session cleanup goroutine.
+// It is a no-op when cleanupTimeout is zero.
+// Call StopCleanup (or close the listener) to terminate it.
+func (r *PendingOutboundRegistry) StartCleanup() {
+	if r.cleanupTimeout <= 0 {
+		return
+	}
+	r.wg.Add(1)
+	go r.cleanupLoop()
+}
+
+// StopCleanup signals the cleanup goroutine to exit and waits for it.
+func (r *PendingOutboundRegistry) StopCleanup() {
+	select {
+	case <-r.stopChan:
+		// Already stopped
+	default:
+		close(r.stopChan)
+	}
+	r.wg.Wait()
+}
+
+// cleanupLoop periodically removes sessions that have been pending longer
+// than cleanupTimeout, preventing memory leaks from stalled dials.
+func (r *PendingOutboundRegistry) cleanupLoop() {
+	defer r.wg.Done()
+	ticker := time.NewTicker(r.cleanupTimeout)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.stopChan:
+			return
+		case <-ticker.C:
+			r.removeStale()
+		}
+	}
+}
+
+// removeStale purges sessions older than cleanupTimeout.
+func (r *PendingOutboundRegistry) removeStale() {
+	cutoff := time.Now().Add(-r.cleanupTimeout)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, s := range r.sessions {
+		if s.createdAt.Before(cutoff) {
+			delete(r.sessions, id)
+		}
+	}
 }
 
 // AUDIT 1.2: Single-reader invariant preservation.

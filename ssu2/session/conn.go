@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/mod"
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
@@ -225,6 +226,14 @@ type SSU2Conn struct {
 	// AUDIT 1.2: Gate recvLoop startup on this flag to prevent listener and
 	// responder from both reading the same shared socket.
 	readsOwnSocket bool
+
+	// sessCreateKeyNotifyCh, when non-nil, receives the SessionCreated
+	// HeaderProtector once SessCreateHeaderKey has been derived during
+	// sendSessionRequest.  DialSSU2ViaListener sets this before calling
+	// Handshake so it can install the real protector into the pending
+	// outbound registry before the responder's SessionCreated reply arrives.
+	// The channel has capacity 1; the send is non-blocking (best-effort).
+	sessCreateKeyNotifyCh chan *wire.HeaderProtector
 
 	// closeHook, if set, is invoked once during CloseWithReason after the
 	// connection's goroutines have been torn down. The listener wires this

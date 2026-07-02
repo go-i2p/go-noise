@@ -1,8 +1,6 @@
 package server
 
 import (
-	"encoding/binary"
-
 	"github.com/samber/oops"
 )
 
@@ -39,10 +37,12 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 // AUDIT C-1 & AUDIT 1.2: This two-stage parse accommodates:
 // 1. Plaintext (testing/legacy)
 // 2. Header-protected SessionRequest/TokenRequest (intro key)
-// 3. Outbound session replies (SessionCreated/Retry) with temporary header protectors
+// 3. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
 //
-// The fallback path for outbound replies operates on a defensive copy because
-// DecryptHeader mutates the buffer in place, and the inbound buffer may be reused.
+// For case 3 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup key
+// because header protection XOR-masks those bytes.  TrialDeobfuscate tries
+// every registered pending session's protectors in turn and accepts the first
+// whose decrypted dest conn ID matches the session's source conn ID.
 func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	packet := &SSU2Packet{}
 	if err := packet.Deserialize(data); err == nil {
@@ -61,20 +61,16 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 		}
 	}
 
-	// Try outbound session header protectors (replies to our dials)
-	// Extract destination ConnID to look up pending outbound session
-	if len(data) >= ShortHeaderSize {
-		// Extract destination ConnID from packet header bytes 0-7
-		destConnID := binary.BigEndian.Uint64(data[0:8])
-
-		// Look up pending outbound session by source ConnID (the destination in the reply)
-		conn, deobfuscated, err := l.pendingOutbound.LookupAndDeobfuscate(destConnID, data)
-		if err == nil && conn != nil && deobfuscated != nil {
-			// Successfully deobfuscated; parse the result
-			packet = &SSU2Packet{}
-			if err := packet.Deserialize(deobfuscated); err == nil {
-				return packet, true
-			}
+	// Try outbound session header protectors (replies to our dials).
+	// We cannot read bytes 0–7 in the clear: they are XOR-masked by header
+	// protection.  TrialDeobfuscate iterates all pending sessions and tries
+	// each one's SessionCreated protector (then Retry protector) on a
+	// defensive copy, accepting the first whose decrypted dest conn ID
+	// matches the session's source conn ID.
+	if conn, deobfuscated, err := l.pendingOutbound.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
+		packet = &SSU2Packet{}
+		if err := packet.Deserialize(deobfuscated); err == nil {
+			return packet, true
 		}
 	}
 

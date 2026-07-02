@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -135,10 +136,36 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 		return nil, err
 	}
 
+	// Notify the listener's pending outbound registry once SessCreateHeaderKey
+	// is available so it can deobfuscate the SessionCreated reply.
+	// This must happen BEFORE sending (and therefore before the responder can
+	// reply), but after installBothHeaderKeys so the key is in the manager.
+	h.notifySessCreateKey()
+
 	if err := h.sendPacketDirect(sessionRequest); err != nil {
 		return nil, oops.Wrapf(err, "failed to send SessionRequest")
 	}
 	return sessionRequest, nil
+}
+
+// notifySessCreateKey fires the sessCreateKeyNotifyCh (if set) with the
+// SessionCreated HeaderProtector built from the current SessCreateHeaderKey.
+// Called after installBothHeaderKeys so the key is guaranteed to be present
+// in headerProtector. Non-blocking: if the channel is full the send is dropped
+// (the listener reads it promptly; a full channel means it already got the key).
+func (h *SSU2Conn) notifySessCreateKey() {
+	if h.sessCreateKeyNotifyCh == nil || h.headerProtector == nil {
+		return
+	}
+	p, err := h.headerProtector.GetProtectorForType(wire.HeaderTypeSessionCreated)
+	if err != nil {
+		flog("notifySessCreateKey").WithError(err).Warn("could not build SessionCreated protector for listener notify")
+		return
+	}
+	select {
+	case h.sessCreateKeyNotifyCh <- p:
+	default:
+	}
 }
 
 // awaitSessionCreated waits for a SessionCreated response, handling Retry
@@ -197,6 +224,11 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 		return nil, err
 	}
 
+	// Re-notify the listener registry: the post-Retry SessionRequest re-derives
+	// SessCreateHeaderKey (same value but we re-signal so SetProtector is
+	// idempotent and the registry entry is refreshed).
+	h.notifySessCreateKey()
+
 	if err := h.sendPacketDirect(sessionRequest); err != nil {
 		return nil, oops.Wrapf(err, "failed to send SessionRequest with token")
 	}
@@ -213,6 +245,14 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 // header protector, if available.
 func (h *SSU2Conn) installSessCreateHeaderKey() error {
 	return h.installHeaderKey(h.handshakeHandler.SessCreateHeaderKey, "SessCreateHeaderKey")
+}
+
+// SetListenerKeyNotify arms the session-created key notification channel.
+// DialSSU2ViaListener calls this before Handshake so it can update the
+// pending outbound registry as soon as the initiator derives SessCreateHeaderKey.
+// The channel must have capacity ≥ 1; the send is non-blocking (best-effort).
+func (h *SSU2Conn) SetListenerKeyNotify(ch chan *wire.HeaderProtector) {
+	h.sessCreateKeyNotifyCh = ch
 }
 
 // processSessionCreated validates and processes the SessionCreated response,
