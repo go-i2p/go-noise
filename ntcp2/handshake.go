@@ -89,15 +89,23 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 		"deadline": deadlineInfo,
 	}).Debug("NTCP2 handshake starting")
 
-	hsCtx, clearOnSuccess, err := c.configureHandshakeDeadline(ctx, cfg, raw)
+	hsCtx, hsCancel, clearDeadline, err := c.configureHandshakeDeadline(ctx, cfg, raw)
 	if err != nil {
 		nc.FailHandshake()
 		return err
 	}
-	if clearOnSuccess != nil {
+	// Always cancel the derived context, even on failure, to release the timer
+	// goroutine created by context.WithTimeout. Without this, every failed
+	// handshake leaks a goroutine for the full HandshakeTimeout duration.
+	if hsCancel != nil {
+		defer hsCancel()
+	}
+	// Clear the TCP deadline only on success so that data-phase I/O is not
+	// bounded by the handshake deadline.
+	if clearDeadline != nil {
 		defer func() {
 			if retErr == nil {
-				clearOnSuccess()
+				clearDeadline()
 			}
 		}()
 	}
@@ -183,46 +191,60 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 // configureHandshakeDeadline creates a bounded handshake context and applies the
 // effective deadline to the underlying connection.
 //
-// It preserves existing semantics:
-// - add a default timeout when neither config nor ctx provide a deadline
-// - use the earlier of ctx deadline and accept-time handshakeDeadline
-// - return a cleanup callback that clears the raw connection deadline
-func (c *Conn) configureHandshakeDeadline(ctx context.Context, cfg *Config, raw net.Conn) (context.Context, func(), error) {
-	hsCtx := ctx
+// Deadline resolution rules (in priority order):
+//  1. If cfg.HandshakeTimeout > 0 AND the caller's ctx has no deadline (or a
+//     looser one), wrap ctx with context.WithTimeout(ctx, cfg.HandshakeTimeout).
+//  2. If cfg.HandshakeTimeout <= 0 AND ctx has no deadline, fall back to
+//     DefaultHandshakeTimeoutSeconds.
+//  3. If ctx already has a deadline that is tighter than the config timeout,
+//     use ctx as-is to avoid silently overriding the caller's intent.
+//  4. Always prefer the earlier of (derived context deadline, accept-time
+//     c.handshakeDeadline) as the raw TCP deadline.
+//
+// Returns:
+//   - hsCtx: context whose deadline reflects the effective timeout
+//   - cancel: the context.CancelFunc if a new context was created; nil otherwise.
+//     The CALLER is responsible for calling cancel() unconditionally (defer).
+//   - clearDeadline: clears the raw connection deadline on success; nil if no
+//     TCP deadline was set.
+//   - err: non-nil only when SetDeadline itself fails.
+func (c *Conn) configureHandshakeDeadline(ctx context.Context, cfg *Config, raw net.Conn) (hsCtx context.Context, cancel context.CancelFunc, clearDeadline func(), err error) {
+	hsCtx = ctx
 	timeout := cfg.HandshakeTimeout
+
 	if timeout <= 0 {
 		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 			timeout = DefaultHandshakeTimeoutSeconds * time.Second
 		}
 	}
 
-	var cancel context.CancelFunc
 	if timeout > 0 {
-		hsCtx, cancel = context.WithTimeout(ctx, timeout)
+		// Only wrap the caller's context if the config timeout is tighter than
+		// whatever deadline the caller already provided. This prevents the library
+		// from silently overriding a longer caller-provided deadline (e.g. the
+		// router in go-i2p setting 60s while the NTCP2 config default is 30s).
+		if dl, ok := ctx.Deadline(); !ok || time.Until(dl) > timeout {
+			hsCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
 	}
 
 	deadline, hasDeadline := c.resolveHandshakeDeadline(hsCtx)
 	if !hasDeadline {
-		if cancel != nil {
-			return hsCtx, cancel, nil
-		}
-		return hsCtx, nil, nil
+		// No deadline anywhere: TCP I/O is unbounded. Return as-is.
+		return hsCtx, cancel, nil, nil
 	}
 
 	if err := raw.SetDeadline(deadline); err != nil {
 		if cancel != nil {
 			cancel()
 		}
-		return hsCtx, nil, oops.
+		return hsCtx, nil, nil, oops.
 			Code("SET_DEADLINE_FAILED").
 			In("ntcp2").
 			Wrapf(err, "failed to set handshake deadline on underlying connection")
 	}
 
-	return hsCtx, func() {
-		if cancel != nil {
-			cancel()
-		}
+	return hsCtx, cancel, func() {
 		_ = raw.SetDeadline(time.Time{})
 	}, nil
 }
