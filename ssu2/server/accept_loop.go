@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"errors"
 	"net"
 	"sync/atomic"
@@ -123,17 +124,16 @@ func (l *SSU2Listener) packetWorker() {
 // handleIncomingPacket processes a received packet and routes it appropriately.
 // This is called in a goroutine for each received packet.
 //
-// AUDIT C-1: If plaintext Deserialize fails and an inbound HeaderProtector is
-// configured (i.e. config.IntroKey was set), the listener performs an in-place
-// header-protection decryption attempt before discarding the packet. This is
-// the receiver-side counterpart to spec-compliant SSU2 senders that obfuscate
-// header bytes 0-15 (and, for long headers, bytes 16-63) using ChaCha20 keyed
-// on the receiver's intro key.
+// AUDIT C-1 & AUDIT 1.2: The listener attempts multiple header-protection strategies:
+// 1. Plaintext (testing/legacy)
+// 2. Intro-key (SessionRequest/TokenRequest)
+// 3. Outbound session protectors (SessionCreated/Retry replies)
 //
 // Design:
-// - Attempts to parse the packet (plaintext first, then header-protected)
-// - Routes the packet to an existing session via PacketRouter
-// - If routing fails and packet is a TokenRequest, processes it directly
+// - Attempts to parse the packet with all available protectors
+// - For outbound replies, routes directly to the pending session
+// - For new sessions, routes via PacketRouter
+// - For TokenRequest, processes directly if routing fails
 // - All other routing failures are silently ignored
 func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr) {
 	flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
@@ -142,7 +142,19 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 		return
 	}
 
-	// Route packet to appropriate handler
+	// Check if this packet belongs to a pending outbound session.
+	// Extract destination ConnID from packet header (already decrypted at this point).
+	if len(packet.Header) >= 8 {
+		destConnID := binary.BigEndian.Uint64(packet.Header[0:8])
+		if conn := l.pendingOutbound.GetSessionBySourceConnID(destConnID); conn != nil {
+			// This is a reply to one of our outbound dials.
+			// Deliver it directly to the outbound session (no router needed).
+			conn.ProcessInboundPacket(packet)
+			return
+		}
+	}
+
+	// Route packet to appropriate handler via the normal router
 	if err := l.router.RoutePacket(packet, remoteAddr); err != nil {
 		// Routing failed, check if this is a token request
 		if packet.MessageType == MessageTypeTokenRequest {

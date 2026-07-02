@@ -93,6 +93,15 @@ type SSU2Listener struct {
 	// enabling interop with spec-compliant SSU2 peers (i2pd / Java I2P).
 	introHeaderProtector *HeaderProtector
 
+	// pendingOutbound tracks outbound sessions awaiting their SessionCreated/Retry
+	// replies over the listener's socket. During handshake, the listener uses
+	// these sessions' header protectors to deobfuscate and route incoming replies.
+	// AUDIT 1.2: This preserves the single-reader invariant — no second read loop,
+	// only temporary header protectors for demultiplexing (see outbound_demux.go).
+	// On handshake completion, sessions move to the normal router and pendingOutbound
+	// is cleaned up.
+	pendingOutbound *PendingOutboundRegistry
+
 	// sessionRateLimiter limits SessionRequest processing per source IP (M-6)
 	sessionRateLimiter *ipRateLimiter
 
@@ -164,6 +173,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		issuanceLimiter:    newTokenIssuanceLimiter(config.GlobalTokenIssuanceRate, config.GlobalTokenIssuanceBurst),
 		acceptQueue:        make(chan *SSU2Conn, 100), // Buffer 100 pending connections
 		packetQueue:        make(chan incomingPacket, packetQueueSize),
+		pendingOutbound:    NewPendingOutboundRegistry(config.MaxSessions, 30*time.Second),
 		shutdownChan:       make(chan struct{}),
 	}
 

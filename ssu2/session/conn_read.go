@@ -351,14 +351,30 @@ func (h *SSU2Conn) keepaliveLoop() {
 	}
 }
 
-// processInboundPacket processes a received packet.
-func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
+// ProcessInboundPacket processes a received packet by routing it to the appropriate
+// handler based on message type. Handshake packets are enqueued to the receive queue
+// for the initiator/responder handshake logic to consume. Data packets are processed
+// through the receive window for reordering and duplicate detection.
+//
+// This method is exported to support cross-package delivery of packets from
+// the listener to pending outbound sessions during handshake demultiplexing
+// (AUDIT 1.2: single-reader invariant, pending outbound registry).
+//
+// Parameters:
+//   - packet: The parsed SSU2Packet to process
+func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
 	switch packet.MessageType {
 	case MessageTypeData:
 		h.processDataPackets(packet)
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
 		h.processHandshakePacket(packet)
 	}
+}
+
+// processInboundPacket (deprecated) is kept for backwards compatibility.
+// New code should use ProcessInboundPacket.
+func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
+	h.ProcessInboundPacket(packet)
 }
 
 func (h *SSU2Conn) processDataPackets(packet *SSU2Packet) {
