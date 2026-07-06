@@ -10,11 +10,22 @@ import (
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/crypto/rand"
 
+	i2pbase64 "github.com/go-i2p/common/base64"
 	noise "github.com/go-i2p/go-noise"
 	upstreamnoise "github.com/go-i2p/noise"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// fakeRouterInfoWithKey builds synthetic RouterInfo bytes that embed the
+// base64-encoded Curve25519 public key as an `s=` option, so that the
+// always-on initiator-side RouterInfo/static-key verification
+// (verifyLocalRouterInfoMatchesStaticKey) accepts them. Tests that run a real
+// initiator handshake with a real static key must use this instead of arbitrary
+// fake bytes, otherwise the handshake fails with ROUTER_INFO_KEY_MISMATCH.
+func fakeRouterInfoWithKey(pub []byte) []byte {
+	return []byte("fake-router-info-s=" + i2pbase64.EncodeToString(pub) + "-end")
+}
 
 // mustRandomBytes generates a random byte slice of the given size,
 // failing the test if crypto/rand returns an error.
@@ -262,7 +273,7 @@ func newTestXKConfigPair(t *testing.T) testXKConfigPair {
 		WithRemoteRouterHash(responderHash).
 		WithRemoteStaticKey(responderKP.Public).
 		WithAESObfuscation(false, nil).
-		WithLocalRouterInfo([]byte("fake-initiator-router-info"))
+		WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
 
 	return testXKConfigPair{
 		initiatorConfig: initiatorConfig,

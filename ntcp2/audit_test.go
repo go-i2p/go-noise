@@ -409,21 +409,22 @@ func TestMessage3Part2Validation_RejectsExcessiveM3P2Len(t *testing.T) {
 	responderConn.Close()
 }
 
-// ── StrictRouterInfoVerification tests (M-4) ─────────────────────────
+// ── RouterInfo / static-key verification tests (M-4) ─────────────────
 
-// TestStrictRouterInfoVerification_DefaultWarnOnly verifies that when
-// StrictRouterInfoVerification is false (default), a mismatch between
-// the static key and LocalRouterInfo produces only a warning and the
-// handshake completes successfully.
+// TestRouterInfoVerification_MismatchIsError verifies that a mismatch
+// between the static key and LocalRouterInfo is reported as an error by
+// verifyLocalRouterInfoMatchesStaticKey. Enforcement of this error is now
+// unconditional in performInitiatorHandshake (the handshake fails with
+// ROUTER_INFO_KEY_MISMATCH); StrictRouterInfoVerification no longer gates it.
 //
-// NOTE (M-4): The handshake warning-path cannot be trivially tested via
-// an end-to-end handshake because crafting a valid RouterInfo with a
-// *wrong* NTCP2 `s=` option requires producing a signed RouterInfo
-// structure (not just raw bytes). The real-world trigger is a config bug
-// in the router (go-i2p/go-i2p) where the LocalRouterInfo diverges from
-// the live static key. This test instead validates the unit-level behavior
-// of verifyLocalRouterInfoMatchesStaticKey.
-func TestStrictRouterInfoVerification_DefaultWarnOnly(t *testing.T) {
+// NOTE (M-4): The full handshake failure path cannot be trivially triggered
+// end-to-end because crafting a valid RouterInfo with a *wrong* NTCP2 `s=`
+// option requires producing a signed RouterInfo structure (not just raw
+// bytes). The real-world trigger is a config bug in the router
+// (go-i2p/go-i2p) where the LocalRouterInfo diverges from the live static
+// key. This test validates the unit-level behavior of
+// verifyLocalRouterInfoMatchesStaticKey.
+func TestRouterInfoVerification_MismatchIsError(t *testing.T) {
 	// Generate a fresh key pair for testing
 	staticPriv := make([]byte, StaticKeySize)
 	for i := range staticPriv {
@@ -442,14 +443,13 @@ func TestStrictRouterInfoVerification_DefaultWarnOnly(t *testing.T) {
 		"error message should indicate key mismatch")
 
 	// In the actual handshake code (performInitiatorHandshake), this error
-	// is logged as a warning but the handshake continues when
-	// StrictRouterInfoVerification = false (the default).
+	// always aborts the handshake with ROUTER_INFO_KEY_MISMATCH.
 }
 
-// TestStrictRouterInfoVerification_MatchingKey verifies that when the
+// TestRouterInfoVerification_MatchingKey verifies that when the
 // static key's derived public key appears in the LocalRouterInfo,
 // verifyLocalRouterInfoMatchesStaticKey returns nil (success).
-func TestStrictRouterInfoVerification_MatchingKey(t *testing.T) {
+func TestRouterInfoVerification_MatchingKey(t *testing.T) {
 	// Generate a keypair using the same method as the code under test
 	staticPriv := make([]byte, StaticKeySize)
 	for i := range staticPriv {
@@ -472,16 +472,11 @@ func TestStrictRouterInfoVerification_MatchingKey(t *testing.T) {
 	assert.NoError(t, err, "verifyLocalRouterInfoMatchesStaticKey should succeed when key matches")
 }
 
-// TestStrictRouterInfoVerification_StrictModeEnabled verifies that when
-// StrictRouterInfoVerification is explicitly enabled, the Config builder
-// correctly sets the field and the handshake logic can access it.
-//
-// NOTE: This test validates the Config builder method WithStrictRouterInfoVerification
-// and the field StrictRouterInfoVerification. The actual enforcement happens in
-// performInitiatorHandshake (ntcp2/handshake.go line ~169), where the error
-// returned by verifyLocalRouterInfoMatchesStaticKey causes the handshake to fail
-// when StrictRouterInfoVerification = true.
-func TestStrictRouterInfoVerification_StrictModeEnabled(t *testing.T) {
+// TestStrictRouterInfoVerification_BuilderIsNoOp verifies that the deprecated
+// WithStrictRouterInfoVerification builder still sets the (now-unused) field
+// for backward compatibility. Enforcement of the RouterInfo/static-key match
+// is unconditional and no longer gated by this field.
+func TestStrictRouterInfoVerification_BuilderIsNoOp(t *testing.T) {
 	staticKey := make([]byte, StaticKeySize)
 	var bobHash data.Hash // zero-value hash is fine for this test
 

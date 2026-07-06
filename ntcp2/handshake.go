@@ -309,19 +309,18 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 	// termination frame) if the static public key it received in msg1 does
 	// not appear as the `s=` option of any NTCP2 address in the RouterInfo
 	// we send in msg3 (libi2pd/NTCP2.cpp:690, RouterInfo.cpp:838). The
-	// observable symptom is "frame #0 EOF" in the data phase. We log a
-	// warning here so the misconfiguration is visible in production logs;
+	// observable symptom is "frame #0 EOF" in the data phase. This check is
+	// always enforced as a hard error so the misconfiguration fails fast at
+	// handshake time rather than manifesting as a silent post-handshake EOF;
 	// the authoritative fix lives in the caller (go-i2p/go-i2p) — see
-	// PROMPT.md in this repo. Logging (not erroring) keeps existing tests
-	// that use synthetic RouterInfo bytes working.
+	// PROMPT.md in this repo. verifyLocalRouterInfoMatchesStaticKey is a no-op
+	// when no static key or no RouterInfo is configured, so it never fires on
+	// partially-configured connections.
 	if err := verifyLocalRouterInfoMatchesStaticKey(cfg.StaticKey, riBytes); err != nil {
-		if cfg.StrictRouterInfoVerification {
-			return oops.
-				Code("ROUTER_INFO_KEY_MISMATCH").
-				In("ntcp2").
-				Wrapf(err, "LocalRouterInfo does not advertise the static key (strict mode enabled; see PROMPT.md)")
-		}
-		flog("performInitiatorHandshake", logger.Fields{"event": "static_key_ri_mismatch", "err": err.Error()}).Warn("LocalRouterInfo does not advertise the static key we will send in the Noise handshake; i2pd peers will silently close the TCP connection after msg3 (frame #0 EOF). See PROMPT.md.")
+		return oops.
+			Code("ROUTER_INFO_KEY_MISMATCH").
+			In("ntcp2").
+			Wrapf(err, "LocalRouterInfo does not advertise the static key (see PROMPT.md)")
 	}
 
 	flog("performInitiatorHandshake", logger.Fields{

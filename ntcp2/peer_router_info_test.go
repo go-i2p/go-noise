@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
 	upstreamnoise "github.com/go-i2p/noise"
@@ -40,7 +41,9 @@ func TestResponderCapturesPeerRouterInfo(t *testing.T) {
 	copy(responderHash[:], "responder-hash-32-bytes-long!!!!")
 
 	// A distinguishable RouterInfo payload so we can assert byte-equality.
-	aliceRI := []byte("ALICE-ROUTER-INFO-BYTES-FOR-TESTING-PURPOSES")
+	// It must embed the initiator's static public key as an `s=` option so the
+	// always-on RouterInfo/static-key verification accepts it.
+	aliceRI := []byte("ALICE-ROUTER-INFO-s=" + i2pbase64.EncodeToString(initiatorKP.Public) + "-FOR-TESTING")
 
 	responderConfig, err := NewNTCP2Config(responderHash, false)
 	require.NoError(t, err)
