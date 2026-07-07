@@ -214,7 +214,11 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 		session.mu.Unlock()
 
 		if err != nil {
-			flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "attempt": attempt + 1, "error": err.Error()}).Warn("Failed to generate tags during replenishment")
+			// Anonymity: do not include the peer-identifying remote_pubkey prefix
+			// in the Warn-level log (a stable per-session correlator); it remains
+			// available at Debug level for local troubleshooting only.
+			flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "attempt": attempt + 1, "error": err.Error()}).Debug("Failed to generate tags during replenishment")
+			flog("replenishTagWindowOutsideLock", logger.Fields{"attempt": attempt + 1, "error": err.Error()}).Warn("Failed to generate tags during replenishment")
 			return
 		}
 		if len(newTags) == 0 {
@@ -241,7 +245,11 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 	session.mu.Unlock()
 
 	if finalRemaining > 0 {
-		flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "missing_tags": finalRemaining, "max_attempts": maxReplenishAttempts}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
+		// Anonymity: keep the remote_pubkey prefix out of the Warn-level log
+		// (a stable per-session correlator); it remains available at Debug
+		// level for local troubleshooting only.
+		flog("replenishTagWindowOutsideLock", logger.Fields{"remote_pubkey": fmt.Sprintf("%x", session.RemotePublicKey[:8]), "missing_tags": finalRemaining, "max_attempts": maxReplenishAttempts}).Debug("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
+		flog("replenishTagWindowOutsideLock", logger.Fields{"missing_tags": finalRemaining, "max_attempts": maxReplenishAttempts}).Warn("Tag window still under-sized after max replenishment attempts due to hash collisions; incoming ES messages may fail until next replenishment")
 	}
 }
 

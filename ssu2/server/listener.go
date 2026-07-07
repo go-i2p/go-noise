@@ -962,10 +962,33 @@ func (l *SSU2Listener) SessionCount() int {
 // AddSession registers an SSU2Conn under the given connection ID.
 // This is primarily useful for testing and for reconnection scenarios.
 // AUDIT 8.3: Delegates to router (single source of truth).
-func (l *SSU2Listener) AddSession(connID uint64, conn *SSU2Conn) {
-	// Note: AddSession can fail if connID already exists, but we ignore
-	// the error here for backward compatibility with test code.
-	_ = l.router.AddSession(conn)
+//
+// Returns an error if conn is nil, if conn's actual connection ID (from its
+// SSU2Addr) does not match the supplied connID, or if the router rejects
+// registration (e.g. duplicate connection ID already registered).
+func (l *SSU2Listener) AddSession(connID uint64, conn *SSU2Conn) error {
+	if conn == nil {
+		return oops.
+			Code("INVALID_SESSION").
+			In("ssu2_listener").
+			Errorf("connection cannot be nil")
+	}
+	remote, ok := conn.RemoteAddr().(*SSU2Addr)
+	if !ok || remote == nil {
+		return oops.
+			Code("INVALID_SESSION_ADDR").
+			In("ssu2_listener").
+			Errorf("connection must have SSU2Addr")
+	}
+	if actual := remote.ConnectionID(); actual != connID {
+		return oops.
+			Code("CONNECTION_ID_MISMATCH").
+			In("ssu2_listener").
+			With("requested_connection_id", connID).
+			With("actual_connection_id", actual).
+			Errorf("connID argument does not match connection's actual connection ID")
+	}
+	return l.router.AddSession(conn)
 }
 
 // RemoveSession deregisters the session with the given connection ID.

@@ -3,6 +3,7 @@ package handshake
 import (
 	"crypto/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/go-noise/internal/securemem"
@@ -42,6 +43,11 @@ type KeyRotationManager struct {
 
 	// clock allows time mocking for testing.
 	clock func() time.Time
+
+	// onRotationPanics counts recovered panics from the onRotation callback,
+	// for operational monitoring (see AUDIT.md "Panic in rotation callback
+	// is recovered and only logged").
+	onRotationPanics atomic.Int64
 }
 
 // NewKeyRotationManager creates a new key rotation manager.
@@ -235,6 +241,12 @@ func (krm *KeyRotationManager) SetPublished(isPublished bool) {
 	krm.introKey.IsPublished = isPublished
 }
 
+// OnRotationPanics returns the count of recovered panics from the onRotation
+// callback, for operational monitoring.
+func (krm *KeyRotationManager) OnRotationPanics() int64 {
+	return krm.onRotationPanics.Load()
+}
+
 // checkRotationAllowed verifies that the managed key is eligible for rotation.
 // Returns an error with diagnostic context if the minimum age has not elapsed.
 func checkRotationAllowed(key *ManagedKey, keyName string) error {
@@ -318,7 +330,8 @@ func (krm *KeyRotationManager) rotateKeyLocked(keyName string, keySize int, curr
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					flog("rotateKeyLocked", logger.Fields{"key": keyName, "panic": r}).Error("onRotation callback panicked")
+					count := krm.onRotationPanics.Add(1)
+					flog("rotateKeyLocked", logger.Fields{"key": keyName, "panic": r, "total_panics": count}).Error("onRotation callback panicked")
 				}
 			}()
 			cb(keyName, oldKey, captured)

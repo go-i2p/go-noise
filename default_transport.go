@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/logger"
 	"github.com/go-i2p/pool"
 )
 
@@ -43,7 +44,9 @@ func ResetDefault() {
 	defer defaultMu.Unlock()
 
 	if defaultInst != nil {
-		_ = defaultInst.GracefulShutdown()
+		if err := defaultInst.GracefulShutdown(); err != nil {
+			flog("ResetDefault", logger.Fields{"error": err}).Warn("GracefulShutdown of previous Default Transport failed")
+		}
 	}
 	defaultOnce = sync.Once{}
 	defaultInst = nil

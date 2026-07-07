@@ -837,7 +837,13 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 		}
 
 		if attempt < len(intervals) {
-			_ = h.sendPacketDirect(lastSent)
+			if sendErr := h.sendPacketDirect(lastSent); sendErr != nil {
+				// Surface the failure for operational visibility. The retransmit
+				// loop still continues (the next attempt will retry the send),
+				// but silently dropping this signal previously hid send-path
+				// failures (e.g. socket errors) during network partitions.
+				flog("receiveHandshakeWithRetransmit", logger.Fields{"error": sendErr, "attempt": attempt}).Warn("retransmit send failed")
+			}
 		}
 	}
 	return nil, oops.Errorf("handshake timeout after %d retransmits", len(intervals))

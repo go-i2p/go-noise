@@ -459,9 +459,15 @@ func (h *SSU2Conn) sendImmediateACK() {
 		Header:       hdr,
 		MAC:          make([]byte, MACSize),
 	}
-	payload, _ := SerializeBlocks([]*SSU2Block{ack})
+	payload, err := SerializeBlocks([]*SSU2Block{ack})
+	if err != nil {
+		flog("sendImmediateACK", logger.Fields{"error": err}).Warn("failed to serialize ACK block")
+		return
+	}
 	packet.Payload = payload
-	_ = h.sendPacketDirect(packet)
+	if err := h.sendPacketDirect(packet); err != nil {
+		flog("sendImmediateACK", logger.Fields{"error": err}).Warn("failed to send immediate ACK packet")
+	}
 }
 
 // handleCongestionBlock processes a received Congestion block (G-6).
@@ -647,9 +653,8 @@ func (h *SSU2Conn) sendNextNonceInline() error {
 		return oops.Wrapf(err, "serialize NextNonce packet")
 	}
 
-	if h.headerProtector != nil {
-		hType := messageTypeToHeaderType(packet.MessageType)
-		_ = h.headerProtector.EncryptOutboundHeader(data, hType)
+	if err := h.applyOutboundHeaderProtection(data, packet.MessageType); err != nil {
+		return oops.Wrapf(err, "encrypt NextNonce header")
 	}
 
 	h.remoteAddrLock.RLock()

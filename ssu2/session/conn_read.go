@@ -135,14 +135,38 @@ func (h *SSU2Conn) recvLoop() {
 	// Buffer must hold any valid SSU2 packet; use MaxPacketSizeIPv4 so we
 	// never truncate legitimate packets regardless of the configured MTU.
 	buf := make([]byte, MaxPacketSizeIPv4)
+
+	// Exponential backoff on persistent ReadFrom errors (own-socket path) to
+	// avoid a CPU-spin busy loop when the socket enters a persistent error
+	// state (e.g. transient network-down conditions). Mirrors the backoff
+	// strategy used by SSU2Listener.receiveLoop (ssu2/server/accept_loop.go).
+	const (
+		backoffMin = 5 * time.Millisecond
+		backoffMax = time.Second
+	)
+	backoff := backoffMin
+
 	for {
 		n, addr, stop, err := h.readInboundDatagram(buf)
 		if stop {
 			return
 		}
 		if err != nil {
+			flog("recvLoop", logger.Fields{"error": err}).Warn("recvLoop: ReadFrom error; backing off")
+			select {
+			case <-h.closeChan:
+				return
+			case <-time.After(backoff):
+			}
+			if backoff < backoffMax {
+				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
+			}
 			continue
 		}
+		backoff = backoffMin
 		flog("recvLoop", logger.Fields{"bytes": n, "from": addr}).Debug("Received UDP packet")
 		h.readOnePacket(buf[:n], addr)
 	}

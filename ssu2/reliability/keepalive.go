@@ -3,6 +3,7 @@ package reliability
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/logger"
@@ -56,6 +57,11 @@ type KeepaliveManager struct {
 
 	// started indicates if the manager is currently running
 	started bool
+
+	// keepaliveFailures counts consecutive/total SendKeepalive errors for
+	// operational observability (see AUDIT.md "Keepalive send failure is
+	// silently dropped").
+	keepaliveFailures atomic.Int64
 }
 
 // NewKeepaliveManager creates a new keepalive manager.
@@ -190,6 +196,12 @@ func (km *KeepaliveManager) GetTimeSinceLastSent() time.Duration {
 	})
 }
 
+// KeepaliveFailures returns the total count of failed SendKeepalive attempts
+// observed by this manager, for operational monitoring.
+func (km *KeepaliveManager) KeepaliveFailures() int64 {
+	return km.keepaliveFailures.Load()
+}
+
 // keepaliveLoop is the main goroutine that manages keepalive timing.
 //
 // Strategy:
@@ -214,8 +226,12 @@ func (km *KeepaliveManager) keepaliveLoop() {
 			// Send keepalive if we haven't sent anything recently
 			if timeSinceSent >= km.interval {
 				if err := km.conn.SendKeepalive(); err != nil {
-					// Log error but continue - connection may recover
-					_ = oops.Wrapf(err, "failed to send keepalive")
+					// Surface the failure: connection may recover on the next
+					// tick, but silently dropping this signal hides packet-loss
+					// and firewall/NAT timeout events from operators.
+					failures := km.keepaliveFailures.Add(1)
+					wrapped := oops.Wrapf(err, "failed to send keepalive")
+					flog("keepaliveLoop", logger.Fields{"error": wrapped, "failures": failures}).Warn("keepaliveLoop: SendKeepalive failed")
 				} else {
 					// Update lastSent timestamp after successful send
 					km.UpdateLastSent()
