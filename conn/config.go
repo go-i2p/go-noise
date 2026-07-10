@@ -157,23 +157,32 @@ func (c *ConnConfig) WithRetryBackoff(backoff time.Duration) *ConnConfig {
 // Modifiers are applied in the order provided for outbound data and in
 // reverse order for inbound data.
 func (c *ConnConfig) WithModifiers(modifiers ...handshake.HandshakeModifier) *ConnConfig {
+	c.chainMu.Lock()
 	c.Modifiers = make([]handshake.HandshakeModifier, len(modifiers))
 	copy(c.Modifiers, modifiers)
-	c.invalidateModifierCache()
+	c.cachedChain = nil
+	c.chainCached = false
+	c.chainMu.Unlock()
 	return c
 }
 
 // AddModifier appends a single modifier to the existing modifier list.
 func (c *ConnConfig) AddModifier(modifier handshake.HandshakeModifier) *ConnConfig {
+	c.chainMu.Lock()
 	c.Modifiers = append(c.Modifiers, modifier)
-	c.invalidateModifierCache()
+	c.cachedChain = nil
+	c.chainCached = false
+	c.chainMu.Unlock()
 	return c
 }
 
 // ClearModifiers removes all modifiers from the configuration.
 func (c *ConnConfig) ClearModifiers() *ConnConfig {
+	c.chainMu.Lock()
 	c.Modifiers = nil
-	c.invalidateModifierCache()
+	c.cachedChain = nil
+	c.chainCached = false
+	c.chainMu.Unlock()
 	return c
 }
 
@@ -200,7 +209,11 @@ func buildModifierChain(modifiers []handshake.HandshakeModifier) *handshake.Modi
 }
 
 // invalidateModifierCache resets the cached modifier chain so it will be
-// recomputed on the next call to GetModifierChain.
+// recomputed on the next call to GetModifierChain. Exposed for any future
+// caller that mutates c.Modifiers directly under chainMu itself; WithModifiers/
+// AddModifier/ClearModifiers now inline this instead of calling it separately,
+// so the whole read-modify-write of c.Modifiers happens under one lock
+// acquisition (see AUDIT.md Level 6 finding on the prior unsynchronized write).
 func (c *ConnConfig) invalidateModifierCache() {
 	c.chainMu.Lock()
 	c.cachedChain = nil

@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -610,6 +611,44 @@ func TestGetModifierChainCaching(t *testing.T) {
 			t.Error("expected chainCached=true after first call")
 		}
 	})
+}
+
+// TestConnConfig_ConcurrentModifierMutationAndRead is the regression test for
+// the AUDIT.md MEDIUM finding: WithModifiers/AddModifier/ClearModifiers must
+// hold chainMu for their entire body (including the c.Modifiers
+// read-modify-write), not just the subsequent cache-invalidation call, so
+// concurrent mutation and GetModifierChain reads do not race. Run with
+// `go test -race` to verify.
+func TestConnConfig_ConcurrentModifierMutationAndRead(t *testing.T) {
+	config := NewConnConfig("XX", true)
+	mod := &testHandshakeModifier{name: "concurrent-mod"}
+
+	const goroutines = 16
+	var wg sync.WaitGroup
+	wg.Add(goroutines * 3)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				config.AddModifier(mod)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				config.WithModifiers(mod, mod)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_ = config.GetModifierChain()
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 // testHandshakeModifier is a simple test implementation for ConnConfig tests
