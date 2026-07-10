@@ -576,6 +576,90 @@ func TestNoiseConnConcurrentClose(t *testing.T) {
 	}
 }
 
+// TestNoiseConnClose_UnblocksInFlightRead is the regression test for the
+// AUDIT.md CRITICAL finding: Close() must not hang indefinitely when a
+// concurrent Read() is blocked with no ReadTimeout configured (the default).
+// This exact scenario was empirically reproduced to hang before the fix
+// (Close() acquired readMutex before closing the underlying connection,
+// and a blocked Read() holds readMutex for the entire blocking syscall).
+func TestNoiseConnClose_UnblocksInFlightRead(t *testing.T) {
+	client, server := setupNNHandshake(t)
+	defer server.Close()
+
+	readDone := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 16)
+		_, err := client.Read(buf) // no ReadTimeout set; blocks until peer writes or conn closes
+		readDone <- err
+	}()
+
+	// Give the Read() call time to reach the blocking underlying read and
+	// acquire readMutex before Close() is invoked from another goroutine.
+	time.Sleep(100 * time.Millisecond)
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- client.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Logf("Close() returned (non-fatal) error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() did not return within 5s while a Read() was blocked — the CRITICAL hang bug has regressed")
+	}
+
+	select {
+	case <-readDone:
+		// Read() unblocking (with any error) is the expected outcome.
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked Read() did not unblock after Close() — the underlying connection was not closed promptly")
+	}
+}
+
+// TestNoiseConnClose_UnblocksInFlightWrite is the Write()-side equivalent of
+// TestNoiseConnClose_UnblocksInFlightRead. Write() holds writeMutex for the
+// duration of a blocking underlying write; net.Pipe blocks a Write() until a
+// corresponding Read() drains it, so a Write() with no reader and no
+// WriteTimeout blocks indefinitely absent this fix.
+func TestNoiseConnClose_UnblocksInFlightWrite(t *testing.T) {
+	client, server := setupNNHandshake(t)
+	defer server.Close()
+
+	writeDone := make(chan error, 1)
+	go func() {
+		// net.Pipe is unbuffered and synchronous: without a concurrent
+		// reader on the server side, this Write() blocks until the pipe
+		// is closed or read from.
+		_, err := client.Write([]byte("blocked write payload"))
+		writeDone <- err
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- client.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Logf("Close() returned (non-fatal) error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() did not return within 5s while a Write() was blocked")
+	}
+
+	select {
+	case <-writeDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked Write() did not unblock after Close()")
+	}
+}
+
 func TestNoiseConnReadWriteAfterHandshake(t *testing.T) {
 	// This test would require a real handshake completion
 	// For now, we'll test the structure and error paths

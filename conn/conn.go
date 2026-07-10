@@ -256,6 +256,17 @@ func (nc *Conn) Write(b []byte) (int, error) {
 // Multiple goroutines can call Close simultaneously - only the first call
 // will perform the actual close operation, subsequent calls will return nil.
 // The close mutex ensures atomic close operations.
+//
+// Liveness: nc.underlying.Close() is called BEFORE acquiring readMutex/
+// writeMutex, not after. Read()/Write() hold their respective mutex for the
+// entire duration of a blocking underlying I/O call (including when no
+// ReadTimeout/WriteTimeout is configured, the default). If Close() acquired
+// those mutexes first, a concurrently blocked Read()/Write() with no
+// configured timeout would never release the mutex, and Close() would hang
+// indefinitely — this was empirically reproduced (see AUDIT.md CRITICAL
+// finding). Closing the underlying connection first forces any blocked
+// syscall to return an error immediately, releasing the mutex promptly, so
+// Close() can then safely zero key material.
 func (nc *Conn) Close() error {
 	nc.closeMutex.Lock()
 	defer nc.closeMutex.Unlock()
@@ -277,6 +288,13 @@ func (nc *Conn) Close() error {
 		"old_state": oldState.String(),
 		"new_state": mod.StateClosed.String(),
 	}).Debug("Connection state changed")
+
+	// Close the underlying connection FIRST, to unblock any concurrently
+	// in-flight Read()/Write() call before attempting to acquire the
+	// mutexes those methods hold across a blocking underlying I/O call.
+	// The close error is captured now and returned at the end, after key
+	// material has still been zeroed on every code path.
+	closeErr := nc.underlying.Close()
 
 	// Acquire both read and write mutexes to ensure no in-flight operations are
 	// using the cipher states before we zero them (defense-in-depth).
@@ -316,17 +334,17 @@ func (nc *Conn) Close() error {
 		nc.shutdownManager.UnregisterConnection(nc)
 	}
 
-	err := nc.underlying.Close()
-	if err != nil {
+	if closeErr != nil {
 		return oops.
 			Code("UNDERLYING_CLOSE_FAILED").
 			In("noise").
 			With("state", nc.getState().String()).
-			Wrapf(err, "failed to close underlying connection")
+			Wrapf(closeErr, "failed to close underlying connection")
 	}
 
 	return nil
 }
+
 
 // LocalAddr returns the local network address.
 func (nc *Conn) LocalAddr() net.Addr {
