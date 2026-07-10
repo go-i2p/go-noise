@@ -20,44 +20,44 @@ func FuzzSSU2Block_Deserialize(f *testing.F) {
 	f.Add([]byte{0x01, 0x00})
 
 	// Valid header but no data (type 1, length 0)
-	f.Add([]byte{0x01, 0x00, 0x00})
+	f.Add([]byte{byte(BlockTypeOptions), 0x00, 0x00})
 
-	// Valid DateTimeBlock (type 4, length 4)
-	f.Add([]byte{0x04, 0x04, 0x00, 0x01, 0x02, 0x03, 0x04})
+	// Valid FirstFragment block (type 4, length 4)
+	f.Add([]byte{byte(BlockTypeFirstFragment), 0x04, 0x00, 0x01, 0x02, 0x03, 0x04})
 
-	// Valid OptionsBlock (type 5, length 8)
-	f.Add([]byte{0x05, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})
+	// Valid FollowOnFragment block (type 5, length 8)
+	f.Add([]byte{byte(BlockTypeFollowOnFragment), 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})
 
 	// Length overflow - says 255 bytes but only has 3
-	f.Add([]byte{0x01, 0xFF, 0x00, 0x01, 0x02, 0x03})
+	f.Add([]byte{byte(BlockTypeOptions), 0xFF, 0x00, 0x01, 0x02, 0x03})
 
 	// Maximum length header
-	f.Add([]byte{0x01, 0xFF, 0xFF})
+	f.Add([]byte{byte(BlockTypeOptions), 0xFF, 0xFF})
 
-	// Valid RouterInfo block (type 6)
+	// Valid Termination block (type 6)
 	ri := make([]byte, 51)
-	ri[0] = 0x06 // Type
-	ri[1] = 0x30 // Length low byte (48)
-	ri[2] = 0x00 // Length high byte
+	ri[0] = byte(BlockTypeTermination) // Type
+	ri[1] = 0x30                       // Length low byte (48)
+	ri[2] = 0x00                       // Length high byte
 	f.Add(ri)
 
-	// Valid I2NP block (type 1)
+	// Valid Options block (type 1)
 	i2np := make([]byte, 20)
-	i2np[0] = 0x01
+	i2np[0] = byte(BlockTypeOptions)
 	i2np[1] = 0x11
 	i2np[2] = 0x00
 	f.Add(i2np)
 
 	// Padding block (type 254)
 	padding := make([]byte, 10)
-	padding[0] = 0xFE
+	padding[0] = byte(BlockTypePadding)
 	padding[1] = 0x07
 	padding[2] = 0x00
 	f.Add(padding)
 
-	// Termination block (type 3)
+	// I2NPMessage block (type 3)
 	term := make([]byte, 15)
-	term[0] = 0x03
+	term[0] = byte(BlockTypeI2NPMessage)
 	term[1] = 0x0C
 	term[2] = 0x00
 	f.Add(term)
