@@ -114,6 +114,17 @@ type Conn struct {
 
 // NewNoiseConn creates a new NoiseConn wrapping the underlying connection.
 // The handshake must be completed before using Read/Write operations.
+//
+// Contract: once config has been passed to NewNoiseConn, the caller must
+// treat it as effectively read-only for the lifetime of the returned *Conn.
+// config is stored by reference (not deep-copied, aside from StaticKey — see
+// the privateStaticKey handling below), and most of its fields are read
+// directly by Read/Write/Handshake with no synchronization of their own
+// (Config.Modifiers is the one exception, synchronized via chainMu — see
+// GetModifierChain/WithModifiers/AddModifier/ClearModifiers). Continuing to
+// mutate a *ConnConfig after passing it here — including via a second
+// concurrent NewNoiseConn call sharing the same config — is a data race.
+// Build a fresh ConnConfig per connection if per-connection tuning is needed.
 func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*Conn, error) {
 	if err := validateNewConnParams(underlying, config); err != nil {
 		return nil, err
