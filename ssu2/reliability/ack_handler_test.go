@@ -34,6 +34,24 @@ func TestACKHandler_RecordReceived(t *testing.T) {
 	assert.Contains(t, handler.receivedPackets, uint32(102))
 }
 
+// TestACKHandler_RecordReceived_BoundedGrowth is the regression test for the
+// AUDIT.md MEDIUM finding: receivedPackets must not grow past
+// maxReceivedPackets even when the caller never drains it via
+// ShouldSendACK/GenerateACK, guarding against unbounded memory growth
+// combined with SortDescDedupPackets's O(n^2) drain cost.
+func TestACKHandler_RecordReceived_BoundedGrowth(t *testing.T) {
+	handler := NewACKHandler()
+
+	for i := 0; i < maxReceivedPackets+1000; i++ {
+		handler.RecordReceived(uint32(i))
+	}
+
+	assert.LessOrEqual(t, len(handler.receivedPackets), maxReceivedPackets,
+		"receivedPackets must never exceed maxReceivedPackets (%d), got %d", maxReceivedPackets, len(handler.receivedPackets))
+	assert.Equal(t, maxReceivedPackets, len(handler.receivedPackets),
+		"expected receivedPackets to fill exactly to the cap")
+}
+
 // TestACKHandler_ShouldSendACK tests ACK sending decision
 func TestACKHandler_ShouldSendACK(t *testing.T) {
 	tests := []struct {
@@ -317,6 +335,29 @@ func TestACKHandler_AddPending(t *testing.T) {
 	assert.Equal(t, uint32(100), pending.PacketNumber)
 	assert.Equal(t, 0, pending.Retries)
 	assert.WithinDuration(t, time.Now(), pending.SentTime, time.Second)
+}
+
+// TestACKHandler_AddPending_BoundedGrowth is the regression test for the
+// AUDIT.md LOW finding: pendingACKs must not grow past maxPendingACKs even
+// when the caller keeps adding new pending entries without any being
+// acknowledged, evicting the oldest entry first as defense-in-depth.
+func TestACKHandler_AddPending_BoundedGrowth(t *testing.T) {
+	handler := NewACKHandler()
+
+	for i := 0; i < maxPendingACKs+500; i++ {
+		handler.AddPending(uint32(i))
+	}
+
+	assert.LessOrEqual(t, len(handler.pendingACKs), maxPendingACKs,
+		"pendingACKs must never exceed maxPendingACKs (%d), got %d", maxPendingACKs, len(handler.pendingACKs))
+
+	// The oldest entries (packet 0) should have been evicted; the most
+	// recently added entry must still be present.
+	_, oldestStillPresent := handler.GetPendingPacket(0)
+	assert.False(t, oldestStillPresent, "expected oldest pending entry to be evicted")
+
+	_, newestPresent := handler.GetPendingPacket(uint32(maxPendingACKs + 499))
+	assert.True(t, newestPresent, "expected most recently added pending entry to still be present")
 }
 
 // TestACKHandler_GetPending tests retrieving pending packet list

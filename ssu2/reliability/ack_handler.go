@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/eviction"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -20,6 +21,25 @@ const (
 	// ACK amplification under bursty load. Even if ackThreshold is reached,
 	// we won't send another ACK until this interval has elapsed since the last one.
 	minACKInterval = 5 * time.Millisecond
+
+	// maxReceivedPackets bounds ACKHandler.receivedPackets independent of how
+	// promptly the caller invokes ShouldSendACK/GenerateACK to drain it.
+	// Without this cap, a peer sending packets faster than the local side
+	// generates ACKs (or a stalled local ACK-generation loop) could grow this
+	// slice unboundedly — a memory-exhaustion risk, compounded by
+	// SortDescDedupPackets's O(n²) insertion sort on the eventual drain.
+	// Matches DefaultMaxWindowSize (ssu2/reliability/receive_window.go), the
+	// SSU2-spec-mandated maximum ACK-range window size; the receive window
+	// itself bounds accepted packets to this same size in normal operation, so
+	// this cap should not be reached under non-adversarial conditions.
+	maxReceivedPackets = DefaultMaxWindowSize
+
+	// maxPendingACKs bounds ACKHandler.pendingACKs as defense-in-depth,
+	// independent of the congestion controller that normally limits
+	// outstanding in-flight sends long before this map would grow
+	// unreasonably large. A caller bug or a stalled/misbehaving congestion
+	// integration should not be able to grow this map without limit.
+	maxPendingACKs = DefaultMaxWindowSize
 )
 
 // ACKHandler manages acknowledgment generation and processing for SSU2 connections.
@@ -82,10 +102,20 @@ func NewACKHandler() *ACKHandler {
 
 // RecordReceived marks a packet number as received and needing acknowledgment.
 // This should be called for every successfully processed inbound packet.
+//
+// Once receivedPackets reaches maxReceivedPackets, further packet numbers are
+// dropped (not appended) rather than growing the slice unboundedly; the
+// caller's own receive window already independently rejects/dedupes packets
+// outside its bounds, so reaching this cap indicates the local side is
+// falling behind on ACK generation, not a new attack surface being opened.
 func (h *ACKHandler) RecordReceived(packetNum uint32) {
 	flog("RecordReceived", logger.Fields{"packetNum": packetNum}).Debug("RecordReceived: marking packet as received")
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.receivedPackets) >= maxReceivedPackets {
+		flog("RecordReceived", logger.Fields{"packetNum": packetNum, "cap": maxReceivedPackets}).Warn("RecordReceived: receivedPackets at capacity, dropping packet number instead of growing unboundedly")
+		return
+	}
 	h.receivedPackets = append(h.receivedPackets, packetNum)
 }
 
@@ -302,11 +332,20 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 	return ackedPackets, nil
 }
 
-// AddPending marks a packet as sent and awaiting acknowledgment.
+// AddPending marks a packet as sent and awaiting acknowledgment. If the
+// pending map is at capacity (maxPendingACKs), the oldest pending entry (by
+// SentTime) is evicted first, as defense-in-depth independent of the
+// congestion controller that normally bounds outstanding sends.
 func (h *ACKHandler) AddPending(packetNum uint32) {
 	flog("AddPending", logger.Fields{"packetNum": packetNum}).Debug("AddPending: marking packet as pending ACK")
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.pendingACKs) >= maxPendingACKs {
+		evictedKey, _, evicted := eviction.EvictOldestByTime(h.pendingACKs, func(p *PendingACK) time.Time { return p.SentTime })
+		if evicted {
+			flog("AddPending", logger.Fields{"packetNum": packetNum, "evicted": evictedKey, "cap": maxPendingACKs}).Warn("AddPending: pendingACKs at capacity, evicting oldest entry")
+		}
+	}
 	h.pendingACKs[packetNum] = &PendingACK{
 		PacketNumber: packetNum,
 		SentTime:     time.Now(),
