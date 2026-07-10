@@ -27,7 +27,11 @@ import (
 // Each 24-byte output is split into (sipk1, sipk2, sipiv) as little-endian uint64s.
 //
 // Parameters:
-//   - askMaster: the ask_master secret from the Noise handshake (32 bytes)
+//   - askMaster: the ask_master secret from the Noise handshake (32 bytes).
+//     DeriveSipHashKeys copies this into an internal buffer, which is zeroed
+//     before the function returns (per spec: "overwrite ask_master in memory,
+//     no longer needed"); the caller's own askMaster slice is left untouched
+//     and remains the caller's responsibility to zero once no longer needed.
 //   - handshakeHash: the handshake hash (h) from the completed Noise session (32 bytes)
 //
 // Returns:
@@ -61,8 +65,16 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	}
 
 	// Step 1: temp_key = HMAC-SHA256(key=ask_master, data=h || "siphash")
+	// Work on a local copy of askMaster so we can zero our copy per spec
+	// ("overwrite ask_master in memory, no longer needed") without mutating
+	// the caller's slice out from under them — callers may legitimately want
+	// to reuse/re-derive from the same ask_master (e.g. tests, or a future
+	// key-rotation path), so DeriveSipHashKeys must not have caller-visible
+	// side effects on its inputs.
+	askMasterCopy := make([]byte, len(askMaster))
+	copy(askMasterCopy, askMaster)
 	hData := concatBytes(handshakeHash, []byte("siphash"))
-	tempKey := hmac.HMACSHA256(askMaster, hData)
+	tempKey := hmac.HMACSHA256(askMasterCopy, hData)
 
 	// Step 2: sip_master = HMAC-SHA256(key=temp_key, data=byte(0x01))
 	sipMaster := hmac.HMACSHA256(tempKey[:], []byte{0x01})
@@ -106,6 +118,10 @@ func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	// "overwrite ask_master in memory, no longer needed"
 	// "overwrite sip_master in memory, no longer needed"
 	// "overwrite the temp_key in memory, no longer needed"
+	//
+	// Note: only our local copy of ask_master is zeroed here; the caller's
+	// original askMaster slice is left untouched (see comment above).
+	securemem.SecureZero(askMasterCopy)
 	securemem.SecureZero(hData)
 	securemem.SecureZero(tempKey[:])
 	securemem.SecureZero(sipMaster[:])

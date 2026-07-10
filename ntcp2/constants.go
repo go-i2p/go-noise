@@ -85,10 +85,13 @@ const (
 	// on an AEAD authentication failure for probing resistance. Per the spec:
 	// "random number of bytes (range TBD)" — we use 1024 as a reasonable upper bound.
 	//
-	// INVARIANT: AEADErrorMaxJunkBytes MUST be a power of two.
-	// The bitmask in handleAEADError (val & (AEADErrorMaxJunkBytes - 1)) only
-	// produces a uniform distribution when this constant is a power of two.
-	// Changing it to a non-power-of-two value will introduce modulo bias.
+	// INVARIANT: AEADErrorMaxJunkBytes was historically required to be a power
+	// of two for a bitmask-based random selection. The current implementation
+	// (handleAEADError in conn_lifecycle.go) instead uses
+	// cryptorand.RandInRange(0, AEADErrorMaxJunkBytes-1), a rejection-sampling
+	// based approach that produces a uniform distribution for any positive
+	// value, not just powers of two. The power-of-two value is kept for
+	// historical/spec-alignment reasons, not because it's still required.
 	AEADErrorMaxJunkBytes = 1024
 
 	// AEADErrorTimeoutMin is the minimum duration to wait while reading random

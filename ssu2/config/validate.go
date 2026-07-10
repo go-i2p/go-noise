@@ -179,19 +179,18 @@ func (sc *SSU2Config) validateUDPConfiguration() error {
 }
 
 // validatePaddingConfiguration checks padding ranges and ratios.
+//
+// Delegates to the stricter handshake.ValidatePaddingParams (the same gate
+// used by createPaddingModifierIfEnabled/ToConnConfig via
+// wire.NewSSU2PaddingModifierWithMTU) instead of the weaker
+// ValidatePaddingRange, so an invalid padding config (e.g. MaxPaddingSize
+// exceeding the I2P spec's I2PMaxBlockDataSize limit) is rejected here
+// rather than passing Validate() and only failing later at ToConnConfig()
+// with a different error code (AUDIT.md Level 9 ssu2/config Finding 2).
 func (sc *SSU2Config) validatePaddingConfiguration() error {
 	flog("validatePaddingConfiguration", logger.Fields{"enabled": sc.PaddingEnabled, "min": sc.MinPaddingSize, "max": sc.MaxPaddingSize, "ratio": sc.PaddingRatio}).Debug("Checking padding ranges and ratios")
-	if err := handshake.ValidatePaddingRange("ssu2", sc.MinPaddingSize, sc.MaxPaddingSize); err != nil {
+	if err := handshake.ValidatePaddingParams("ssu2", sc.MinPaddingSize, sc.MaxPaddingSize, sc.PaddingRatio); err != nil {
 		return err
-	}
-
-	// Validate padding ratio (I2P spec allows 0.0 to 15.9375)
-	if sc.PaddingRatio < 0.0 || sc.PaddingRatio > 15.9375 {
-		return oops.
-			Code("INVALID_PADDING_RATIO").
-			In("ssu2").
-			With("ratio", sc.PaddingRatio).
-			Errorf("padding ratio must be between 0.0 and 15.9375")
 	}
 
 	return nil

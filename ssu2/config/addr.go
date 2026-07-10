@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"sync"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
@@ -37,6 +38,12 @@ import (
 // For initiator connections (dial path), the RouterHash is supplied upfront via
 // SSU2Config and does not require updating; UpdateRouterHash should not be called.
 type SSU2Addr struct {
+	// mu protects routerHash from concurrent access (mirrors ntcp2.Addr's
+	// identical pattern). UpdateRouterHash is typically called from a
+	// post-handshake, router-layer-driven update stage, which may run
+	// concurrently with other goroutines calling RouterHash()/String() for
+	// logging, session dedup, or connection tracking.
+	mu sync.RWMutex
 	// underlying is the UDP network address
 	underlying net.Addr
 	// routerHash is the I2P router identity hash (placeholder for responders until UpdateRouterHash is called)
@@ -122,11 +129,14 @@ func (sa *SSU2Addr) WithIntroducer(introducerAddr net.Addr) (*SSU2Addr, error) {
 // Helper function to maintain immutability pattern while reducing code duplication.
 func (sa *SSU2Addr) copyWithModifications(modify func(*SSU2Addr)) *SSU2Addr {
 	flog("copyWithModifications", logger.Fields{"connID": sa.connectionID}).Debug("copyWithModifications: creating defensive copy of SSU2Addr")
+	sa.mu.RLock()
+	routerHash := sa.routerHash
+	sa.mu.RUnlock()
 	newAddr := &SSU2Addr{
 		underlying:   sa.underlying,
 		connectionID: sa.connectionID,
 		role:         sa.role,
-		routerHash:   sa.routerHash,
+		routerHash:   routerHash,
 	}
 
 	if sa.destHash != nil {
@@ -169,7 +179,9 @@ func (sa *SSU2Addr) copyWithModifications(modify func(*SSU2Addr)) *SSU2Addr {
 // For initiator connections (DialSSU2, DialSSU2WithConn), the RouterHash is supplied
 // upfront via SSU2Config and this method should NOT be called.
 func (sa *SSU2Addr) UpdateRouterHash(hash data.Hash) {
+	sa.mu.Lock()
 	sa.routerHash = hash
+	sa.mu.Unlock()
 }
 
 // Network returns "ssu2" to identify this as an SSU2 transport address.
@@ -187,7 +199,9 @@ func (sa *SSU2Addr) String() string {
 	}
 
 	// I2P base64 encode router hash for readability
+	sa.mu.RLock()
 	routerB64 := i2pbase64.EncodeToString(sa.routerHash[:])
+	sa.mu.RUnlock()
 
 	// Build base address with connection ID
 	addr := fmt.Sprintf("ssu2://%s:%d/%s/%s",
@@ -213,6 +227,8 @@ func (sa *SSU2Addr) String() string {
 
 // RouterHash returns the router identity hash.
 func (sa *SSU2Addr) RouterHash() data.Hash {
+	sa.mu.RLock()
+	defer sa.mu.RUnlock()
 	return sa.routerHash
 }
 

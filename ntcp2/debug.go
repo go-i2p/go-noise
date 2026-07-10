@@ -49,6 +49,7 @@ func init() {
 			}
 		}
 		msg1WireDumpRemaining.Store(n)
+		warnDumpEnabled("NTCP2_DUMP_MSG1", n)
 	}
 	if v := os.Getenv("NTCP2_DUMP_MSG3"); v != "" {
 		var n int32
@@ -63,7 +64,22 @@ func init() {
 			}
 		}
 		msg3WireDumpRemaining.Store(n)
+		warnDumpEnabled("NTCP2_DUMP_MSG3", n)
 	}
+}
+
+// warnDumpEnabled emits an explicit, hard-to-miss warning that this binary
+// was built with the ntcp2_debug tag and has wire-dump instrumentation
+// active. This makes accidental production use of a debug-tagged binary
+// with the dump env vars set much harder to do silently (AUDIT.md Level 9
+// ntcp2 Finding 7).
+func warnDumpEnabled(envVar string, count int32) {
+	log.WithFields(logger.Fields{
+		"pkg":     "ntcp2",
+		"func":    "warnDumpEnabled",
+		"env_var": envVar,
+		"count":   count,
+	}).Warn("NTCP2 wire-dump instrumentation is ACTIVE on this ntcp2_debug-tagged binary — peer static keys and IP addresses will be logged; do NOT use in production")
 }
 
 // dumpMsg1IfEnabled emits a one-shot hex dump of every cryptographic input

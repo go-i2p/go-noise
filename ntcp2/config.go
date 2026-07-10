@@ -8,6 +8,7 @@ import (
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	internalvalidation "github.com/go-i2p/go-noise/internal/validation"
 	"github.com/go-i2p/go-noise/mod/validation"
 	"github.com/go-i2p/logger"
@@ -433,7 +434,12 @@ func (nc *Config) validateFrameConfiguration() error {
 			Errorf("max frame size %d exceeds spec maximum %d", nc.MaxFrameSize, SpecMaxFrameSize)
 	}
 
-	if err := handshake.ValidatePaddingRange("ntcp2", nc.MinPaddingSize, nc.MaxPaddingSize); err != nil {
+	// Delegate to the stricter ValidatePaddingParams (same gate used by
+	// createPaddingModifierIfEnabled/ToConnConfig) so an invalid padding
+	// config is rejected here rather than passing Validate() and only
+	// failing later at ToConnConfig() with a different error code
+	// (AUDIT.md Level 9 ntcp2 Finding 2).
+	if err := handshake.ValidatePaddingParams("ntcp2", nc.MinPaddingSize, nc.MaxPaddingSize, 0.0); err != nil {
 		return err
 	}
 
@@ -517,6 +523,12 @@ func (nc *Config) createPostHandshakeHook() func(*noise.NoiseConn) error {
 		askMaster := askKeys[0]
 
 		sipKeysAB, sipIVAB, sipKeysBA, sipIVBA, err := DeriveSipHashKeys(askMaster, h)
+		// Per NTCP2 spec ("overwrite ask_master in memory, no longer needed"),
+		// zero the ask_master secret now that key derivation is complete.
+		// DeriveSipHashKeys only zeroes its own internal copy (see its doc
+		// comment), so the original slice obtained from AdditionalSymmetricKeys
+		// must be zeroed here by the caller.
+		securemem.SecureZero(askMaster)
 		if err != nil {
 			return oops.
 				Code("SIPHASH_DERIVATION_FAILED").

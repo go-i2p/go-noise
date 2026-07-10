@@ -207,6 +207,12 @@ func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
 	overflow := plaintext[n:]
 	if len(overflow) > 0 {
 		if len(overflow) > maxReadBufferSize {
+			// DEAD CODE under current constants: this branch is unreachable
+			// because the maximum possible decrypted-frame plaintext is
+			// SpecMaxFrameSize (65535) - Poly1305Overhead (16) = 65519, which
+			// is always <= maxReadBufferSize (65535). Kept as defense-in-depth
+			// in case either constant changes in the future (mirrors the
+			// FRAME_TOO_LARGE dead-code branch elsewhere in this file).
 			// Truncate rather than abort; the frame was already decrypted
 			// successfully, so silently discarding excess plaintext is safer
 			// than crashing, but flag the connection as broken since the
