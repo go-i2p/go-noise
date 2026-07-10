@@ -804,6 +804,43 @@ func TestNoiseConnCipherOperations(t *testing.T) {
 }
 
 // TestNoiseConnHandshakeContexts tests handshake timeout and context cancellation
+// TestNoiseConnHandshake_HonorsCtxCancellationPromptly is the regression test
+// for the AUDIT.md HIGH finding: Handshake(ctx) must abort promptly when the
+// caller cancels ctx early, rather than blocking until the full configured
+// HandshakeTimeout elapses. This exact scenario was empirically confirmed to
+// block for the full timeout despite cancellation at ~200ms.
+func TestNoiseConnHandshake_HonorsCtxCancellationPromptly(t *testing.T) {
+	clientPipe, serverPipe := net.Pipe()
+	defer serverPipe.Close()
+
+	clientCfg := NewConnConfig("NN", true).WithHandshakeTimeout(10 * time.Second)
+	client, err := NewNoiseConn(clientPipe, clientCfg)
+	if err != nil {
+		t.Fatalf("NewNoiseConn error = %v", err)
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	err = client.Handshake(ctx)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected Handshake to fail after context cancellation")
+	}
+	// Bound well under the 10s HandshakeTimeout but generous enough to avoid
+	// CI flakiness; before the fix this reliably took ~10s.
+	const maxAllowed = 2 * time.Second
+	if elapsed > maxAllowed {
+		t.Fatalf("Handshake took %v after ctx cancellation at ~200ms (HandshakeTimeout=10s) — cancellation was not honored promptly (max allowed %v)", elapsed, maxAllowed)
+	}
+}
+
 func TestNoiseConnHandshakeContexts(t *testing.T) {
 	conn, _ := newTestNoiseConn(t, "NN", true)
 

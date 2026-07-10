@@ -317,6 +317,32 @@ func (nc *Conn) executeRoleBasedHandshake(ctx context.Context) error {
 		}()
 	}
 
+	// Watch for context cancellation (e.g. a caller-cancelable context, not
+	// just the fixed timeout deadline set above) and lower the socket
+	// deadline to now so a blocked Read/Write inside the handshake aborts
+	// promptly instead of waiting out the full HandshakeTimeout. Without
+	// this, ctx.Done() firing early has no effect on an in-progress
+	// blocking I/O call — this was empirically confirmed to block for the
+	// full timeout despite early cancellation (see AUDIT.md HIGH finding).
+	//
+	// Torn down via the deferred close(watcherDone) below, which always
+	// runs before this function returns (registered after, so it fires
+	// first per Go's LIFO defer order) — no goroutine leak.
+	watcherDone := make(chan struct{})
+	defer close(watcherDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			if err := nc.underlying.SetDeadline(time.Now()); err != nil {
+				nc.logger.WithFields(i2plogger.Fields{
+					"pkg":  "noise",
+					"func": "executeRoleBasedHandshake",
+				}).Debug("failed to lower deadline after context cancellation")
+			}
+		case <-watcherDone:
+		}
+	}()
+
 	if nc.config.Initiator {
 		if err := nc.performInitiatorHandshake(ctx); err != nil {
 			return oops.

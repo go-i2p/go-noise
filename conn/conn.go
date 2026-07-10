@@ -345,7 +345,6 @@ func (nc *Conn) Close() error {
 	return nil
 }
 
-
 // LocalAddr returns the local network address.
 func (nc *Conn) LocalAddr() net.Addr {
 	return nc.localAddr
