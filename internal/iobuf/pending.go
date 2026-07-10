@@ -10,7 +10,8 @@ import (
 // if the buffer is fully drained (to prevent plaintext lingering).
 //
 // Parameters:
-//   - pending: Pointer to the pending buffer slice. Will be modified in-place.
+//   - pending: Pointer to the pending buffer slice. Must not be nil. Will be
+//     modified in-place.
 //   - b: Destination buffer to copy into.
 //   - zero: Whether to zero the backing array on full drain (security-sensitive
 //     buffers should set this to true).
@@ -23,6 +24,9 @@ import (
 // This function assumes the pending slice and its backing array are not accessed
 // concurrently.
 func DrainPendingBuffer(pending *[]byte, b []byte, zero bool) (n int, drained bool) {
+	if pending == nil {
+		return 0, false
+	}
 	current := *pending
 	if len(current) == 0 {
 		return 0, false
