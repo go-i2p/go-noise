@@ -54,6 +54,13 @@ type Listener struct {
 	// maxConnSemaphore limits concurrent connections to prevent resource exhaustion DoS (M-6)
 	// Nil if MaxConnections is 0 (unlimited). Non-nil if configured.
 	maxConnSemaphore chan struct{}
+
+	// closeCh is closed exactly once by Close(), allowing any goroutine
+	// blocked acquiring a maxConnSemaphore slot (acquireConnectionSlot) or
+	// sleeping in the transient-error backoff (acceptWithRetry) to unblock
+	// promptly instead of waiting indefinitely / for the full backoff
+	// duration. See AUDIT.md Level 7 HIGH finding.
+	closeCh chan struct{}
 }
 
 // ListenerConfig contains configuration for creating a NoiseListener.
@@ -268,6 +275,7 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 		logger:           log,
 		closed:           false,
 		maxConnSemaphore: maxConnSem,
+		closeCh:          make(chan struct{}),
 	}
 
 	log.WithFields(logger.Fields{
@@ -303,7 +311,10 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			Errorf("listener is closed")
 	}
 
-	slotAcquired := nl.acquireConnectionSlot()
+	slotAcquired, err := nl.acquireConnectionSlot()
+	if err != nil {
+		return nil, err
+	}
 	releaseSlot := slotAcquired
 	defer func() {
 		if releaseSlot {
@@ -342,13 +353,21 @@ func (nl *Listener) Accept() (net.Conn, error) {
 	return noiseConn, nil
 }
 
-func (nl *Listener) acquireConnectionSlot() bool {
+func (nl *Listener) acquireConnectionSlot() (bool, error) {
 	if nl.maxConnSemaphore == nil {
-		return false
+		return false, nil
 	}
 
-	nl.maxConnSemaphore <- struct{}{}
-	return true
+	select {
+	case nl.maxConnSemaphore <- struct{}{}:
+		return true, nil
+	case <-nl.closeCh:
+		return false, oops.
+			Code("LISTENER_CLOSED").
+			In("noise").
+			With("listener_addr", nl.addr.String()).
+			Errorf("listener closed while waiting for a connection slot")
+	}
 }
 
 func (nl *Listener) acceptWithRetry() (net.Conn, error) {
@@ -366,7 +385,15 @@ func (nl *Listener) acceptWithRetry() (net.Conn, error) {
 			return nil, returnErr
 		}
 
-		time.Sleep(backoffDuration)
+		select {
+		case <-time.After(backoffDuration):
+		case <-nl.closeCh:
+			return nil, oops.
+				Code("LISTENER_CLOSED").
+				In("noise").
+				With("listener_addr", nl.addr.String()).
+				Errorf("listener closed during transient-error backoff")
+		}
 	}
 }
 
@@ -403,6 +430,9 @@ func (nl *Listener) handleTransientError(err error) (bool, time.Duration, error)
 	}
 
 	backoffDuration := nl.config.RetryBackoff
+	if backoffDuration > 10*time.Second {
+		backoffDuration = 10 * time.Second
+	}
 	for i := 1; i < errorCount; i++ {
 		backoffDuration *= 2
 		if backoffDuration > 10*time.Second {
@@ -529,6 +559,7 @@ func (nl *Listener) Close() error {
 	}
 
 	nl.closed = true
+	close(nl.closeCh)
 
 	// Unregister from shutdown manager if set
 	if nl.shutdownManager != nil {

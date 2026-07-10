@@ -309,6 +309,54 @@ func TestNoiseListenerClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "listener is closed")
 }
 
+// TestNoiseListenerClose_UnblocksAcceptWaitingForConnectionSlot is the
+// regression test for the AUDIT.md HIGH finding: Close() must promptly
+// unblock an Accept() call that is blocked acquiring a MaxConnections
+// connection slot, rather than hanging indefinitely (empirically confirmed
+// to hang before the fix).
+func TestNoiseListenerClose_UnblocksAcceptWaitingForConnectionSlot(t *testing.T) {
+	nl := newTestNoiseListenerFromTCP(t, "XX")
+	nl.config.MaxConnections = 1
+	// Re-create the semaphore now that MaxConnections was set after construction.
+	nl.maxConnSemaphore = make(chan struct{}, 1)
+
+	// Fill the single connection slot directly (bypassing a real Accept())
+	// so the semaphore is at capacity without needing a live peer connection.
+	nl.maxConnSemaphore <- struct{}{}
+
+	acceptDone := make(chan error, 1)
+	go func() {
+		_, err := nl.Accept()
+		acceptDone <- err
+	}()
+
+	// Give Accept() time to reach the blocking semaphore send.
+	time.Sleep(100 * time.Millisecond)
+
+	closeDone := make(chan error, 1)
+	go func() {
+		closeDone <- nl.Close()
+	}()
+
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Logf("Close() returned (non-fatal) error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() did not return within 5s while Accept() was blocked on a full connection-slot semaphore — the HIGH liveness bug has regressed")
+	}
+
+	select {
+	case err := <-acceptDone:
+		if err == nil {
+			t.Error("expected Accept() blocked on a full semaphore to return an error after Close()")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked Accept() did not unblock after Close()")
+	}
+}
+
 func TestNoiseListenerAcceptAfterClose(t *testing.T) {
 	noiseListener := newTestNoiseListenerFromTCP(t, "XX")
 
