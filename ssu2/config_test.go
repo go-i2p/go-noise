@@ -367,7 +367,7 @@ func TestSSU2Config_Validate(t *testing.T) {
 
 		err := config.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "max padding size must be >= min padding size")
+		assert.Contains(t, err.Error(), "maximum padding cannot be less than minimum padding")
 	})
 
 	t.Run("invalid padding ratio fails", func(t *testing.T) {

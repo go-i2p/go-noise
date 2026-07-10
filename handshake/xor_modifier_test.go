@@ -94,16 +94,15 @@ func TestXORModifier(t *testing.T) {
 		}
 	})
 
-	t.Run("XOR with different phases including PhaseData", func(t *testing.T) {
+	t.Run("XOR applies to handshake phases but passes PhaseData through unmodified", func(t *testing.T) {
 		modifier, err := NewXORModifier("phase-test", []byte{0x42})
 		if err != nil {
 			t.Fatalf("NewXORModifier() error = %v", err)
 		}
 		testData := []byte("test")
 
-		// XOR should work the same regardless of phase, including PhaseData
-		phases := []HandshakePhase{PhaseInitial, PhaseExchange, PhaseFinal, PhaseData}
-		for _, phase := range phases {
+		handshakePhases := []HandshakePhase{PhaseInitial, PhaseExchange, PhaseFinal}
+		for _, phase := range handshakePhases {
 			result, err := modifier.ModifyOutbound(phase, testData)
 			if err != nil {
 				t.Errorf("ModifyOutbound() phase %v error = %v", phase, err)
@@ -119,7 +118,7 @@ func TestXORModifier(t *testing.T) {
 				t.Errorf("Phase %v: got %v, want %v", phase, result, expected)
 			}
 
-			// Verify round-trip for PhaseData specifically
+			// Verify round-trip
 			recovered, err := modifier.ModifyInbound(phase, result)
 			if err != nil {
 				t.Errorf("ModifyInbound() phase %v error = %v", phase, err)
@@ -127,6 +126,24 @@ func TestXORModifier(t *testing.T) {
 			if string(recovered) != string(testData) {
 				t.Errorf("Round-trip failed for phase %v", phase)
 			}
+		}
+
+		// PhaseData must pass through unmodified (no XOR applied), to avoid
+		// reusing the same static keystream across every post-handshake
+		// message.
+		result, err := modifier.ModifyOutbound(PhaseData, testData)
+		if err != nil {
+			t.Errorf("ModifyOutbound(PhaseData) error = %v", err)
+		}
+		if string(result) != string(testData) {
+			t.Errorf("PhaseData: got %v, want data unchanged (%v)", result, testData)
+		}
+		recovered, err := modifier.ModifyInbound(PhaseData, result)
+		if err != nil {
+			t.Errorf("ModifyInbound(PhaseData) error = %v", err)
+		}
+		if string(recovered) != string(testData) {
+			t.Errorf("PhaseData round-trip failed: got %v, want %v", recovered, testData)
 		}
 	})
 

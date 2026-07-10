@@ -74,6 +74,15 @@ func NewXORModifier(name string, xorKey []byte) (*XORModifier, error) {
 
 // ModifyOutbound applies XOR obfuscation to outbound handshake data.
 // Returns an error if Close() has been called.
+//
+// For PhaseData (and any future phase beyond PhaseFinal), data is returned
+// unmodified. xorKey is a single static, non-advancing keystream: applying
+// it at the same byte offsets to every post-handshake message would reuse
+// the same keystream bytes across the connection's entire data phase — an
+// adversary who learns or guesses plaintext at any offset in one message
+// immediately recovers the keystream bytes needed to de-obfuscate that same
+// offset in every other message. Confining XOR to the one-shot handshake
+// phases avoids this repeated-keystream break; see AUDIT.md.
 func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	xm.mu.Lock()
 	defer xm.mu.Unlock()
@@ -84,6 +93,10 @@ func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte
 			In("handshake").
 			With("modifier_name", xm.name).
 			Errorf("XORModifier has been closed")
+	}
+
+	if phase > PhaseFinal {
+		return data, nil // Post-handshake: pass through unmodified
 	}
 
 	if len(data) == 0 {

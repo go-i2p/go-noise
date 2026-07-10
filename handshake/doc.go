@@ -24,7 +24,13 @@
 //     (PhaseInitial, PhaseExchange, PhaseFinal); PhaseData passes through
 //     unmodified.
 //   - [XORModifier]: Applies repeating-key XOR to data. Self-inverting, so
-//     the same modifier works for both outbound and inbound.
+//     the same modifier works for both outbound and inbound. Like
+//     PaddingModifier, it is phase-aware and only applies during handshake
+//     phases (PhaseInitial, PhaseExchange, PhaseFinal); PhaseData passes
+//     through unmodified, because reusing the same static keystream at the
+//     same byte offsets across every post-handshake message would let an
+//     adversary who recovers plaintext at one offset in one message
+//     de-obfuscate that same offset in every other message.
 //
 // Protocol-specific modifiers (in the ntcp2 package) implement the same
 // interface for I2P NTCP2 transport obfuscation:

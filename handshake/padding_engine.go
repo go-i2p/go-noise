@@ -56,7 +56,7 @@ func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRat
 	flog("ValidatePaddingParams", logger.Fields{"domain": domain, "min": minPadding, "max": maxPadding, "ratio": paddingRatio}).Debug("Validating padding params")
 	if minPadding < 0 {
 		return oops.
-			Code("INVALID_PADDING").
+			Code("INVALID_MIN_PADDING").
 			In(domain).
 			With("min_padding", minPadding).
 			Errorf("minimum padding cannot be negative")
@@ -64,7 +64,7 @@ func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRat
 
 	if maxPadding < minPadding {
 		return oops.
-			Code("INVALID_PADDING").
+			Code("INVALID_PADDING_RANGE").
 			In(domain).
 			With("min_padding", minPadding).
 			With("max_padding", maxPadding).

@@ -228,16 +228,35 @@ func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
 			expectError: true,
 			errorCode:   "INVALID_PADDING_RANGE",
 		},
+		{
+			// Regression test: Config.Validate() must reject a
+			// MaxPaddingSize above the I2P spec limit at config-time,
+			// matching the stricter bound enforced later by
+			// handshake.ValidatePaddingParams at engine-construction
+			// time (ToConnConfig -> createPaddingModifierIfEnabled).
+			// Previously ValidatePaddingRange only checked min>=0 and
+			// max>=min, letting this pass Validate() and fail later
+			// with a different error code (AUDIT.md).
+			name: "max padding size exceeds I2P spec limit",
+			setupConfig: func() *Config {
+				config, _ := NewNTCP2Config(routerHash, false)
+				config.MinPaddingSize = 0
+				config.MaxPaddingSize = handshake.I2PMaxBlockDataSize + 1
+				return config
+			},
+			expectError: true,
+			errorCode:   "INVALID_PADDING",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := tt.setupConfig()
 			err := config.Validate()
+
 			if tt.expectError {
-				assert.Error(t, err)
-				// Note: oops errors include codes but not necessarily in the message text
-				// So we test for key words from the error message instead
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errorCode)
 			} else {
 				assert.NoError(t, err)
 			}
