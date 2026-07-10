@@ -207,10 +207,17 @@ func (t *Transport) DialWithPoolAndHandshakeContext(ctx context.Context, network
 // createAndHandshakeConnTransport creates a NoiseConn and performs handshake with retry logic.
 // On error, the function closes conn (directly or via noiseConn.Close) so the
 // caller must NOT close conn when an error is returned.
+//
+// If conn implements pool.PooledConnection (i.e. it was retrieved from a
+// connection pool via DialWithPoolAndHandshake*), a failure here calls
+// Discard() instead of Close() so the broken/protocol-desynced connection is
+// permanently evicted from the pool rather than silently returned for reuse
+// and repeatedly re-failing future Dial calls to the same address. See
+// AUDIT.md Level 8 HIGH finding ("Pool-Retrieved Connection Not Discarded").
 func (t *Transport) createAndHandshakeConnTransport(ctx context.Context, conn net.Conn, config *ConnConfig, network, addr string, sm Shutdowner) (*NoiseConn, error) {
 	noiseConn, err := NewNoiseConn(conn, config)
 	if err != nil {
-		conn.Close()
+		discardOrClose(conn)
 		return nil, oops.
 			Code("NOISE_CONN_FAILED").
 			In("transport").
@@ -226,6 +233,13 @@ func (t *Transport) createAndHandshakeConnTransport(ctx context.Context, conn ne
 
 	// Perform handshake with retry logic
 	if err := noiseConn.HandshakeWithRetry(ctx); err != nil {
+		// Discard the raw pool-tracked connection first (if applicable) so it
+		// is permanently evicted rather than recycled; PoolConnWrapper.Discard
+		// is idempotent with its own Close(), so noiseConn.Close() below
+		// (which will call the now-already-discarded underlying's Close())
+		// remains safe and still performs its own key-zeroization regardless
+		// of the underlying close/discard outcome.
+		discardOrClose(conn)
 		// Close noiseConn to zero key material and close underlying conn
 		noiseConn.Close()
 		return nil, oops.
@@ -237,4 +251,20 @@ func (t *Transport) createAndHandshakeConnTransport(ctx context.Context, conn ne
 	}
 
 	return noiseConn, nil
+}
+
+// discardOrClose evicts conn from its connection pool via Discard() if conn
+// implements pool.PooledConnection, or otherwise falls back to a plain
+// Close(). Errors from either are logged at Debug (not caller-remediable, the
+// connection is being torn down regardless).
+func discardOrClose(conn net.Conn) {
+	if pooled, ok := conn.(pool.PooledConnection); ok {
+		if err := pooled.Discard(); err != nil {
+			flog("discardOrClose").WithError(err).Debug("failed to discard broken pool connection")
+		}
+		return
+	}
+	if err := conn.Close(); err != nil {
+		flog("discardOrClose").WithError(err).Debug("failed to close connection")
+	}
 }

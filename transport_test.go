@@ -2,6 +2,7 @@ package noise
 
 import (
 	"context"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -404,6 +405,64 @@ func TestDialNoiseWithHandshakeContext(t *testing.T) {
 	}
 }
 
+// TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure is the
+// regression test for the AUDIT.md HIGH finding: a pool-retrieved connection
+// that fails NewNoiseConn construction must be permanently discarded from the
+// pool (via pool.PooledConnection.Discard()) rather than silently returned
+// for reuse via Close(), which would let a broken connection be repeatedly
+// re-served by future Dial calls to the same address.
+func TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure(t *testing.T) {
+	const addr = "127.0.0.1:19999"
+
+	p := pool.NewConnPool(&pool.PoolConfig{
+		MaxSize: 5,
+		MaxAge:  time.Hour,
+		MaxIdle: time.Minute,
+	})
+	defer p.Close()
+
+	mockConn := newMockTransportConn(addr)
+	if err := p.Put(mockConn); err != nil {
+		t.Fatalf("failed to seed pool with mock connection: %v", err)
+	}
+
+	// Sanity check: the connection is retrievable before the failed dial.
+	if pooled := p.Get(addr); pooled == nil {
+		t.Fatal("expected mock connection to be retrievable from pool before test")
+	} else if err := pooled.Discard(); err != nil {
+		t.Fatalf("failed to discard sanity-check connection: %v", err)
+	}
+	// Re-seed since the sanity-check Get()+Discard() consumed it.
+	mockConn2 := newMockTransportConn(addr)
+	if err := p.Put(mockConn2); err != nil {
+		t.Fatalf("failed to re-seed pool: %v", err)
+	}
+
+	tr := NewTransport(p, nil)
+
+	// A valid pattern/config so NewNoiseConn construction succeeds and the
+	// pool is actually consulted; the mock connection's Read error then
+	// forces a quick handshake failure, exercising the HandshakeWithRetry
+	// failure path (not the earlier NewNoiseConn-failure path).
+	mockConn2.readErr = io.ErrClosedPipe
+	validConfig := NewConnConfig("XX", true)
+
+	_, err := tr.DialWithPoolAndHandshakeContext(context.Background(), "tcp", addr, validConfig)
+	if err == nil {
+		t.Fatal("expected an error from DialWithPoolAndHandshakeContext when the pool-sourced connection fails handshake")
+	}
+
+	// The broken connection must have been discarded (permanently removed),
+	// not returned to the pool for reuse — so a subsequent Get() for the same
+	// address must return nil.
+	if pooled := p.Get(addr); pooled != nil {
+		t.Error("expected the broken connection to be discarded (Get() should return nil), but it was still retrievable from the pool")
+	}
+	if !mockConn2.closed {
+		t.Error("expected the broken connection's underlying Close() to have been called via Discard()")
+	}
+}
+
 func TestDialNoiseWithPoolAndHandshake(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -443,6 +502,7 @@ func TestDialNoiseWithPoolAndHandshake(t *testing.T) {
 type mockTransportConn struct {
 	closed     bool
 	remoteAddr net.Addr
+	readErr    error
 }
 
 func newMockTransportConn(addr string) *mockTransportConn {
@@ -451,7 +511,12 @@ func newMockTransportConn(addr string) *mockTransportConn {
 	}
 }
 
-func (m *mockTransportConn) Read(b []byte) (int, error)         { return 0, nil }
+func (m *mockTransportConn) Read(b []byte) (int, error) {
+	if m.readErr != nil {
+		return 0, m.readErr
+	}
+	return 0, nil
+}
 func (m *mockTransportConn) Write(b []byte) (int, error)        { return len(b), nil }
 func (m *mockTransportConn) Close() error                       { m.closed = true; return nil }
 func (m *mockTransportConn) LocalAddr() net.Addr                { return m.remoteAddr }
