@@ -117,7 +117,9 @@ func SetGlobalConnPool(p pool.Pool) {
 	withLock(true, func() {
 		dt := getDefault()
 		if dt.pool != nil {
-			dt.pool.Close()
+			if err := dt.pool.Close(); err != nil {
+				flog("SetGlobalConnPool", logger.Fields{"error": err}).Warn("Close of previous global connection pool failed")
+			}
 		}
 		dt.pool = p
 	})
@@ -141,7 +143,9 @@ func SetGlobalShutdownManager(sm Shutdowner) {
 	withLock(true, func() {
 		dt := getDefault()
 		if dt.sm != nil {
-			dt.sm.Shutdown()
+			if err := dt.sm.Shutdown(); err != nil {
+				flog("SetGlobalShutdownManager", logger.Fields{"error": err}).Warn("Shutdown of previous global shutdown manager failed")
+			}
 		}
 		dt.sm = sm
 	})

@@ -60,6 +60,14 @@ func openAndWrapTransport[R shutdownRegisterer](
 
 // createNewConn establishes a new network connection to the specified address.
 // Returns an error with detailed context if the connection fails.
+// createNewConn establishes a new network connection using net.Dial.
+//
+// NOTE: net.Dial has no timeout - a caller using the non-context Dial/DialWithPool/
+// DialNoise/DialNoiseWithPool variants that route through this function can block
+// indefinitely if the peer never responds to the TCP handshake (e.g. a firewall
+// silently drops SYN packets). Callers that need a bounded connect time should use
+// the *Context variants (DialContext, DialWithPoolContext, etc.), which use
+// createNewConnContext below and honor context cancellation/deadlines.
 func createNewConn(network, addr string) (net.Conn, error) {
 	flog("createNewConn", logger.Fields{"network": network, "address": addr}).Debug("Dialing new connection")
 	conn, err := net.Dial(network, addr)
