@@ -213,7 +213,8 @@ func BuildNSPayload(garlicData []byte) ([]byte, error) {
 
 // ParsePayload deserializes a byte slice into a sequence of PayloadBlocks.
 // Unknown block types are preserved (the spec requires receivers to ignore them).
-// Returns an error for malformed data (truncated headers, length overflows).
+// Returns an error for malformed data (truncated headers, length overflows,
+// or more than maxPayloadBlocks blocks).
 //
 // A BlockOptions (type 5) block is preserved in the output for completeness
 // (so the caller can inspect it), but a warning is logged because the block
@@ -223,6 +224,14 @@ func ParsePayload(data []byte) ([]PayloadBlock, error) {
 	offset := 0
 
 	for offset < len(data) {
+		if len(blocks) >= maxPayloadBlocks {
+			// Defense-in-depth: bounded independent of any upstream
+			// AEAD frame-size/maxPayloadSize limit, guarding against a
+			// crafted payload packing many zero-length blocks to grow
+			// the blocks slice unboundedly.
+			return nil, oops.Errorf("payload exceeds maximum block count %d", maxPayloadBlocks)
+		}
+
 		remaining := len(data) - offset
 		if remaining < blockHeaderSize {
 			return nil, oops.Errorf("truncated block header at offset %d: %d bytes remaining, need %d", offset, remaining, blockHeaderSize)

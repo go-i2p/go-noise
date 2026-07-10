@@ -64,6 +64,15 @@ const maxBlockDataSize = 65516
 // maxPayloadSize is the maximum total unencrypted payload size (65519 bytes).
 const maxPayloadSize = 65519
 
+// maxPayloadBlocks bounds the number of blocks ParsePayload will accept in a
+// single payload, as a defense-in-depth guard independent of the upstream
+// AEAD frame-size/maxPayloadSize limit. Derived from the smallest possible
+// block (a zero-length block still costs blockHeaderSize bytes), so this is
+// the theoretical maximum number of blocks that could ever fit in
+// maxPayloadSize bytes; a well-formed payload from a legitimate peer will
+// never approach this count.
+const maxPayloadBlocks = maxPayloadSize / blockHeaderSize
+
 // NextKeyFlag bit definitions for the NextKey block's flag byte.
 // Spec ref: ratchet.md §"Next DH Ratchet Public Key".
 const (

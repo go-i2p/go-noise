@@ -508,6 +508,41 @@ func TestParsePayload_ZeroLengthBlock(t *testing.T) {
 	assert.Empty(t, blocks[0].Data)
 }
 
+// TestParsePayload_MaxBlockCountGuard is the regression test for the
+// AUDIT.md defense-in-depth finding: a crafted payload packing many
+// zero-length blocks back-to-back must be rejected once it exceeds
+// maxPayloadBlocks, rather than growing the returned blocks slice
+// unboundedly. Bounded indirectly today by the upstream AEAD frame-size
+// limit, but this guard makes ParsePayload safe in isolation regardless of
+// caller-side framing.
+func TestParsePayload_MaxBlockCountGuard(t *testing.T) {
+	// Build exactly maxPayloadBlocks+1 zero-length padding blocks
+	// (3 bytes each: type=254, length=0).
+	data := make([]byte, 0, (maxPayloadBlocks+1)*blockHeaderSize)
+	for i := 0; i < maxPayloadBlocks+1; i++ {
+		data = append(data, byte(BlockPadding), 0, 0)
+	}
+
+	blocks, err := ParsePayload(data)
+	require.Error(t, err)
+	assert.Nil(t, blocks)
+	assert.Contains(t, err.Error(), "maximum block count")
+}
+
+// TestParsePayload_ExactlyMaxBlockCountAllowed verifies the guard is an
+// exclusive-of-the-limit boundary: exactly maxPayloadBlocks blocks must
+// still succeed (only maxPayloadBlocks+1 or more is rejected).
+func TestParsePayload_ExactlyMaxBlockCountAllowed(t *testing.T) {
+	data := make([]byte, 0, maxPayloadBlocks*blockHeaderSize)
+	for i := 0; i < maxPayloadBlocks; i++ {
+		data = append(data, byte(BlockPadding), 0, 0)
+	}
+
+	blocks, err := ParsePayload(data)
+	require.NoError(t, err)
+	assert.Len(t, blocks, maxPayloadBlocks)
+}
+
 // ============================================================================
 // Round-trip: Build → Parse → Verify
 // ============================================================================
