@@ -105,7 +105,6 @@ func TestHandshakePhase_NumericOrdering(t *testing.T) {
 	}
 }
 
-
 func TestHandshakeModifier_Interface(t *testing.T) {
 	// Test that our test implementation satisfies the interface
 	var _ HandshakeModifier = &testModifier{}

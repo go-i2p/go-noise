@@ -14,6 +14,7 @@ import (
 	gocrypto_siphash "github.com/go-i2p/crypto/siphash"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/logger"
+	"github.com/samber/oops"
 )
 
 // LengthFieldSize is the 2-byte length field used in both NTCP2 and SSU2.
@@ -21,6 +22,13 @@ const LengthFieldSize = 2
 
 // IVSize is the byte size of a SipHash IV (uint64 = 8 bytes).
 const IVSize = 8
+
+// Compile-time assertions that *LengthModifier implements the interfaces it
+// is documented and relied upon (by ntcp2/ssu2) to satisfy.
+var (
+	_ handshake.HandshakeModifier = (*LengthModifier)(nil)
+	_ handshake.ModifierCloner    = (*LengthModifier)(nil)
+)
 
 // NextMask computes the next SipHash-2-4 mask value. It updates the IV
 // in place and returns the low 16 bits of the hash as the mask.
@@ -30,6 +38,22 @@ const IVSize = 8
 //
 //	IV[n] = SipHash-2-4(k1, k2, IV[n-1])
 //	mask  = uint16(IV[n] & 0xFFFF)
+//
+// Endianness (intentional, spec-mandated, not a bug): the wire length field
+// masked by applyMask is big-endian, while the IV fed into the next
+// SipHash-2-4 call is serialized little-endian. This matches the NTCP2 spec
+// verbatim (https://i2p.net/en/docs/specs/ntcp2, "Data Phase" > "SipHash
+// obfuscated length"):
+//
+//	"length is big endian."
+//	"If you use a SipHash library function that returns an unsigned long
+//	 integer, use the least significant two bytes as the Mask. Convert the
+//	 long integer to the next IV as little endian."
+//
+// SSU2 (see i2p.net/en/docs/specs/ssu2) reuses the identical NTCP2 SipHash
+// length-obfuscation construction, so the same endianness rules apply there
+// too. See TestSipHash_OfficialReferenceVectors and TestNextMask_FixedVector
+// in siphash_test.go for vector-pinned regression coverage of this behavior.
 func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	var input [8]byte
 	binary.LittleEndian.PutUint64(input[:], *iv)
@@ -41,6 +65,13 @@ func NextMask(keys [2]uint64, iv *uint64) uint16 {
 // LengthModifier implements SipHash-2-4 length obfuscation for
 // data-phase packet/frame lengths. Both NTCP2 and SSU2 use this identical
 // algorithm with per-direction keys derived from their respective KDFs.
+//
+// After Close() (or ZeroKeys()) is called, ModifyOutbound and ModifyInbound
+// return an error instead of silently computing a deterministic all-zero-key
+// mask sequence, mirroring XORModifier's use-after-close contract. The
+// lower-level NextOutboundMask/NextInboundMask accessors do not error after
+// Close() (see their doc comments for why) — use Closed() to check state
+// explicitly if calling those directly.
 type LengthModifier struct {
 	mu           sync.Mutex
 	name         string
@@ -48,6 +79,7 @@ type LengthModifier struct {
 	inboundKeys  [2]uint64
 	outboundIV   uint64
 	inboundIV    uint64
+	closed       bool
 }
 
 // NewLengthModifier creates a new SipHash length modifier with shared
@@ -94,6 +126,14 @@ func (slm *LengthModifier) applyMask(phase handshake.HandshakePhase, data []byte
 	}
 
 	slm.mu.Lock()
+	if slm.closed {
+		slm.mu.Unlock()
+		return nil, oops.
+			Code("MODIFIER_CLOSED").
+			In("handshake/siphash").
+			With("modifier_name", slm.name).
+			Errorf("LengthModifier has been closed")
+	}
 	mask := maskFunc()
 	slm.mu.Unlock()
 
@@ -109,15 +149,26 @@ func (slm *LengthModifier) computeNextMask(keys [2]uint64, iv *uint64) uint16 {
 	return NextMask(keys, iv)
 }
 
+// getNextOutboundMask returns the next outbound mask. Caller must hold slm.mu.
 func (slm *LengthModifier) getNextOutboundMask() uint16 {
 	return slm.computeNextMask(slm.outboundKeys, &slm.outboundIV)
 }
 
+// getNextInboundMask returns the next inbound mask. Caller must hold slm.mu.
 func (slm *LengthModifier) getNextInboundMask() uint16 {
 	return slm.computeNextMask(slm.inboundKeys, &slm.inboundIV)
 }
 
 // NextInboundMask returns the next SipHash mask for the inbound direction.
+//
+// Unlike ModifyOutbound/ModifyInbound, this method's signature is unchanged
+// after Close(): it is a hot-path accessor called directly per-frame by
+// ntcp2/conn_framing.go, bypassing the HandshakeModifier interface, and
+// changing it to return an error would be a breaking API change for a
+// narrow-precondition issue (a caller bug continuing to use the modifier
+// after the connection that owns it has already been torn down). Callers
+// are responsible for not invoking this after Close(); use Closed() to
+// check state defensively if needed.
 func (slm *LengthModifier) NextInboundMask() uint16 {
 	slm.mu.Lock()
 	mask := slm.getNextInboundMask()
@@ -126,11 +177,21 @@ func (slm *LengthModifier) NextInboundMask() uint16 {
 }
 
 // NextOutboundMask returns the next SipHash mask for the outbound direction.
+// See NextInboundMask's doc comment for why this does not error after Close().
 func (slm *LengthModifier) NextOutboundMask() uint16 {
 	slm.mu.Lock()
 	mask := slm.getNextOutboundMask()
 	slm.mu.Unlock()
 	return mask
+}
+
+// Closed reports whether Close() (or ZeroKeys()) has been called on this
+// modifier. Callers of NextInboundMask/NextOutboundMask that need to guard
+// against post-close use can check this explicitly.
+func (slm *LengthModifier) Closed() bool {
+	slm.mu.Lock()
+	defer slm.mu.Unlock()
+	return slm.closed
 }
 
 // PeekOutboundIV returns the current outbound SipHash IV without advancing
@@ -167,7 +228,9 @@ func (slm *LengthModifier) PeekInboundKeys() [2]uint64 {
 	return k
 }
 
-// ZeroKeys zeroes all SipHash key material and IVs.
+// ZeroKeys zeroes all SipHash key material and IVs, and marks the modifier
+// closed. After this call, ModifyOutbound/ModifyInbound return an error
+// instead of silently computing a deterministic all-zero-key mask sequence.
 func (slm *LengthModifier) ZeroKeys() {
 	log.WithField("name", slm.name).Debug("Zeroing SipHash key material")
 	slm.mu.Lock()
@@ -177,6 +240,7 @@ func (slm *LengthModifier) ZeroKeys() {
 	slm.inboundKeys[1] = 0
 	slm.outboundIV = 0
 	slm.inboundIV = 0
+	slm.closed = true
 	slm.mu.Unlock()
 }
 
@@ -200,6 +264,7 @@ func (slm *LengthModifier) Clone() handshake.HandshakeModifier {
 		inboundKeys:  slm.inboundKeys,
 		outboundIV:   slm.outboundIV,
 		inboundIV:    slm.inboundIV,
+		closed:       slm.closed,
 	}
 }
 
