@@ -454,6 +454,22 @@ func (nl *Listener) handleTransientError(err error) (bool, time.Duration, error)
 	return true, backoffDuration, nil
 }
 
+// setHandshakeDeadline sets a best-effort/advisory socket deadline covering
+// the interval between Accept() returning and the caller invoking
+// Handshake() on the returned connection.
+//
+// IMPORTANT: this deadline is NOT a hard guarantee against caller-side delay.
+// conn.Conn.Handshake() computes its own fresh deadline from HandshakeTimeout
+// (via context.WithTimeout) and calls underlying.SetDeadline() again when
+// invoked, unconditionally overwriting whatever this method set. If the
+// caller waits before calling Handshake() (e.g. due to a worker-pool
+// backlog), the connection's fd remains open for that entire wait with no
+// deadline actually in effect during the gap, and Handshake() — once finally
+// called — restarts the countdown from a full fresh HandshakeTimeout window
+// rather than a decayed remaining budget. Callers that need a hard bound on
+// end-to-end accept-to-established latency should invoke Handshake()
+// immediately after Accept() returns and/or enforce their own bound via a
+// context passed to Handshake(ctx). See AUDIT.md Level 7 Medium finding.
 func (nl *Listener) setHandshakeDeadline(underlying net.Conn) error {
 	if nl.config.HandshakeTimeout <= 0 {
 		return nil
