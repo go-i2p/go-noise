@@ -2,6 +2,7 @@ package config
 
 import (
 	"net"
+	"sync"
 	"testing"
 
 	"github.com/go-i2p/common/data"
@@ -185,6 +186,41 @@ func TestSSU2Addr_NetAddrInterface(t *testing.T) {
 	var netAddr net.Addr = addr
 	assert.Equal(t, "ssu2", netAddr.Network())
 	assert.Contains(t, netAddr.String(), "ssu2://")
+}
+
+// TestSSU2Addr_ConcurrentUpdateRouterHash exercises concurrent
+// UpdateRouterHash() writes racing against RouterHash()/String() reads,
+// verifying the sync.RWMutex guard added for AUDIT.md Level 9 ssu2/config
+// Finding 1 (previously unsynchronized, unlike ntcp2.Addr's identical
+// pattern). Run with -race.
+func TestSSU2Addr_ConcurrentUpdateRouterHash(t *testing.T) {
+	underlying := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 8080}
+	addr, err := NewSSU2Addr(underlying, generateRandomHash(), 12345, "responder")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	const iterations = 200
+
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			addr.UpdateRouterHash(generateRandomHash())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = addr.RouterHash()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iterations; i++ {
+			_ = addr.String()
+		}
+	}()
+	wg.Wait()
 }
 
 func TestSSU2Addr_Network(t *testing.T) {
