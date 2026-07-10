@@ -320,8 +320,21 @@ func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packe
 
 // validateFragmentOrdering checks that the fragment ordering and completeness
 // is correct for a set of SessionConfirmed packets.
+//
+// Defense-in-depth: every packets[i].Header is bounds-checked (>= 14 bytes)
+// before indexing Header[13], so this function is safe to call in isolation
+// even if a future caller does not replicate the equivalent guard already
+// present in its current sole production caller
+// (SSU2Conn.collectConfirmedFragments/validateConfirmedFragment in
+// ssu2/session). See AUDIT.md Level 6/10.
 func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error {
 	flog("validateFragmentOrdering", logger.Fields{"packetCount": len(packets)}).Debug("Checking fragment ordering")
+	if len(packets) == 0 {
+		return oops.Errorf("no fragments to validate")
+	}
+	if len(packets[0].Header) < 14 {
+		return oops.Errorf("fragment 0: header too short (%d bytes, need at least 14)", len(packets[0].Header))
+	}
 	totalFrags := int(packets[0].Header[13] & 0x0F)
 	if totalFrags < 1 {
 		totalFrags = 1
@@ -332,6 +345,9 @@ func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error
 	for i, pkt := range packets {
 		if pkt.MessageType != MessageTypeSessionConfirmed {
 			return oops.Errorf("fragment %d: expected SessionConfirmed (type 2), got type %d", i, pkt.MessageType)
+		}
+		if len(pkt.Header) < 14 {
+			return oops.Errorf("fragment %d: header too short (%d bytes, need at least 14)", i, len(pkt.Header))
 		}
 		fragNum := int((pkt.Header[13] >> 4) & 0x0F)
 		if fragNum != i {
