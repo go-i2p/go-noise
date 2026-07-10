@@ -38,7 +38,13 @@ func RunServer(args *CommonArgs, staticKey []byte, label string, handler func(ne
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			// Back off on persistent Accept errors instead of busy-spinning
+			// (AUDIT.md Level 9 examples/exampleutil Finding 1) — mirrors the
+			// bounded-backoff pattern integrators should copy from the
+			// production listener package rather than the naive tight loop
+			// this example previously demonstrated.
 			log.Printf("Accept failed: %v", err)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 		go handler(conn)
