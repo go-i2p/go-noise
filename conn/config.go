@@ -111,6 +111,15 @@ func (c *ConnConfig) WithRemoteKey(key []byte) *ConnConfig {
 }
 
 // WithHandshakeTimeout sets the handshake timeout.
+//
+// Note: this assigns the promoted BaseHandshakeConfig.HandshakeTimeout field
+// directly rather than calling baseconfig.SetHandshakeTimeout. Both forms are
+// equally supported and behaviorally identical today (the shared helpers are
+// single-field assignments with no additional logic); ntcp2.Config and
+// ssu2/config.SSU2Config use the baseconfig.Set* helpers instead. This is a
+// stylistic difference, not a functional one — see the equivalent
+// WithReadTimeout/WithWriteTimeout/WithHandshakeRetries/WithRetryBackoff
+// methods below, which follow the same direct-assignment pattern.
 func (c *ConnConfig) WithHandshakeTimeout(timeout time.Duration) *ConnConfig {
 	c.HandshakeTimeout = timeout
 	return c

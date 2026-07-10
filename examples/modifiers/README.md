@@ -55,7 +55,7 @@ The example will show:
 ### 1. Security Preservation
 - Modifiers maintain Noise protocol security guarantees
 - XOR patterns don't weaken cryptographic properties
-- Padding uses deterministic patterns for testing; **production implementations must use cryptographically secure random padding** to avoid weakening security.
+- `GenericPaddingModifier` uses cryptographically secure random padding size and content by default (via `crypto/rand`), with fail-closed error handling on RNG failure; there is no "deterministic pattern" mode in production use.
 
 ### 2. Composability  
 - Modifiers can be chained without conflicts
@@ -77,7 +77,7 @@ The example will show:
 ```go
 // Create modifiers
 xorMod := handshake.NewXORModifier("obfuscation", []byte{0xAA, 0xBB})
-paddingMod, _ := handshake.NewPaddingModifier("padding", 4, 8)
+paddingMod, _ := handshake.NewGenericPaddingModifier("padding", 4, 8)
 
 // Configure in connection
 The second parameter to NewConnConfig, named isInitiator (bool), specifies whether this side is the initiator (true) or responder (false).
