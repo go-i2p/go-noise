@@ -253,6 +253,14 @@ func (pe *PaddingEngine) applyRandomVariation(paddingSize, dataLen int) int {
 func (pe *PaddingEngine) calculateSecureRandomPadding(paddingSize, paddingRange int) int {
 	randomBytes := make([]byte, 4)
 	if _, err := rand.Read(randomBytes); err != nil {
+		// Fail-open on padding *size* jitter only (unlike addPaddingCore's
+		// padding *content* generation, which fails closed): falling back to
+		// a deterministic size is a traffic-analysis weakness, not a
+		// confidentiality/integrity break, since the connection can still
+		// proceed securely without randomized padding size. Log at Error so
+		// operators can detect degraded entropy, since this fallback would
+		// otherwise be entirely silent.
+		flog("PaddingEngine.calculateSecureRandomPadding", logger.Fields{"domain": pe.Config.Domain}).WithError(err).Error("crypto/rand failed; falling back to non-randomized padding size")
 		return paddingSize
 	}
 

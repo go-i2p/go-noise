@@ -247,6 +247,25 @@ func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
 			expectError: true,
 			errorCode:   "INVALID_PADDING",
 		},
+		{
+			// Regression test for AUDIT.md Level 3 finding: GenericPaddingModifier
+			// uses an NTCP2-incompatible 4-byte length-prefix wire format and
+			// must be rejected by config validation rather than silently produce
+			// non-interoperable messages. validateModifiers already enforces
+			// this at runtime (INCOMPATIBLE_MODIFIER); this test asserts that
+			// guard is actually exercised via Config.Validate().
+			name: "GenericPaddingModifier is rejected as an NTCP2 modifier",
+			setupConfig: func() *Config {
+				config, _ := NewNTCP2Config(routerHash, false)
+				mod, err := handshake.NewGenericPaddingModifier("generic-padding", 4, 16)
+				if err != nil {
+					t.Fatalf("NewGenericPaddingModifier() error = %v", err)
+				}
+				return config.WithModifiers(mod)
+			},
+			expectError: true,
+			errorCode:   "INCOMPATIBLE_MODIFIER",
+		},
 	}
 
 	for _, tt := range tests {

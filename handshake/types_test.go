@@ -78,6 +78,34 @@ func TestHandshakePhase_String(t *testing.T) {
 	}
 }
 
+// TestHandshakePhase_NumericOrdering asserts the documented stability
+// contract on constants.go: PhaseInitial < PhaseExchange < PhaseFinal <
+// PhaseData. Downstream packages (e.g. ntcp2, ssu2/wire modifiers) rely on
+// "phase >= PhaseFinal"/"phase > PhaseFinal" guards to distinguish
+// pre-data-phase handshake messages from post-handshake transport traffic.
+// A future edit that inserts a new phase constant between PhaseFinal and
+// PhaseData (or otherwise reorders these values) would silently break those
+// guards without this test failing first.
+func TestHandshakePhase_NumericOrdering(t *testing.T) {
+	if !(PhaseInitial < PhaseExchange) {
+		t.Errorf("expected PhaseInitial (%d) < PhaseExchange (%d)", PhaseInitial, PhaseExchange)
+	}
+	if !(PhaseExchange < PhaseFinal) {
+		t.Errorf("expected PhaseExchange (%d) < PhaseFinal (%d)", PhaseExchange, PhaseFinal)
+	}
+	if !(PhaseFinal < PhaseData) {
+		t.Errorf("expected PhaseFinal (%d) < PhaseData (%d)", PhaseFinal, PhaseData)
+	}
+
+	// Pin the exact values too: downstream "phase >= PhaseFinal"-style guards
+	// depend on the absolute ordering, not merely relative comparisons.
+	if PhaseInitial != 0 || PhaseExchange != 1 || PhaseFinal != 2 || PhaseData != 3 {
+		t.Errorf("unexpected phase constant values: PhaseInitial=%d PhaseExchange=%d PhaseFinal=%d PhaseData=%d",
+			PhaseInitial, PhaseExchange, PhaseFinal, PhaseData)
+	}
+}
+
+
 func TestHandshakeModifier_Interface(t *testing.T) {
 	// Test that our test implementation satisfies the interface
 	var _ HandshakeModifier = &testModifier{}
