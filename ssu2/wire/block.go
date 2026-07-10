@@ -351,7 +351,14 @@ func IsKnownBlockType(blockType uint8) bool {
 	return ok
 }
 
-// GetBlockTypeName returns a human-readable name for the block type.
+// GetBlockTypeName returns a human-readable name for the block type,
+// returning the real name for every type in blockTypeNames including
+// NextNonce, Reserved14, FirstPacketNumber, and Congestion.
+//
+// This differs from BlockTypeName (block_router.go), which overrides those
+// same four types to "Unknown" for legacy router-facing log/display output.
+// Prefer this function for anything other than that specific legacy
+// call site, to avoid picking the wrong one due to their similar names.
 func GetBlockTypeName(blockType uint8) string {
 	if name, ok := blockTypeNames[blockType]; ok {
 		return name

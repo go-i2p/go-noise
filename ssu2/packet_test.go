@@ -785,8 +785,14 @@ func TestSSU2Packet_LargePayload(t *testing.T) {
 // TestSSU2Packet_ZeroFields tests behavior with zero/nil fields
 func TestSSU2Packet_ZeroFields(t *testing.T) {
 	t.Run("Nil payload is allowed", func(t *testing.T) {
-		pkt := NewSSU2Packet(MessageTypeData, 0)
-		pkt.Header = make([]byte, ShortHeaderSize)
+		// Uses a long-header message type (Retry) with no ephemeral key, so
+		// header(32) + MAC(16) = 48 bytes already satisfies MinPacketSize(40)
+		// with a nil payload. A short-header type (e.g. Data) with a nil
+		// payload would total only 32 bytes, which validate() now correctly
+		// rejects as below MinPacketSize (see AUDIT.md Level 5 item 3) -- use
+		// "Minimal payload" below to cover that boundary instead.
+		pkt := NewSSU2Packet(MessageTypeRetry, 0)
+		pkt.Header = make([]byte, LongHeaderSize)
 		pkt.Payload = nil // Explicitly nil
 		pkt.MAC = make([]byte, MACSize)
 
@@ -810,6 +816,22 @@ func TestSSU2Packet_ZeroFields(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, restored.Payload)
 		assert.Equal(t, 8, len(restored.Payload))
+	})
+
+	t.Run("Below minimum packet size is rejected by Serialize", func(t *testing.T) {
+		// Regression test for AUDIT.md Level 5 item 3: Serialize() (via
+		// validate()) must reject a packet whose total wire size is below
+		// MinPacketSize, symmetric with Deserialize()'s own check --
+		// otherwise Serialize() could produce a packet that no spec-compliant
+		// receiver (including this codebase's own Deserialize) would accept.
+		pkt := NewSSU2Packet(MessageTypeData, 0) // short header, no ephemeral key
+		pkt.Header = make([]byte, ShortHeaderSize)
+		pkt.Payload = nil // header(16) + MAC(16) = 32 bytes, below the 40-byte minimum
+		pkt.MAC = make([]byte, MACSize)
+
+		_, err := pkt.Serialize()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "packet too small")
 	})
 }
 

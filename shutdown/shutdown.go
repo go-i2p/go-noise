@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"reflect"
 	"sync"
 	"time"
 
@@ -106,8 +107,27 @@ func (sm *ShutdownManager) RegisterConnection(conn ShutdownConn) {
 }
 
 // registerConnection is a helper to register or unregister a connection.
+// isNilInterface reports whether an interface value is nil, including the
+// classic Go pitfall of a typed-nil pointer (e.g. var c *NoiseConn; nil;
+// var i ShutdownConn = c) satisfying the interface but not comparing equal
+// to a bare nil via "== nil". Only pointer, slice, map, channel, and func
+// kinds can be typed-nil in this way; other kinds are never nil-but-typed,
+// so IsNil is only called when it cannot panic.
+func isNilInterface(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
 func (sm *ShutdownManager) registerConnection(conn ShutdownConn, register bool) {
-	if conn == nil {
+	if isNilInterface(conn) {
 		return
 	}
 
@@ -156,7 +176,7 @@ func (sm *ShutdownManager) UnregisterListener(listener ShutdownListener) {
 
 // registerListener is a helper to register or unregister a listener.
 func (sm *ShutdownManager) registerListener(listener ShutdownListener, register bool) {
-	if listener == nil {
+	if isNilInterface(listener) {
 		return
 	}
 

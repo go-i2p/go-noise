@@ -223,6 +223,9 @@ func (spm *SSU2PaddingModifier) EstimatePaddingSize(dataLen int) int {
 		// Respect MTU constraint
 		overhead := spm.headerOverhead() + aeadTagSize
 		availableSpace := spm.mtu - dataLen - overhead
+		if availableSpace <= 0 {
+			return 0 // No room for padding, matching calculateMTUAwarePadding
+		}
 		if ratioPadding > availableSpace {
 			return availableSpace
 		}

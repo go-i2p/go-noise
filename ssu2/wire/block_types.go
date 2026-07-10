@@ -91,14 +91,18 @@ func DecodeAddressBlock(block *SSU2Block) (*AddressBlock, error) {
 	}
 	switch len(block.Data) {
 	case minAddressSizeIPv4: // 6 = port(2) + IPv4(4)
+		ip := make(net.IP, 4)
+		copy(ip, block.Data[2:6])
 		return &AddressBlock{
 			Port: binary.BigEndian.Uint16(block.Data[0:2]),
-			IP:   net.IP(block.Data[2:6]),
+			IP:   ip,
 		}, nil
 	case minAddressSizeIPv6: // 18 = port(2) + IPv6(16)
+		ip := make(net.IP, 16)
+		copy(ip, block.Data[2:18])
 		return &AddressBlock{
 			Port: binary.BigEndian.Uint16(block.Data[0:2]),
-			IP:   net.IP(block.Data[2:18]),
+			IP:   ip,
 		}, nil
 	default:
 		return nil, oops.Errorf("Address block unexpected size: %d bytes (expected %d or %d)",

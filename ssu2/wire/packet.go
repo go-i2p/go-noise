@@ -284,6 +284,14 @@ func (p *SSU2Packet) validate() error {
 			totalSize, MaxPacketSizeIPv6, MaxPacketSizeIPv4)
 	}
 
+	// Symmetric with Deserialize()'s minimum-size check: a packet built with
+	// an empty/near-empty payload could otherwise pass validate() here but
+	// then be rejected by any spec-compliant receiver (including this same
+	// codebase's own Deserialize) as "packet too short".
+	if totalSize < MinPacketSize {
+		return oops.Errorf("packet too small: %d bytes (minimum %d)", totalSize, MinPacketSize)
+	}
+
 	return nil
 }
 
