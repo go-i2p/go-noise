@@ -12,6 +12,7 @@ Examples supporting all standard Noise patterns with proper key management:
 - **[echoclient/](echoclient/)** - Echo client supporting all Noise patterns
 - **[listener/](listener/)** - Noise listener examples with pattern support
 - **[transport/](transport/)** - Transport layer examples
+- **[comprehensive-patterns/](comprehensive-patterns/)** - Verifies `ConnConfig.Validate()` succeeds for every supported Noise handshake pattern
 
 ### NTCP2-Specific Examples
 Examples exclusively for I2P's NTCP2 transport (Noise_XK_25519_AESGCM_SHA256):

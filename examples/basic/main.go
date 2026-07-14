@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"time"
 
 	"github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/examples/exampleutil"
@@ -42,84 +41,6 @@ func main() {
 	} else if args.ClientAddr != "" {
 		runBasicClient(args, staticKey, remoteKey)
 	}
-}
-
-// demonstrateBasicConfigurations shows examples of creating and validating Noise configurations.
-func demonstrateBasicConfigurations() {
-	// 1. Create configuration for XX pattern (most common)
-	configXX := noise.NewConnConfig("XX", true).
-		WithHandshakeTimeout(10 * time.Second).
-		WithReadTimeout(5 * time.Second).
-		WithWriteTimeout(5 * time.Second)
-
-	fmt.Printf("XX Pattern Config: %s\n", configXX.Pattern)
-
-	// 2. Create configuration with full pattern name
-	configFull := noise.NewConnConfig("Noise_IK_25519_AESGCM_SHA256", false).
-		WithHandshakeTimeout(15 * time.Second)
-
-	fmt.Printf("Full Pattern Config: %s\n", configFull.Pattern)
-
-	// 3. Validate configurations
-	validateConfiguration("XX", configXX)
-	validateConfiguration("Full", configFull)
-}
-
-// validateConfiguration validates a Noise configuration and prints the result.
-func validateConfiguration(name string, config *noise.ConnConfig) {
-	if err := config.Validate(); err != nil {
-		fmt.Printf("%s config validation failed: %v\n", name, err)
-	} else {
-		fmt.Printf("%s config is valid\n", name)
-	}
-}
-
-// demonstrateSupportedPatterns shows all supported Noise patterns and their validation status.
-func demonstrateSupportedPatterns() {
-	supportedPatterns := []string{
-		"NN", "NK", "NX",
-		"XN", "XK", "XX",
-		"KN", "KK", "KX",
-		"IN", "IK", "IX",
-		"N", "K", "X",
-	}
-
-	fmt.Println("\nSupported Noise patterns:")
-	for _, pattern := range supportedPatterns {
-		config := noise.NewConnConfig(pattern, true)
-		if err := config.Validate(); err == nil {
-			fmt.Printf("✓ %s\n", pattern)
-		} else {
-			fmt.Printf("✗ %s: %v\n", pattern, err)
-		}
-	}
-}
-
-// demonstrateNoiseAddressing shows examples of NoiseAddr usage and formatting.
-func demonstrateNoiseAddressing() {
-	tcpAddr, _ := net.ResolveTCPAddr("tcp", "localhost:8080")
-	noiseAddr := noise.NewNoiseAddr(tcpAddr, "XX", "initiator")
-
-	fmt.Printf("\nNoise Address Examples:\n")
-	fmt.Printf("Network: %s\n", noiseAddr.Network())
-	fmt.Printf("String: %s\n", noiseAddr.String())
-	fmt.Printf("Pattern: %s\n", noiseAddr.Pattern())
-	fmt.Printf("Role: %s\n", noiseAddr.Role())
-
-	printConnectionExample()
-}
-
-// printConnectionExample prints a commented example of NoiseConn usage.
-func printConnectionExample() {
-	exampleutil.PrintLines(
-		"\n// Note: Actual connection creation would require a real net.Conn",
-		"// and proper logger setup, which is commented out due to logger issues",
-		"//",
-		"// Example of creating a NoiseConn (requires working logger):",
-		"// tcpConn, err := net.Dial(\"tcp\", \"localhost:8080\")",
-		"// noiseConn, err := noise.NewNoiseConn(tcpConn, configXX)",
-		"// err := noiseConn.Handshake(ctx)",
-	)
 }
 
 // runBasicServer starts a basic Noise server with complete handshake

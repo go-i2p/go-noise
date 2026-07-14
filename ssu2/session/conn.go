@@ -150,6 +150,12 @@ type SSU2Conn struct {
 	// cancel the DestroyTimeout wait in CloseWithReason, preventing serial
 	// blocking when the listener shuts down multiple sessions. AUDIT 3.2.
 	forceDestroy chan struct{}
+	// forceDestroyOnce guards the close(forceDestroy) call so that concurrent
+	// calls to TriggerForceDestroy() cannot both observe the channel as
+	// not-yet-closed and both call close(), which would panic (AUDIT.md
+	// Level 10 ssu2/session Finding 4 — mirrors the DataHandler.Close
+	// closeOnce fix for the identical bug class, STATE-4).
+	forceDestroyOnce sync.Once
 
 	// Cipher states for transport phase (after handshake)
 	sendCipher  *noise.CipherState
@@ -532,14 +538,12 @@ func NewMockSSU2Conn(connID uint64) *SSU2Conn {
 // TriggerForceDestroy closes the forceDestroy channel to signal cancellation
 // of the DestroyTimeout wait in CloseWithReason. Used by listener.Close()
 // during parallel teardown to avoid serial blocking (AUDIT 3.2).
-// Safe to call multiple times (idempotent via select/default pattern).
+// Safe to call multiple times (idempotent via sync.Once, not a TOCTOU-prone
+// select/default check).
 func (h *SSU2Conn) TriggerForceDestroy() {
-	select {
-	case <-h.forceDestroy:
-		// Already closed
-	default:
+	h.forceDestroyOnce.Do(func() {
 		close(h.forceDestroy)
-	}
+	})
 }
 
 // sendLoop handles outbound packet transmission.

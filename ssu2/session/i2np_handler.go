@@ -27,6 +27,7 @@ func (h *DataHandler) handleI2NPMessage(data []byte) error {
 		return nil
 	default:
 		h.incrementStat(&h.stats.MessagesDropped)
+		h.incrementStat(&h.stats.MessagesDroppedQueueFull)
 		return oops.Errorf("message queue full, dropping message")
 	}
 }

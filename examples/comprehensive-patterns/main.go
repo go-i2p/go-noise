@@ -21,11 +21,11 @@ func testAllPatterns(patterns []patternInfo) int {
 	successCount := 0
 	for _, p := range patterns {
 		config := noise.NewConnConfig(p.pattern, true)
-		if config != nil {
+		if err := config.Validate(); err == nil {
 			fmt.Printf("✅ %-25s %-20s %d messages\n", p.name, fmt.Sprintf("(%s)", p.category), p.msgCount)
 			successCount++
 		} else {
-			fmt.Printf("❌ %-25s Failed to create config\n", p.name)
+			fmt.Printf("❌ %-25s Failed validation: %v\n", p.name, err)
 		}
 	}
 	return successCount

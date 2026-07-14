@@ -571,6 +571,13 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 // cipherMutex to guarantee atomic key transition: no packet can be encrypted
 // between NextNonce send and the key switch.
 func (h *SSU2Conn) initiateRekey() {
+	// Always re-arm rekeyInFlight when this attempt finishes, whether it
+	// succeeds or fails, so a transient failure doesn't permanently disable
+	// all future rekeys for the life of the connection, and a success
+	// correctly re-arms the mechanism for a later rekey in a long-lived
+	// connection (AUDIT.md Level 10 ssu2/session Finding 1).
+	defer h.rekeyInFlight.Store(false)
+
 	h.cipherMutex.Lock()
 	defer h.cipherMutex.Unlock()
 

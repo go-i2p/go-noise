@@ -277,6 +277,7 @@ func (h *DataHandler) reassembleMessage(messageID uint32) error {
 		return nil
 	default:
 		h.incrementStat(&h.stats.MessagesDropped)
+		h.incrementStat(&h.stats.MessagesDroppedQueueFull)
 		delete(h.fragments, messageID)
 		return oops.Errorf("message queue full, dropping reassembled message")
 	}

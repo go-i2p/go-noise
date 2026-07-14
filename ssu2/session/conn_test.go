@@ -1286,10 +1286,13 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 	// Allow minimal time for any goroutine scheduling
 	time.Sleep(10 * time.Millisecond)
 
-	// Verify that rekeyInFlight was set to true (trigger fired)
-	// The CompareAndSwap in nextSendSequence sets this flag immediately
-	// before spawning the goroutine, so it should be visible now.
-	assert.True(t, conn.rekeyInFlight.Load(), "rekey should trigger when EnableNextNonce is true and threshold crossed")
+	// AUDIT.md Level 10 Finding 1 fix: initiateRekey now always resets
+	// rekeyInFlight via a deferred Store(false), whether the attempt
+	// succeeds or fails, so a failed/no-op rekey (sendCipher is nil here,
+	// since no handshake occurred) does not permanently disable all future
+	// rekeys. By the time the goroutine has run (already awaited above),
+	// rekeyInFlight should be back to false.
+	assert.False(t, conn.rekeyInFlight.Load(), "rekeyInFlight should be reset to false after initiateRekey's goroutine completes (even on a no-op/failed attempt)")
 
 	// Verify send sequence advanced
 	conn.sendSeqMutex.Lock()
