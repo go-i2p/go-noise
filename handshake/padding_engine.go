@@ -183,7 +183,20 @@ func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, e
 }
 
 // RemoveTrailingAEADPadding removes a trailing I2P padding block (type 254)
-// by scanning from paddingSize=0 upward. maxScanPadding limits the search range.
+// by scanning candidate paddingSize values in [MinPadding, maxScanPadding].
+// maxScanPadding further limits the search range (e.g. to the sender's
+// configured maximum); a value <= 0 means "no additional limit".
+//
+// Because the preceding application payload is opaque (not itself I2P-block
+// formatted — see AUDIT.md), a candidate header can in principle appear more
+// than once by coincidence. Rather than silently accepting the first match
+// found (which could silently strip the wrong boundary and corrupt data),
+// this function scans the *entire* bounded window and only succeeds when
+// exactly one candidate matches. Zero candidates is treated as "no padding
+// present" (the legitimate outcome when the sender's configured padding size
+// was 0, so no block was ever appended). More than one candidate is treated
+// as an unresolvable ambiguity and fails closed with an error, rather than
+// guessing — the caller should abort the connection.
 func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding int) ([]byte, error) {
 	flog("PaddingEngine.RemoveTrailingAEADPadding", logger.Fields{"data_len": len(data), "max_scan": maxScanPadding}).Debug("Removing trailing AEAD padding")
 	if len(data) < I2PBlockHeaderSize {
@@ -201,7 +214,15 @@ func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding i
 		maxPadding = I2PMaxBlockDataSize
 	}
 
-	for paddingSize := 0; paddingSize <= maxPadding; paddingSize++ {
+	minPadding := pe.Config.MinPadding
+	if minPadding > maxPadding {
+		// The configured minimum padding size cannot be satisfied within the
+		// available scan window, so no valid candidate can exist.
+		return data, nil
+	}
+
+	matchStart := -1
+	for paddingSize := minPadding; paddingSize <= maxPadding; paddingSize++ {
 		start := len(data) - I2PBlockHeaderSize - paddingSize
 		if start < 0 {
 			break
@@ -210,11 +231,26 @@ func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding i
 			continue
 		}
 		declaredSize := int(binary.BigEndian.Uint16(data[start+1 : start+3]))
-		if declaredSize == paddingSize {
-			return data[:start], nil
+		if declaredSize != paddingSize {
+			continue
 		}
+		if matchStart != -1 {
+			flog("PaddingEngine.RemoveTrailingAEADPadding", logger.Fields{"domain": pe.Config.Domain, "data_len": len(data), "min_padding": minPadding, "max_padding": maxPadding}).Error("Ambiguous AEAD padding: multiple candidate padding blocks found")
+			return nil, oops.
+				Code("AMBIGUOUS_AEAD_PADDING").
+				In(pe.Config.Domain).
+				With("data_len", len(data)).
+				With("min_padding", minPadding).
+				With("max_padding", maxPadding).
+				Errorf("multiple candidate AEAD padding blocks found; refusing to guess to avoid silent data corruption")
+		}
+		matchStart = start
 	}
-	return data, nil
+
+	if matchStart == -1 {
+		return data, nil
+	}
+	return data[:matchStart], nil
 }
 
 func (pe *PaddingEngine) calculateRatioPadding(dataLen int) int {
