@@ -22,7 +22,7 @@ func newTestHandlerForFragmentTests(t *testing.T) *HandshakeHandler {
 // buildFragmentPacket constructs a minimal SSU2Packet with a 14-byte-plus
 // Header carrying the given (fragNum, totalFrags) nibble pair at Header[13],
 // suitable for validateFragmentOrdering.
-func buildFragmentPacket(headerLen int, fragNum, totalFrags int) *SSU2Packet {
+func buildFragmentPacket(headerLen, fragNum, totalFrags int) *SSU2Packet {
 	pkt := &SSU2Packet{MessageType: MessageTypeSessionConfirmed}
 	pkt.Header = make([]byte, headerLen)
 	if headerLen > 13 {

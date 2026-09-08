@@ -786,11 +786,11 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 	if m3p2Len > 0 {
 		if _, err := io.ReadFull(raw, buf3[msg3Part1Size:]); err != nil {
 			flog("handleResponderMsg3", logger.Fields{
-				"event":           "msg3_part2_failed",
-				"elapsed_ms":      time.Since(t3).Milliseconds(),
+				"event":            "msg3_part2_failed",
+				"elapsed_ms":       time.Since(t3).Milliseconds(),
 				"part1_elapsed_ms": t3p1.Milliseconds(),
-				"err":             err.Error(),
-				"m3p2_len":        m3p2Len,
+				"err":              err.Error(),
+				"m3p2_len":         m3p2Len,
 			}).Warn("NTCP2 responder: msg3 part2 (RouterInfo) read failed after part1 — possible split-write stall or timeout")
 			return nil, oops.Code("MSG3_READ_FAILED").In("ntcp2").
 				With("phase", "part2").

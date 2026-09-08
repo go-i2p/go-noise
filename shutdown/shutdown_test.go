@@ -20,8 +20,10 @@ func (c *typedNilConn) Close() error         { return nil }
 func (c *typedNilConn) LocalAddr() net.Addr  { return dummyAddr }
 func (c *typedNilConn) RemoteAddr() net.Addr { return dummyAddr }
 
-var _ ShutdownConn = (*typedNilConn)(nil)
-var _ io.Closer = (*typedNilConn)(nil)
+var (
+	_ ShutdownConn = (*typedNilConn)(nil)
+	_ io.Closer    = (*typedNilConn)(nil)
+)
 
 type typedNilListener struct{}
 
