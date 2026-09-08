@@ -3,12 +3,12 @@ module github.com/go-i2p/go-noise
 go 1.26.8
 
 require (
-	github.com/go-i2p/common v0.1.60000-0.20260701134558-e5f5cf65a7f5
-	github.com/go-i2p/crypto v0.1.60000-0.20260701135847-3ade996b68a0
-	github.com/go-i2p/logger v0.1.60000-0.20260701134448-2648c3b0e040
+	github.com/go-i2p/common v0.1.70000
+	github.com/go-i2p/crypto v0.1.70000
+	github.com/go-i2p/logger v0.1.70000
 	github.com/go-i2p/noise v1.1.1-0.20260612013029-6d1ef3427561
-	github.com/go-i2p/path v0.1.60000-0.20260701134624-ee3ce0cb2483
-	github.com/go-i2p/pool v0.1.60000-0.20260701134610-0724f29e205d
+	github.com/go-i2p/path v0.1.70000
+	github.com/go-i2p/pool v0.1.70000
 	github.com/samber/oops v1.23.1
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/crypto v0.57.0
@@ -18,7 +18,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dchest/siphash v1.2.3 // indirect
-	github.com/go-i2p/elgamal v0.1.60000-0.20260701131626-b5c8141026fc // indirect
+	github.com/go-i2p/elgamal v0.1.70000 // indirect
 	github.com/oklog/ulid/v2 v2.1.2 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
