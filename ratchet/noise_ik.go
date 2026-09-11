@@ -16,8 +16,6 @@ package ratchet
 //	[Elligator2(ephemeral_pub)(32)] + [EncryptAndHash(static_pub)(48)] + [EncryptAndHash(payload)(N+16)]
 
 import (
-	"crypto/sha256"
-
 	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/elligator2"
 	"github.com/go-i2p/logger"
@@ -66,9 +64,8 @@ func initNoiseIK(responderStaticPub [32]byte) *noise.SymmetricState {
 	// (Java I2P, i2pd) which apply this step correctly.
 	ns.MixHash([]byte{})
 
-	// Pre-message (← s) with hs2: MixHash(Hash(rs)) instead of MixHash(rs)
-	rsHash := sha256.Sum256(responderStaticPub[:])
-	ns.MixHash(rsHash[:])
+	// F040 fix: mix raw static public key (not SHA-256 hash) per spec / i2pd
+	ns.MixHash(responderStaticPub[:])
 
 	return ns
 }
@@ -118,8 +115,12 @@ func writeNoiseIKMessage1(
 		return nil, nil, nil, oops.Wrapf(err, "failed to Elligator2-encode ephemeral public key")
 	}
 
-	// MixHash the encoded (wire) representation, not the raw key
-	ns.MixHash(ephEncoded)
+	// F041 fix: MixHash the decoded X25519 public key (not Elligator2-encoded wire bytes)
+	ephPubDecoded, err := elligator2.Decode(ephEncoded)
+	if err != nil {
+		return nil, nil, nil, oops.Wrapf(err, "failed to decode Elligator2 ephemeral key for MixHash")
+	}
+	ns.MixHash(ephPubDecoded)
 
 	// Token es: DH(ephemeral_private, responder_static)
 	sharedES, err := curve25519.SharedKey(ephPrivBytes, responderStaticPub[:])
