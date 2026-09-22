@@ -144,7 +144,12 @@ func writeNoiseIKMessage2(
 	if err != nil {
 		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to Elligator2-encode NSR ephemeral key")
 	}
-	ns.MixHash(ephEncoded) // MixHash the wire representation
+	// F041 fix: MixHash the decoded X25519 public key (not Elligator2 wire bytes)
+	ephPubBytes, err := elligator2.Decode(ephEncoded)
+	if err != nil {
+		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to decode Elligator2 ephemeral key for MixHash")
+	}
+	ns.MixHash(ephPubBytes)
 
 	// "ee" pattern: DH(besk, aepk)
 	// Per I2P ratchet.md §1g, "ee" uses single-output HKDF: only ck is updated.
@@ -218,12 +223,12 @@ func readNoiseIKMessage2(
 
 	// "e" pattern: Read Bob's Elligator2-encoded ephemeral key
 	ephEncoded := message[8:40]
-	ns.MixHash(ephEncoded)
-
+	// F041 fix: decode to X25519 public key before MixHash (not wire bytes)
 	ephPubBytes, err := elligator2.Decode(ephEncoded)
 	if err != nil {
-		return nil, nil, oops.Wrapf(err, "failed to decode NSR Elligator2 ephemeral key")
+		return nil, nil, oops.Wrapf(err, "failed to decode NSR Elligator2 ephemeral key for MixHash")
 	}
+	ns.MixHash(ephPubBytes)
 
 	// "ee" pattern: DH(aesk, bepk)
 	// Per I2P ratchet.md §1g, "ee" uses single-output HKDF: only ck is updated.

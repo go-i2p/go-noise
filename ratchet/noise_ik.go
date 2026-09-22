@@ -16,6 +16,8 @@ package ratchet
 //	[Elligator2(ephemeral_pub)(32)] + [EncryptAndHash(static_pub)(48)] + [EncryptAndHash(payload)(N+16)]
 
 import (
+	"crypto/sha256"
+
 	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/elligator2"
 	"github.com/go-i2p/logger"
@@ -64,8 +66,9 @@ func initNoiseIK(responderStaticPub [32]byte) *noise.SymmetricState {
 	// (Java I2P, i2pd) which apply this step correctly.
 	ns.MixHash([]byte{})
 
-	// F040 fix: mix raw static public key (not SHA-256 hash) per spec / i2pd
-	ns.MixHash(responderStaticPub[:])
+	// hs2 pre-message: MixHash(Hash(rs)) per the I2P ECIES-X25519-AEAD-Ratchet spec.
+	rsHash := sha256.Sum256(responderStaticPub[:])
+	ns.MixHash(rsHash[:])
 
 	return ns
 }
@@ -209,8 +212,12 @@ func writeNoiseIKMessage1Unbound(
 		return nil, nil, oops.Wrapf(err, "failed to Elligator2-encode ephemeral public key")
 	}
 
-	// MixHash the wire (Elligator2-encoded) representation.
-	ns.MixHash(ephEncoded)
+	// F041 fix: MixHash the decoded X25519 public key (not wire bytes) — unbound variant
+	ephPubDecoded, err := elligator2.Decode(ephEncoded)
+	if err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to decode Elligator2 ephemeral key for MixHash (unbound)")
+	}
+	ns.MixHash(ephPubDecoded)
 
 	// Token es: DH(ephemeral_private, responder_static). Sets k, resets n=0.
 	sharedES, err := curve25519.SharedKey(ephPrivBytes, responderStaticPub[:])
@@ -321,11 +328,12 @@ func readNoiseIKMessage1(
 // readEphemeralKey reads and decodes the Elligator2-encoded ephemeral key.
 func readEphemeralKey(ns *noise.SymmetricState, ephEncoded []byte) ([32]byte, error) {
 	flog("readEphemeralKey", logger.Fields{"encoded_len": len(ephEncoded)}).Debug("Decoding Elligator2 ephemeral key")
-	ns.MixHash(ephEncoded)
+	// F041 fix: decode to X25519 public key before MixHash (not wire bytes)
 	ephPubBytes, err := elligator2.Decode(ephEncoded)
 	if err != nil {
 		return [32]byte{}, oops.Wrapf(err, "failed to decode Elligator2 ephemeral key")
 	}
+	ns.MixHash(ephPubBytes)
 	var ephPub [32]byte
 	copy(ephPub[:], ephPubBytes)
 	return ephPub, nil
