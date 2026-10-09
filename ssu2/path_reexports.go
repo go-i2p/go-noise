@@ -34,31 +34,34 @@ type (
 // ─── Type aliases ─────────────────────────────────────────────────────────────
 
 type (
-	HolePunchAttempt     = path.HolePunchAttempt
-	HolePunchCoordinator = path.HolePunchCoordinator
-	HolePunchState       = path.HolePunchState
-	IntroducerInfo       = path.IntroducerInfo
-	IntroducerRegistry   = path.IntroducerRegistry
-	NATType              = path.NATType
-	PathChallenge        = path.PathChallenge
-	PathChallengeState   = path.PathChallengeState
-	PathValidator        = path.PathValidator
-	PeerTest             = path.PeerTest
-	PeerTestBlock        = path.PeerTestBlock
-	PeerTestManager      = path.PeerTestManager
-	PeerTestMessageCode  = path.PeerTestMessageCode
-	PeerTestRole         = path.PeerTestRole
-	PeerTestState        = path.PeerTestState
-	PendingSession       = path.PendingSession
-	RegisteredIntroducer = path.RegisteredIntroducer
-	RelayIntroBlock      = path.RelayIntroBlock
-	RelayManager         = path.RelayManager
-	RelayRequestBlock    = path.RelayRequestBlock
-	RelayResponseBlock   = path.RelayResponseBlock
-	RelayTag             = path.RelayTag
-	RelayTagBlock        = path.RelayTagBlock
-	RelayTagRequestBlock = path.RelayTagRequestBlock
-	TestResult           = path.TestResult
+	HolePunchAttempt         = path.HolePunchAttempt
+	HolePunchCoordinator     = path.HolePunchCoordinator
+	HolePunchState           = path.HolePunchState
+	HolePunchVerifyContext   = path.HolePunchVerifyContext
+	HolePunchVerifyInfo      = path.HolePunchVerifyInfo
+	HolePunchContextResolver = path.HolePunchContextResolver
+	IntroducerInfo           = path.IntroducerInfo
+	IntroducerRegistry       = path.IntroducerRegistry
+	NATType                  = path.NATType
+	PathChallenge            = path.PathChallenge
+	PathChallengeState       = path.PathChallengeState
+	PathValidator            = path.PathValidator
+	PeerTest                 = path.PeerTest
+	PeerTestBlock            = path.PeerTestBlock
+	PeerTestManager          = path.PeerTestManager
+	PeerTestMessageCode      = path.PeerTestMessageCode
+	PeerTestRole             = path.PeerTestRole
+	PeerTestState            = path.PeerTestState
+	PendingSession           = path.PendingSession
+	RegisteredIntroducer     = path.RegisteredIntroducer
+	RelayIntroBlock          = path.RelayIntroBlock
+	RelayManager             = path.RelayManager
+	RelayRequestBlock        = path.RelayRequestBlock
+	RelayResponseBlock       = path.RelayResponseBlock
+	RelayTag                 = path.RelayTag
+	RelayTagBlock            = path.RelayTagBlock
+	RelayTagRequestBlock     = path.RelayTagRequestBlock
+	TestResult               = path.TestResult
 )
 
 // ─── NAT type constants ────────────────────────────────────────────────────────

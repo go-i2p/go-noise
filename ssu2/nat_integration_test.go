@@ -448,7 +448,11 @@ func setupPeer(t *testing.T, name string) *testPeer {
 
 	// Create NAT traversal components
 	relayMgr := NewRelayManager(listener)
-	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ *RelayIntroBlock, _ ed25519.PublicKey) error { return nil })
+	testPub, _, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.PublicKey, bool) {
+		return HolePunchVerifyContext{}, testPub, true
+	})
 	require.NoError(t, err)
 
 	return &testPeer{

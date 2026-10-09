@@ -153,21 +153,26 @@ func TestRelay6StepProcess(t *testing.T) {
 	sessionID, err := alice.holePunchCoord.InitiateHolePunch(charlie.addr, bob.addr, aliceRelayTag)
 	require.NoError(t, err)
 
-	// BUG-M03: block must be non-nil; verifier callback accepts anything.
+	// BUG-M03: block must be non-nil; sign it with the resolver's keypair so
+	// the coordinator's real signature verification succeeds.
+	hpTimestamp := uint32(time.Now().Unix())
+	hpSignature, err := SignRelayRequest(alice.hpSignPriv, relayTestBobHash, relayTestCharlieHash,
+		relayIntro.Nonce, aliceRelayTag, hpTimestamp, ssu2ProtocolVersion,
+		uint16(alice.addr.Port), alice.addr.IP)
+	require.NoError(t, err)
 	dummyBlock := &RelayIntroBlock{
 		Flag:            0,
 		AliceRouterHash: alice.routerHash[:],
 		Nonce:           relayIntro.Nonce,
 		AliceRelayTag:   aliceRelayTag,
-		Timestamp:       uint32(time.Now().Unix()),
+		Timestamp:       hpTimestamp,
 		Version:         2,
 		AlicePort:       uint16(alice.addr.Port),
 		AliceIP:         alice.addr.IP,
-		Signature:       make([]byte, 64),
+		Signature:       hpSignature,
 	}
-	dummyKey := make(ed25519.PublicKey, ed25519.PublicKeySize)
 	// Charlie's hole punch message (simulated through state updates)
-	err = alice.holePunchCoord.HandleHolePunch(sessionID, charlie.addr, dummyBlock, dummyKey)
+	err = alice.holePunchCoord.HandleHolePunch(sessionID, charlie.addr, dummyBlock)
 	require.NoError(t, err)
 
 	attempt := alice.holePunchCoord.GetAttempt(sessionID)
@@ -179,7 +184,7 @@ func TestRelay6StepProcess(t *testing.T) {
 	t.Log("Step 6: Alice sends SessionRequest to Charlie")
 
 	// Alice processes the hole punch response
-	err = alice.holePunchCoord.ProcessHolePunchResponse(sessionID, charlie.addr, dummyBlock, dummyKey)
+	err = alice.holePunchCoord.ProcessHolePunchResponse(sessionID, charlie.addr, dummyBlock)
 	require.NoError(t, err)
 
 	attempt = alice.holePunchCoord.GetAttempt(sessionID)
@@ -599,7 +604,18 @@ type relayTestPeer struct {
 	listener       *SSU2Listener
 	relayMgr       *RelayManager
 	holePunchCoord *HolePunchCoordinator
+	// hpSignPriv/hpSignPub are the keypair the hole-punch resolver returns as
+	// the signer identity; tests sign RelayIntro blocks with hpSignPriv.
+	hpSignPriv ed25519.PrivateKey
+	hpSignPub  ed25519.PublicKey
 }
+
+// relayTestBobHash and relayTestCharlieHash are the fixed peer identities the
+// test hole-punch resolver returns.
+var (
+	relayTestBobHash     = data.Hash{0xB0}
+	relayTestCharlieHash = data.Hash{0xC0}
+)
 
 // setupRelayTestPeer creates a test peer with relay components.
 func setupRelayTestPeer(t *testing.T, name string) *relayTestPeer {
@@ -630,7 +646,11 @@ func setupRelayTestPeer(t *testing.T, name string) *relayTestPeer {
 
 	// Create relay components
 	relayMgr := NewRelayManager(listener)
-	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ *RelayIntroBlock, _ ed25519.PublicKey) error { return nil })
+	hpPub, hpPriv, err := ed25519.GenerateKey(nil)
+	require.NoError(t, err)
+	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.PublicKey, bool) {
+		return HolePunchVerifyContext{BobHash: relayTestBobHash, CharlieHash: relayTestCharlieHash}, hpPub, true
+	})
 	require.NoError(t, err)
 
 	return &relayTestPeer{
@@ -640,6 +660,8 @@ func setupRelayTestPeer(t *testing.T, name string) *relayTestPeer {
 		listener:       listener,
 		relayMgr:       relayMgr,
 		holePunchCoord: holePunchCoord,
+		hpSignPriv:     hpPriv,
+		hpSignPub:      hpPub,
 	}
 }
 
