@@ -34,11 +34,11 @@ import (
 type firstSightEntry struct {
 	addr string
 	ts   time.Time
-	// AUDIT 6.2: firstSightExpiration tracks when the address is no longer
-	// considered "first-sight" (i.e., when it has completed the first-sight
-	// gate and is allowed to obtain tokens). This never changes once set,
-	// preventing an attacker from resetting the gate by waiting for the
-	// entry to expire and then re-requesting as if it were brand new.
+	// firstSightExpiration tracks when the address is no longer considered
+	// "first-sight" (i.e., when it has completed the first-sight gate and is
+	// allowed to obtain tokens). This never changes once set, preventing an
+	// attacker from resetting the gate by waiting for the entry to expire and
+	// then re-requesting as if it were brand new.
 	firstSightExpiration time.Time
 }
 
@@ -92,11 +92,11 @@ func newFirstSightTracker(window time.Duration, maxEntries int) *firstSightTrack
 // The caller should treat a false return as "drop this token request; the
 // peer may retry and succeed on a subsequent request".
 //
-// AUDIT 6.2: The entry now tracks both the last-seen timestamp (ts) and
-// a first-sight-expiration timestamp that never changes. This prevents
-// attackers from resetting the gate by waiting for the entry to expire.
-// Once an address has been observed once, it stays in the map so that
-// temporal pacing attacks cannot cause it to be re-treated as brand new.
+// The entry tracks both the last-seen timestamp (ts) and a first-sight-
+// expiration timestamp that never changes. This prevents attackers from
+// resetting the gate by waiting for the entry to expire. Once an address has
+// been observed once, it stays in the map so that temporal pacing attacks
+// cannot cause it to be re-treated as brand new.
 func (f *firstSightTracker) ObserveAndAllow(addr string) bool {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
@@ -117,11 +117,11 @@ func (f *firstSightTracker) ObserveAndAllow(addr string) bool {
 	if len(f.entries) >= f.maxEntries {
 		f.evictOldestLocked()
 	}
-	// AUDIT 6.2: Set firstSightExpiration to now + window, so we can track
-	// when the address should transition from "first-sight" to "allowed".
-	// This timestamp never changes for this address, preventing temporal
-	// pacing attacks that try to reset the gate by waiting for stale entries
-	// to be cleaned up.
+	// Set firstSightExpiration to now + window, so we can track when the
+	// address should transition from "first-sight" to "allowed". This
+	// timestamp never changes for this address, preventing temporal pacing
+	// attacks that try to reset the gate by waiting for stale entries to be
+	// cleaned up.
 	entry := &firstSightEntry{
 		addr:                 addr,
 		ts:                   now,

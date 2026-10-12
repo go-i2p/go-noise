@@ -5,8 +5,8 @@ import (
 )
 
 // initHeaderProtection initializes the inbound HeaderProtector when an
-// IntroKey is configured. See the field documentation on SSU2Listener and
-// AUDIT C-1 for the rationale.
+// IntroKey is configured. See the field documentation on SSU2Listener for
+// the rationale.
 //
 // When config.IntroKey is set (32 bytes), the listener creates a HeaderProtector
 // that can decrypt header protection applied by spec-compliant SSU2 initiators.
@@ -34,7 +34,7 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 // a defensive copy and re-tries Deserialize. Returns (packet, true) on success
 // or (nil, false) when the packet should be silently dropped.
 //
-// AUDIT C-1 & AUDIT 1.2: This four-stage parse accommodates:
+// This four-stage parse accommodates:
 //  1. Plaintext (testing/legacy)
 //  2. Header-protected SessionRequest/TokenRequest (intro key)
 //  3. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation

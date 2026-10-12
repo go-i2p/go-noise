@@ -152,14 +152,23 @@ type SSU2Listener struct {
 	wg           sync.WaitGroup
 }
 
-// NewSSU2Listener creates a new SSU2 listener wrapping the specified packet connection.
-// The listener starts in an idle state; call Start() to begin accepting connections.
+// NewSSU2Listener creates a new SSU2 listener wrapping the specified packet
+// connection. The listener starts in an idle state; call Start() to begin
+// accepting connections.
+//
+// The listener accepts inbound SSU2 sessions over a single shared UDP socket.
+// All accepted sessions multiplex over that one socket, and the listener
+// validates retry tokens, rate-limits per source IP, and deduplicates
+// retransmitted SessionRequests.
 //
 // Parameters:
 //   - underlying: UDP PacketConn to receive packets from
 //   - config: SSU2 configuration for accepted connections
 //
-// Returns a new SSU2Listener ready to start, or an error if configuration is invalid.
+// Returns a new SSU2Listener ready to start, or an error if configuration is
+// invalid.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listener, error) {
 	flog("NewSSU2Listener").Debug("Creating new SSU2 listener")
 	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_listener"); err != nil {
@@ -557,13 +566,10 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 	return l.handleSessionRequestTokenError(err, packet, remoteAddr)
 }
 
-// ERROR-1: When RequireRetry is false, tokens are completely optional.
-// A token that is present-but-invalid must be treated the same as an absent
-// token (i.e., allow the session) because the operator has explicitly opted out
-// of token enforcement. Previously the code rejected invalid tokens even with
-// RequireRetry=false, which is STRICTER than the case of no token at all —
-// an inverted and counterintuitive policy. Now an invalid/expired token is
-// only fatal when RequireRetry=true.
+// When RequireRetry is false, tokens are completely optional. A token that is
+// present-but-invalid is treated the same as an absent token (i.e., allow the
+// session) because the operator has explicitly opted out of token enforcement.
+// An invalid/expired token is only fatal when RequireRetry=true.
 
 func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
 	if errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
@@ -586,17 +592,16 @@ func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Pac
 }
 
 // generateUniqueConnectionID generates a connection ID and verifies uniqueness
-// among active sessions.
-// AUDIT 8.3: Checks router (single source of truth) instead of listener.sessions.
-// AUDIT 8.1: Retry loop to increase probability of finding a unique ID despite
-// concurrent workers also generating and checking IDs.
+// among active sessions. It checks the router (the single source of truth) and
+// retries a few times to increase the probability of finding a unique ID
+// despite concurrent workers also generating and checking IDs.
 func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 	flog("generateUniqueConnectionID").Debug("generateUniqueConnectionID: generating unique connection ID")
 
-	// AUDIT 8.1: Retry up to 5 times to find a unique connection ID.
-	// With a 64-bit random space, collisions are extremely rare. Even if two
-	// workers race to generate IDs, multiple retries increase the probability
-	// that at least one attempt succeeds before another worker can claim it.
+	// Retry up to 5 times to find a unique connection ID. With a 64-bit random
+	// space, collisions are extremely rare. Even if two workers race to
+	// generate IDs, multiple retries increase the probability that at least one
+	// attempt succeeds before another worker can claim it.
 	const maxRetries = 5
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		connID, err := GenerateConnectionID()
@@ -619,17 +624,17 @@ func (l *SSU2Listener) generateUniqueConnectionID() (uint64, error) {
 // buildConnConfig creates a connection-specific config from the listener config
 // and the incoming SessionRequest packet.
 //
-// AUDIT 3.4 — Placeholder RouterHash Hook:
-// For responder connections (listener-accepted), the RouterHash is initially set to
-// SHA256(ephemeralKey) as a placeholder because the responder cannot yet authenticate
-// the peer's static identity from the SessionRequest alone. This placeholder is
-// sufficient for pre-establishment dedup (which keys on initiatorConnID + remoteAddr,
-// not RouterHash) and does not break pre-handshake routing. However, the router layer
-// MUST call SSU2Addr.UpdateRouterHash(realHash) after handshake completion to replace
-// the placeholder with the true peer identity hash. Failure to update the hash may
-// cause duplicate inbound sessions if other dedup mechanisms (outside go-noise) key
-// on RouterHash. The hook is accessed via SSU2Conn.GetSSU2Addr() after the connection
-// is established. See SSU2Addr.UpdateRouterHash godoc for details.
+// Placeholder RouterHash: for responder connections (listener-accepted), the
+// RouterHash is initially set to SHA256(ephemeralKey) as a placeholder because
+// the responder cannot yet authenticate the peer's static identity from the
+// SessionRequest alone. This placeholder is sufficient for pre-establishment
+// dedup (which keys on initiatorConnID + remoteAddr, not RouterHash) and does
+// not break pre-handshake routing. However, the router layer MUST call
+// SSU2Addr.UpdateRouterHash(realHash) after handshake completion to replace the
+// placeholder with the true peer identity hash. Failure to update the hash may
+// cause duplicate inbound sessions if other dedup mechanisms (outside go-noise)
+// key on RouterHash. The hook is accessed via SSU2Conn.GetSSU2Addr() after the
+// connection is established. See SSU2Addr.UpdateRouterHash godoc for details.
 func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2Config {
 	flog("buildConnConfig", logger.Fields{"conn_id": connID}).Debug("buildConnConfig: building connection config from session request")
 	var routerHash data.Hash
@@ -650,7 +655,7 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 
 // checkPendingCapacity validates the pending session count against the configured cap.
 // Returns the effective max pending count and an error if capacity is exceeded.
-// LEAK-1: Applies a hard cap even when MaxSessions==0 to prevent remote memory DoS.
+// It applies a hard cap even when MaxSessions==0 to prevent remote memory DoS.
 func (l *SSU2Listener) checkPendingCapacity() (int, error) {
 	l.sessionMutex.RLock()
 	pendingCount := len(l.pendingByInitiator)
@@ -677,15 +682,15 @@ func (l *SSU2Listener) checkPendingCapacity() (int, error) {
 // installCloseHook sets up the connection close hook to perform cleanup:
 // removes the session from the router (if registered) and deletes from pending map.
 // Returns an atomic.Bool that tracks registration state for the close hook to query.
-// BUG-SA-2: The registered flag prevents RemoveSession from being called if the
-// session was never inserted due to a race or capacity error.
+// The registered flag prevents RemoveSession from being called if the session was
+// never inserted due to a race or capacity error.
 func (l *SSU2Listener) installCloseHook(conn *SSU2Conn, connID uint64, dedupKey string) *atomic.Bool {
 	var registered atomic.Bool
 	conn.SetCloseHook(func() {
 		if registered.Load() {
 			l.router.RemoveSession(connID)
 		}
-		// AUDIT 8.1: Remove from pending dedup index (safe even if never inserted).
+		// Remove from pending dedup index (safe even if never inserted).
 		l.sessionMutex.Lock()
 		delete(l.pendingByInitiator, dedupKey)
 		l.sessionMutex.Unlock()
@@ -701,7 +706,6 @@ func (l *SSU2Listener) installCloseHook(conn *SSU2Conn, connID uint64, dedupKey 
 // registers the session in the router. Must be called under sessionMutex.
 // Returns the existing connection if a dedup race was lost, or an error if
 // router registration failed.
-// AUDIT 8.3 / BUG-RC-3: Performs dedup + router insert as a single atomic operation.
 func (l *SSU2Listener) registerInRouter(conn *SSU2Conn, connID uint64, dedupKey string, registered *atomic.Bool) (*SSU2Conn, error) {
 	if existing, ok := l.pendingByInitiator[dedupKey]; ok {
 		// Race lost: another worker registered for this initiator first.
@@ -716,9 +720,9 @@ func (l *SSU2Listener) registerInRouter(conn *SSU2Conn, connID uint64, dedupKey 
 }
 
 // enqueueConnection sends the connection to the accept queue.
-// Handles three failure modes: listener shutdown, queue full (AUDIT 2.1).
-// On any failure, removes the session from the router and tears down the connection.
-// AUDIT 2.1: Every error path removes from router and closes, preventing leaks.
+// Handles failure modes: listener shutdown and queue full. On any failure,
+// removes the session from the router and tears down the connection,
+// preventing leaks.
 func (l *SSU2Listener) enqueueConnection(conn *SSU2Conn, connID uint64, dedupKey string) (*SSU2Conn, error) {
 	select {
 	case l.acceptQueue <- conn:
@@ -743,41 +747,35 @@ func (l *SSU2Listener) enqueueConnection(conn *SSU2Conn, connID uint64, dedupKey
 // registerAndQueueConn registers the connection in the sessions map and
 // queues it for acceptance.
 //
-// AUDIT fixes:
-//   - 1.1: the connection ID uniqueness check in generateUniqueConnectionID
+// Safety properties:
+//   - The connection ID uniqueness check in generateUniqueConnectionID
 //     releases its lock before this insert, so a concurrent worker could have
-//     claimed the same ID. The insert is now guarded by a re-check under the
+//     claimed the same ID. The insert is guarded by a re-check under the
 //     write lock, rejecting (and tearing down) a colliding session instead of
 //     silently overwriting and orphaning the previous one.
-//   - 8.2: the session map is capped at config.MaxSessions so a handshake
+//   - The session map is capped at config.MaxSessions so a handshake
 //     flood cannot grow the map and per-session goroutines without bound.
-//   - 2.1/2.2: on every early-return path the session is removed from the map
+//   - On every early-return path the session is removed from the map
 //     and torn down (no leaked goroutines), and a close hook is installed so a
 //     normal close later deregisters the session from both routing maps.
-//   - 8.1: pendingByInitiator dedup index is added for retransmit dedup.
+//   - The pendingByInitiator dedup index is used for retransmit dedup.
 func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, error) {
 	flog("registerAndQueueConn", logger.Fields{"conn_id": connID}).Debug("registerAndQueueConn: registering session and queuing for accept")
 
-	// AUDIT 8.1: Create dedup key for retransmit detection
+	// Create dedup key for retransmit detection.
 	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
 
-	// BUG-SA-1: The unsynchronized GetSession check that previously appeared here was
-	// racy (no lock) and redundant — AddSessionIfBelowCap (below, under
-	// sessionMutex) already performs the authoritative DUPLICATE_CONNECTION_ID check
-	// atomically. Removing the racy pre-check here; the authoritative guard is inside
-	// the lock-protected block.
-
-	// AUDIT 8.2: Check pending capacity before proceeding with registration.
+	// Check pending capacity before proceeding with registration.
 	if _, err := l.checkPendingCapacity(); err != nil {
 		_ = conn.CloseImmediate()
 		return nil, err
 	}
 
-	// BUG-RC-3 / BUG-SA-2: Install close hook early so cleanup runs regardless of
+	// Install close hook early so cleanup runs regardless of
 	// whether registration succeeds.
 	registered := l.installCloseHook(conn, connID, dedupKey)
 
-	// AUDIT 8.3 / BUG-RC-3: Perform dedup check, router registration, and
+	// Perform dedup check, router registration, and
 	// pendingByInitiator insert as a single atomic operation under sessionMutex.
 	l.sessionMutex.Lock()
 	existing, err := l.registerInRouter(conn, connID, dedupKey, registered)
@@ -875,9 +873,9 @@ func (l *SSU2Listener) validateSessionRequestToken(packet *SSU2Packet, remoteAdd
 		return oops.Wrapf(err, "failed to parse NewToken block")
 	}
 
-	// Check token expiration with clock skew tolerance
-	// AUDIT 6.1: Account for client-server clock skew in token expiration check.
-	// If the client's clock is ahead of the server's, the server should allow
+	// Check token expiration with clock skew tolerance.
+	// Account for client-server clock skew in the token expiration check.
+	// If the client's clock is ahead of the server's, the server allows
 	// the token to be valid for up to MaxClockSkew seconds past the expiration
 	// timestamp. This prevents legitimate tokens from being rejected due to clock drift.
 	now := time.Now().Unix()
@@ -968,14 +966,14 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 }
 
 // SessionCount returns the current number of active sessions.
-// AUDIT 8.3: Queries router (single source of truth) instead of local listener.sessions.
+// It queries the router (the single source of truth).
 func (l *SSU2Listener) SessionCount() int {
 	return l.router.SessionCount()
 }
 
 // AddSession registers an SSU2Conn under the given connection ID.
 // This is primarily useful for testing and for reconnection scenarios.
-// AUDIT 8.3: Delegates to router (single source of truth).
+// It delegates to the router (the single source of truth).
 //
 // Returns an error if conn is nil, if conn's actual connection ID (from its
 // SSU2Addr) does not match the supplied connID, or if the router rejects
@@ -1006,7 +1004,7 @@ func (l *SSU2Listener) AddSession(connID uint64, conn *SSU2Conn) error {
 }
 
 // RemoveSession deregisters the session with the given connection ID.
-// AUDIT 8.3: Delegates to router (single source of truth).
+// It delegates to the router (the single source of truth).
 func (l *SSU2Listener) RemoveSession(connID uint64) {
 	l.router.RemoveSession(connID)
 }
@@ -1031,10 +1029,10 @@ func (l *SSU2Listener) Router() *PacketRouter {
 	return l.router
 }
 
-// tokenCleanupInterval is how often the listener removes expired tokens (G-5).
+// tokenCleanupInterval is how often the listener removes expired tokens.
 const tokenCleanupInterval = 60 * time.Second
 
-// tokenCleanupLoop periodically removes expired tokens from the cache (G-5).
+// tokenCleanupLoop periodically removes expired tokens from the cache.
 func (l *SSU2Listener) tokenCleanupLoop() {
 	flog("tokenCleanupLoop", logger.Fields{"interval": tokenCleanupInterval}).Debug("tokenCleanupLoop: starting periodic token cache cleanup")
 	defer l.wg.Done()
@@ -1048,15 +1046,15 @@ func (l *SSU2Listener) tokenCleanupLoop() {
 			return
 		case <-ticker.C:
 			l.tokenCache.Cleanup()
-			// BUG-RL-2: firstSight.Cleanup() was never called, causing the tracker
-			// to grow to maxEntries and never shrink, permanently bypassing the
-			// first-sight gate for any addresses in the full map.
+			// Clean up stale first-sight entries so the tracker does not grow
+			// to maxEntries and never shrink, which would permanently bypass
+			// the first-sight gate for any addresses in the full map.
 			l.firstSight.Cleanup()
 		}
 	}
 }
 
-// M-6: Per-IP rate limiter for SessionRequest processing.
+// Per-IP rate limiter for SessionRequest processing.
 
 const (
 	// sessionRequestsPerSecond is the maximum SessionRequests per IP per second.
@@ -1069,10 +1067,11 @@ const (
 // ipRateLimiter implements a simple per-IP rate limiter using a token bucket
 // approximation. Each IP is allowed a fixed number of requests per second.
 //
-// AUDIT 8.4: eviction uses an O(1) LRU (a doubly-linked list ordered from
+// Eviction uses an O(1) LRU (a doubly-linked list ordered from
 // least- to most-recently-seen) rather than an O(n) scan of the whole map.
-// Under a spoofed-source flood the old scan ran for every new IP while holding
-// the mutex, creating a throughput cliff. The list mirrors firstSightTracker.
+// Under a spoofed-source flood a full scan would run for every new IP while
+// holding the mutex, creating a throughput cliff. The list mirrors
+// firstSightTracker.
 type ipRateLimiter struct {
 	entries map[string]*list.Element // ip -> element holding *rateLimitEntry
 	order   *list.List               // front = LRU, back = MRU

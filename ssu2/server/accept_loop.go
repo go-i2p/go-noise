@@ -26,8 +26,8 @@ const packetQueueSize = 256
 
 // receiveLoop continuously reads packets from the underlying connection
 // and routes them to appropriate sessions or creates new sessions.
-// M-2: Blocking ReadFrom is used instead of 100ms deadline polling.
-// The loop exits when the underlying connection is closed by Close().
+// It uses a blocking ReadFrom rather than deadline polling, and exits when
+// the underlying connection is closed by Close().
 //
 // Design:
 // - Reads UDP datagrams from the underlying PacketConn
@@ -124,7 +124,7 @@ func (l *SSU2Listener) packetWorker() {
 // handleIncomingPacket processes a received packet and routes it appropriately.
 // This is called in a goroutine for each received packet.
 //
-// AUDIT C-1 & AUDIT 1.2: The listener attempts multiple header-protection strategies:
+// The listener attempts multiple header-protection strategies:
 // 1. Plaintext (testing/legacy)
 // 2. Intro-key (SessionRequest/TokenRequest)
 // 3. Outbound session protectors (SessionCreated/Retry replies)
@@ -161,7 +161,7 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 			if err := l.processTokenRequest(packet, remoteAddr); err != nil {
 				// Gate rejections (NO_TOKEN_ISSUED) are already logged at Debug
 				// inside processTokenRequest — only surface genuine failures
-				// (WriteTo error, token generation failure) at WARN. BUG-RL-3.
+				// (WriteTo error, token generation failure) at WARN.
 				var oopsErr oops.OopsError
 				if !errors.As(err, &oopsErr) || oopsErr.Code() != "NO_TOKEN_ISSUED" {
 					atomic.AddUint64(&l.routingErrors, 1)
@@ -171,12 +171,12 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 			return
 		}
 		atomic.AddUint64(&l.routingErrors, 1)
-		// AUDIT 5.1: Handshake-type packets (SessionRequest) that fail to
-		// route indicate a session-creation error — these must be visible
-		// even without debug logging so operators can detect when 100 % of
-		// inbound sessions are failing.  Data packets that fail routing are
-		// typically late arrivals for a closed session and are expected; log
-		// those at Debug to avoid production noise.
+		// Handshake-type packets (SessionRequest) that fail to route indicate
+		// a session-creation error — these must be visible even without debug
+		// logging so operators can detect when 100% of inbound sessions are
+		// failing. Data packets that fail routing are typically late arrivals
+		// for a closed session and are expected; log those at Debug to avoid
+		// production noise.
 		logEntry := flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "message_type": packet.MessageType, "routing_errors": atomic.LoadUint64(&l.routingErrors)}).WithError(err)
 		if l.router.IsHandshakePacket(packet.MessageType) {
 			logEntry.Warn("handshake packet routing failed")
@@ -188,8 +188,8 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 
 // Stats returns observability counters for the listener: the number of
 // packets dropped because the worker queue was full, the number of
-// packets that failed to route to a session (AUDIT 5.1, M-7), and
-// whether the OS read buffer could not be sized as requested (BUG-PB-2).
+// packets that failed to route to a session, and whether the OS read
+// buffer could not be sized as requested.
 func (l *SSU2Listener) Stats() map[string]uint64 {
 	readBufferFailed := uint64(0)
 	if l.readBufferFailed.Load() {

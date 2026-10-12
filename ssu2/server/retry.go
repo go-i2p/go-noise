@@ -90,10 +90,10 @@ func (l *SSU2Listener) buildRetryPayload(token []byte) ([]byte, error) {
 }
 
 // buildRetryHeader constructs the 32-byte long header for a Retry message.
-// AUDIT 5.4: Now a method on SSU2Listener to use the stable retry source connection ID
-// instead of generating a fresh random value each time. This ensures that all
-// Retries from the same listener use the same source ConnID, as required by the
-// SSU2 spec for spec-compliant initiators that cache the responder ConnID.
+// It uses the listener's stable retry source connection ID rather than
+// generating a fresh random value each time. This ensures that all Retries
+// from the same listener use the same source ConnID, as required by the SSU2
+// spec for spec-compliant initiators that cache the responder ConnID.
 func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte) ([]byte, error) {
 	header := make([]byte, LongHeaderSize)
 
@@ -107,7 +107,7 @@ func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte) ([]byte, e
 	header[13] = SSU2ProtocolVersion
 	header[14] = SSU2NetworkID
 
-	// AUDIT 5.4: Use stable retrySourceConnID instead of generating a fresh random value
+	// Use the stable retrySourceConnID instead of generating a fresh random value.
 	copy(header[16:24], l.retrySourceConnID[:])
 	copy(header[24:32], token)
 

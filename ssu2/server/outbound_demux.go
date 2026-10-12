@@ -402,7 +402,7 @@ func (r *PendingOutboundRegistry) removeStale() {
 	}
 }
 
-// AUDIT 1.2: Single-reader invariant preservation.
+// Single-reader invariant preservation:
 // The pending outbound registry does NOT spawn a read loop on the listener socket.
 // All reads remain in the listener's exclusive receiveLoop goroutine.
 // Outbound sessions register only a temporary header protector for demultiplexing

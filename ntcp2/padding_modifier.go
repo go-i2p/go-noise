@@ -10,18 +10,29 @@ import (
 	"github.com/samber/oops"
 )
 
-// NTCP2PaddingModifier implements production-grade NTCP2-specific padding strategies.
-// Supports I2P NTCP2 specification requirements including:
-// - Cleartext padding for messages 1 and 2 (outside AEAD frames)
-// - AEAD padding for message 3 and data phase (inside AEAD frames with type 254)
-// - Cryptographically secure random padding distribution
-// - Configurable padding ratios for traffic analysis resistance
+// NTCP2PaddingModifier implements NTCP2's padding strategies, as required
+// by the I2P NTCP2 specification.
+//
+// Padding is random extra data added to messages so that an observer on
+// the network cannot tell how much real data each message carries. This
+// makes traffic analysis harder. NTCP2 uses two kinds of padding:
+//
+//   - Cleartext padding for messages 1 and 2, added outside the AEAD
+//     frames (it is included in the MixHash, so it is still authenticated).
+//   - AEAD padding for message 3 and the data phase, added inside the
+//     AEAD frames as a block of type 254.
+//
+// Padding sizes are chosen with a cryptographically secure random number
+// generator, and the padding ratio (how much padding relative to the data)
+// is configurable.
 //
 // Padding computation and I2P block wire format operations are provided by
 // the shared handshake.PaddingEngine. NTCP2-specific concerns (AEAD removal
 // with trailing-block scan, frame validation) remain in this type.
 //
 // All exported methods are safe for concurrent use.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 type NTCP2PaddingModifier struct {
 	mu             sync.Mutex
 	name           string
@@ -29,13 +40,14 @@ type NTCP2PaddingModifier struct {
 	useAEADPadding bool // true for message 3+ (AEAD), false for messages 1-2 (cleartext)
 }
 
-// NewNTCP2PaddingModifier creates a new production-grade NTCP2 padding modifier.
+// NewNTCP2PaddingModifier creates a new NTCP2 padding modifier.
 //
 // Parameters:
 //   - name: identifier for logging and debugging
 //   - minPadding: minimum padding bytes (0-65516)
 //   - maxPadding: maximum padding bytes (>= minPadding, 0-65516)
-//   - useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
+//   - useAEADPadding: false for messages 1-2 (cleartext padding), true
+//     for message 3 and the data phase (AEAD padding)
 //
 // The modifier uses cryptographically secure random padding by default.
 // Padding sizes follow I2P NTCP2 specification guidelines.
@@ -43,14 +55,17 @@ func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPad
 	return NewNTCP2PaddingModifierWithRatio(name, minPadding, maxPadding, useAEADPadding, 0.0)
 }
 
-// NewNTCP2PaddingModifierWithRatio creates a new NTCP2 padding modifier with a specific padding ratio.
+// NewNTCP2PaddingModifierWithRatio creates a new NTCP2 padding modifier
+// with a specific padding ratio.
 //
 // Parameters:
 //   - name: identifier for logging and debugging
 //   - minPadding: minimum padding bytes (0-65516)
 //   - maxPadding: maximum padding bytes (>= minPadding, 0-65516)
-//   - useAEADPadding: false for messages 1-2 (cleartext), true for message 3+ (AEAD)
-//   - paddingRatio: ratio of padding to data (0.0 to 15.9375 as per I2P NTCP2 spec)
+//   - useAEADPadding: false for messages 1-2 (cleartext padding), true
+//     for message 3 and the data phase (AEAD padding)
+//   - paddingRatio: ratio of padding to data (0.0 to 15.9375, as per the
+//     I2P NTCP2 spec)
 //
 // A paddingRatio of 0.0 means no ratio-based padding (uses min/max only).
 // A paddingRatio of 1.0 means 100% padding (double the message size).
@@ -74,7 +89,9 @@ func NewNTCP2PaddingModifierWithRatio(name string, minPadding, maxPadding int, u
 	}, nil
 }
 
-// WithTestMode enables deterministic (non-random) padding for this modifier.
+// WithTestMode enables deterministic (non-random) padding for this
+// modifier.
+//
 // WARNING: For testing only — deterministic padding compromises security.
 // Returns the receiver for method chaining.
 func (npm *NTCP2PaddingModifier) WithTestMode() *NTCP2PaddingModifier {
@@ -82,11 +99,12 @@ func (npm *NTCP2PaddingModifier) WithTestMode() *NTCP2PaddingModifier {
 	return npm
 }
 
-// ModifyOutbound adds NTCP2-specific padding based on message phase.
+// ModifyOutbound adds NTCP2-specific padding to an outbound message, based
+// on the handshake phase.
 //
 // PhaseFinal (message 3) is explicitly skipped because the handshake code
 // manages message 3 padding at the plaintext level — it must be included
-// in m3p2Len which is committed in message 1 before the modifier runs.
+// in m3p2Len, which is committed in message 1 before the modifier runs.
 // AEAD padding is only applied during PhaseData (post-handshake frames).
 func (npm *NTCP2PaddingModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	npm.mu.Lock()
@@ -109,7 +127,7 @@ func (npm *NTCP2PaddingModifier) ModifyOutbound(phase handshake.HandshakePhase, 
 	return data, nil
 }
 
-// ModifyInbound removes NTCP2-specific padding.
+// ModifyInbound removes NTCP2-specific padding from an inbound message.
 //
 // PhaseFinal (message 3) is skipped — padding in message 3 is inside the
 // encrypted payload and parsed by the block-format layer, not the modifier.
@@ -211,8 +229,11 @@ func (npm *NTCP2PaddingModifier) validateBlockAtOffset(data []byte, offset int) 
 	return blockType, blockSize, true
 }
 
-// SetPaddingRatio updates the padding ratio for dynamic adjustment during connection.
-// This supports I2P NTCP2 options negotiation where padding parameters can be updated.
+// SetPaddingRatio updates the padding ratio, allowing dynamic adjustment
+// during a connection.
+//
+// This supports I2P NTCP2 options negotiation, where padding parameters
+// can be updated.
 func (npm *NTCP2PaddingModifier) SetPaddingRatio(ratio float64) error {
 	if ratio < 0.0 || ratio > MaxPaddingRatio {
 		return oops.
@@ -228,21 +249,26 @@ func (npm *NTCP2PaddingModifier) SetPaddingRatio(ratio float64) error {
 }
 
 // GetPaddingRatio returns the current padding ratio.
+//
+// The padding ratio is the amount of padding relative to the data size.
 func (npm *NTCP2PaddingModifier) GetPaddingRatio() float64 {
 	npm.mu.Lock()
 	defer npm.mu.Unlock()
 	return npm.engine.Config.PaddingRatio
 }
 
-// GetPaddingLimits returns the current min/max padding limits.
+// GetPaddingLimits returns the current minimum and maximum padding limits,
+// in bytes.
 func (npm *NTCP2PaddingModifier) GetPaddingLimits() (int, int) {
 	npm.mu.Lock()
 	defer npm.mu.Unlock()
 	return npm.engine.Config.MinPadding, npm.engine.Config.MaxPadding
 }
 
-// SetPaddingLimits updates the padding limits for dynamic adjustment.
-// Supports I2P NTCP2 options negotiation during data phase.
+// SetPaddingLimits updates the minimum and maximum padding limits,
+// allowing dynamic adjustment.
+//
+// Supports I2P NTCP2 options negotiation during the data phase.
 func (npm *NTCP2PaddingModifier) SetPaddingLimits(minPadding, maxPadding int) error {
 	if err := handshake.ValidatePaddingParams("ntcp2", minPadding, maxPadding, 0.0); err != nil {
 		return err
@@ -255,12 +281,16 @@ func (npm *NTCP2PaddingModifier) SetPaddingLimits(minPadding, maxPadding int) er
 	return nil
 }
 
-// IsAEADMode returns true if this modifier is configured for AEAD padding (message 3+).
+// IsAEADMode returns true if this modifier is configured for AEAD padding
+// (message 3 and the data phase), as opposed to cleartext padding
+// (messages 1 and 2).
 func (npm *NTCP2PaddingModifier) IsAEADMode() bool {
 	return npm.useAEADPadding
 }
 
-// EstimatePaddingSize estimates the padding size for a given data length.
+// EstimatePaddingSize estimates the padding size, in bytes, for a given
+// data length.
+//
 // Useful for pre-allocating buffers and bandwidth calculations.
 func (npm *NTCP2PaddingModifier) EstimatePaddingSize(dataLen int) int {
 	npm.mu.Lock()
@@ -278,8 +308,11 @@ func (npm *NTCP2PaddingModifier) EstimatePaddingSize(dataLen int) int {
 	return (npm.engine.Config.MinPadding + npm.engine.Config.MaxPadding) / 2
 }
 
-// ValidateAEADFrame validates that a frame contains properly formatted AEAD blocks.
-// Returns true if the frame structure is valid according to I2P NTCP2 spec.
+// ValidateAEADFrame validates that a frame contains properly formatted
+// AEAD blocks.
+//
+// Returns true if the frame structure is valid according to the I2P NTCP2
+// spec.
 func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool {
 	if len(data) == 0 {
 		return true // Empty frame is valid
@@ -319,19 +352,22 @@ func (npm *NTCP2PaddingModifier) validateFramePaddingRules(blockType byte, block
 	return true
 }
 
-// Name returns the modifier name for logging and debugging.
+// Name returns the modifier name, used for logging and debugging.
 func (npm *NTCP2PaddingModifier) Name() string {
 	return npm.name
 }
 
-// Close is a no-op for NTCP2PaddingModifier because it holds no sensitive key
-// material. It satisfies the HandshakeModifier lifecycle contract.
+// Close is a no-op for NTCP2PaddingModifier, because it holds no sensitive
+// key material. It satisfies the HandshakeModifier lifecycle contract.
 func (npm *NTCP2PaddingModifier) Close() error {
 	return nil
 }
 
-// Clone creates a deep copy of the NTCP2PaddingModifier with independent state.
-// This implements handshake.ModifierCloner to support safe Config.Clone() operations.
+// Clone creates a deep copy of the NTCP2PaddingModifier with independent
+// state.
+//
+// This implements handshake.ModifierCloner to support safe
+// Config.Clone() operations.
 func (npm *NTCP2PaddingModifier) Clone() handshake.HandshakeModifier {
 	npm.mu.Lock()
 	defer npm.mu.Unlock()

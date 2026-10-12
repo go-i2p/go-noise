@@ -196,7 +196,7 @@ func (l *SSU2Listener) DialSSU2ViaListener(ctx context.Context, remoteAddr *net.
 	return conn, nil
 }
 
-// AUDIT 1.2: Single-reader invariant enforcement
+// Single-reader invariant enforcement:
 // DialSSU2ViaListener ensures the single-reader invariant is maintained:
 // - The listener's receiveLoop is the only goroutine reading from l.underlying
 // - Outbound connections created via this method do NOT spawn a read loop

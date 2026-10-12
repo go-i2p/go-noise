@@ -7,16 +7,20 @@ import (
 )
 
 // ClockSkewTolerance is the maximum allowed difference between local and
-// remote clocks for NTCP2 handshake timestamp validation. Per the I2P spec,
-// connections with clock skew exceeding this value should be rejected.
+// remote clocks for NTCP2 handshake timestamp validation.
+//
+// Per the I2P spec, connections with clock skew exceeding this value
+// should be rejected.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 const ClockSkewTolerance = 60 * time.Second
 
 // Replay cache constants.
 //
-// Spec reference: https://geti2p.net/spec/ntcp2#replay-prevention
+// Bob must maintain a local cache of previously-used ephemeral keys (X
+// values from message 1) and reject duplicates to prevent replay attacks.
 //
-// Bob must maintain a local cache of previously-used ephemeral keys (X values
-// from message 1) and reject duplicates to prevent replay attacks.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 const (
 	// replayCacheTTL is the time-to-live for replay cache entries.
 	// Entries older than this are evicted. Set to 2× the clock skew tolerance
@@ -33,13 +37,20 @@ const (
 )
 
 // ReplayCache is a thread-safe, bounded, TTL-based cache for detecting
-// replayed NTCP2 handshake ephemeral keys. It is shared across all listener
-// goroutines within a single router instance.
+// replayed NTCP2 handshake ephemeral keys.
 //
-// The cache stores the first 32 bytes of each message 1 (the ephemeral key X)
-// and rejects duplicates within the TTL window.
+// A replay attack is when an attacker re-sends a previously captured
+// handshake message, hoping the receiver will treat it as new. To defend
+// against this, the cache remembers the ephemeral keys it has already seen
+// and rejects duplicates.
+//
+// The cache stores the first 32 bytes of each message 1 (the ephemeral key
+// X) and rejects duplicates within the TTL (time-to-live) window. It is
+// shared across all listener goroutines within a single router instance.
 //
 // ReplayCache implements the ReplayDetector interface.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 type ReplayCache struct {
 	cache *replaycache.TTLCache
 }
@@ -47,8 +58,10 @@ type ReplayCache struct {
 // compile-time interface check
 var _ ReplayDetector = (*ReplayCache)(nil)
 
-// NewReplayCache creates a new replay cache and starts a background cleanup
-// goroutine. Call Close() when the cache is no longer needed.
+// NewReplayCache creates a new replay cache and starts a background
+// cleanup goroutine that periodically removes expired entries.
+//
+// Call Close() when the cache is no longer needed.
 func NewReplayCache() *ReplayCache {
 	flog("NewReplayCache").Debug("Creating NTCP2 replay cache")
 	return &ReplayCache{
@@ -61,10 +74,13 @@ func NewReplayCache() *ReplayCache {
 }
 
 // CheckAndAdd checks whether an ephemeral key has been seen before.
-// If the key is new, it is added to the cache and false is returned (not a replay).
-// If the key has been seen within the TTL window, true is returned (replay detected).
 //
-// This is the primary method called by the listener before processing message 1.
+// If the key is new, it is added to the cache and false is returned (not a
+// replay). If the key has been seen within the TTL window, true is returned
+// (replay detected).
+//
+// This is the primary method called by the listener before processing
+// message 1.
 func (rc *ReplayCache) CheckAndAdd(ephemeralKey [32]byte) bool {
 	result := rc.cache.CheckAndAdd(ephemeralKey)
 	if result {
@@ -79,7 +95,9 @@ func (rc *ReplayCache) Size() int {
 }
 
 // Close stops the background cleanup goroutine and releases resources.
-// Close is idempotent — calling it more than once is safe and will not panic.
+//
+// Close is idempotent — calling it more than once is safe and will not
+// panic.
 func (rc *ReplayCache) Close() {
 	flog("ReplayCache.Close").Debug("Closing NTCP2 replay cache")
 	rc.cache.Close()
