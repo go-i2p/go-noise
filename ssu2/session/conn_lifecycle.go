@@ -54,10 +54,10 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// Create Data packet with termination block
 		packet := h.newDataPacket()
 		payload, err := SerializeBlocks([]*SSU2Block{termBlock})
-		socketDead := false // AUDIT 5.4: Track if socket is dead
+		socketDead := false // Track if socket is dead
 		if err == nil {
 			packet.Payload = payload
-			// AUDIT 5.4: Capture send error into debug log instead of discarding.
+			// Capture send error into debug log instead of discarding.
 			// If socket is dead, short-circuit the destroy wait.
 			if err := h.sendPacketDirect(packet); err != nil {
 				flog("CloseWithReason", logger.Fields{"error": err.Error()}).Warn("failed to send Termination block (best effort)")
@@ -72,9 +72,9 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// half-open state on the remote side. Use a timer instead of
 		// time.Sleep so future callers could cancel via a context or
 		// additional signal channel.
-		// AUDIT 3.2: Also listen on forceDestroy channel so listener.Close()
+		// Also listen on forceDestroy channel so listener.Close()
 		// can cancel all pending destroys in parallel rather than serially.
-		// AUDIT 5.4: Skip destroy wait if socket is already dead.
+		// Skip the destroy wait if the socket is already dead.
 		if h.config.DestroyTimeout > 0 && !h.destroySkip.Load() && !socketDead {
 			timeout := h.config.DestroyTimeout
 			const maxDestroyTimeout = 30 * time.Second
@@ -86,7 +86,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			case <-timer.C:
 				// Timeout expired, proceed with teardown
 			case <-h.forceDestroy:
-				// AUDIT 3.2: Listener is shutting down, cancel wait
+				// Listener is shutting down, cancel wait
 				timer.Stop()
 			}
 			// BUG-RC-1: removed dead `case <-h.closeChan` arm — closeChan is
@@ -109,7 +109,6 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		}
 
 		// Zero pending message buffer to avoid lingering data in memory.
-		// See MEDIUM-1 audit finding.
 		if len(h.pendingMessage) > 0 {
 			securemem.SecureZero(h.pendingMessage)
 			h.pendingMessage = nil
@@ -118,7 +117,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		// Close channels to signal goroutines to exit
 		close(h.closeChan)
 
-		// AUDIT 4.3: Close the underlying socket immediately to unblock ReadFrom
+		// Close the underlying socket immediately to unblock ReadFrom
 		// in recvLoop, rather than waiting up to 100ms for the polling deadline.
 		// This must happen BEFORE waiting for recvLoop to exit so that ReadFrom
 		// returns with an error promptly. We only close if this connection owns
@@ -142,7 +141,7 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 
 		// Deregister from any external routing maps (listener/router). Run
 		// after teardown so no inbound packet can be routed to a half-torn-down
-		// session (AUDIT 2.2).
+		// session.
 		h.closeHookMu.Lock()
 		hook := h.closeHook
 		h.closeHookMu.Unlock()

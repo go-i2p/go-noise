@@ -102,12 +102,12 @@ func (sm *SessionManager) storeNewSessionState(
 	}
 	// Enforce per-peer quota on outbound sessions too, so a bug or caller
 	// loop that keeps re-initiating to the same destination cannot displace
-	// sessions for other peers (AUDIT L-4).
+	// sessions for other peers.
 	sm.enforcePerPeerQuotaLocked(destinationPubKey)
 
 	// Register the expected NSR tag for initiator sessions BEFORE storing the
 	// session, so that if NSR tag registration fails, we don't create an unusable
-	// session (AUDIT M-7: non-fatal NSR registration → initiator deadlock).
+	// session that would deadlock the initiator.
 	if isInitiator && hs != nil {
 		if err := sm.registerNSRTagLocked(session, hs); err != nil {
 			return oops.Wrapf(err, "failed to register NSR tag for initiator session")

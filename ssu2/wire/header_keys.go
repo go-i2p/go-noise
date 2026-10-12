@@ -89,7 +89,7 @@ func (hpm *HeaderProtectorManager) GetProtectorForType(headerType HeaderType) (*
 		k1, k2, err = hpm.keysForIntroProtected()
 	case HeaderTypeHolePunch:
 		// Per spec: "Both header encryption keys are the receiver's intro key"
-		// The receiver is always the remote peer, so use remoteIntroKey (G-8).
+		// The receiver is always the remote peer, so use remoteIntroKey.
 		k1, k2, err = hpm.keysForHolePunch()
 	case HeaderTypeSessionCreated, HeaderTypeRetry:
 		k1, k2, err = hpm.keysForSessionCreatedRetry(headerType)
@@ -132,7 +132,7 @@ func (hpm *HeaderProtectorManager) keysForIntroProtected() (k1, k2 []byte, err e
 
 // keysForHolePunch returns keys for HolePunch packets.
 // Per spec §HolePunch: "Both header encryption keys are the receiver's intro key."
-// The receiver is always the remote peer, so we always use remoteIntroKey (G-8).
+// The receiver is always the remote peer, so we always use remoteIntroKey.
 func (hpm *HeaderProtectorManager) keysForHolePunch() (k1, k2 []byte, err error) {
 	if len(hpm.remoteIntroKey) != HeaderKeySize {
 		return nil, nil, oops.

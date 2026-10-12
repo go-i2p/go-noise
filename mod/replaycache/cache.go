@@ -14,11 +14,11 @@ import (
 
 // defaultCleanupInterval is the fallback cleanup interval used when neither
 // CleanupInterval nor TTL provide a positive duration. It guarantees that
-// time.NewTicker in cleanupLoop never receives a non-positive interval (MEDIUM-1).
+// time.NewTicker in cleanupLoop never receives a non-positive interval.
 const defaultCleanupInterval = 60 * time.Second
 
 // defaultTTL is the fallback TTL for cache entries used when TTL is non-positive.
-// It prevents silent weakening of replay detection (M-2 audit finding).
+// It prevents silent weakening of replay detection.
 // 120 seconds is a conservative value suitable for handshake replay detection.
 const defaultTTL = 120 * time.Second
 

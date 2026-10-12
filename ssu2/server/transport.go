@@ -80,7 +80,6 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 
 	// Runtime guard: log ephemeral binding behavior. If a listener is also running
 	// on this interface, recommend using DialSSU2WithConn for multiplexing.
-	// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
 	if conn.LocalAddr() != nil {
 		flog("DialSSU2", logger.Fields{"ephemeral_bind": true, "local_addr": conn.LocalAddr().String(), "ephemeral_source": "new UDP socket"}).Warn("DialSSU2 created ephemeral socket; if a listener also runs on this interface, consider DialSSU2WithConn for multiplexing")
 	}
@@ -118,7 +117,7 @@ func DialSSU2WithConn(packetConn net.PacketConn, remoteAddr *net.UDPAddr, config
 		return nil, err
 	}
 
-	// BUG-PB-1: validate the provided socket's local address against the same
+	// Validate the provided socket's local address against the same
 	// config constraints (reserved ports, loopback policy) that DialSSU2 applies
 	// to its explicitly-passed localAddr argument. Without this check a caller
 	// can pass an already-bound socket that would have been rejected by DialSSU2.
@@ -245,7 +244,7 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 			Wrapf(err, "failed to create SSU2 listener")
 	}
 
-	// AUDIT 7.2: Set UDP receive buffer to accommodate high-rate traffic.
+	// Set UDP receive buffer to accommodate high-rate traffic.
 	// The default OS kernel UDP buffer (typically 212 KB on Linux) may be too
 	// small for router workloads. Without explicit buffer configuration, the
 	// kernel silently drops inbound datagrams before they reach ReadFrom,
@@ -253,8 +252,8 @@ func ListenSSU2(addr *net.UDPAddr, config *SSU2Config) (*SSU2Listener, error) {
 	// Set buffer to a larger value (e.g., 8 MB) to improve packet handling
 	// under burst traffic and flood conditions.
 	if err := packetConn.SetReadBuffer(8 * 1024 * 1024); err != nil {
-		flog("ListenSSU2", logger.Fields{"address": addr, "error": err}).Warn("AUDIT 7.2: SetReadBuffer failed; using OS default")
-		// BUG-PB-2: record the failure in the listener so Stats() can expose it
+		flog("ListenSSU2", logger.Fields{"address": addr, "error": err}).Warn("SetReadBuffer failed; using OS default")
+		// Record the failure in the listener so Stats() can expose it
 		// to monitoring without relying on log scraping.
 		listener.readBufferFailed.Store(true)
 	}
@@ -341,7 +340,7 @@ func validateDialParams(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) 
 			Errorf("dial operations require initiator=true in config")
 	}
 
-	// AUDIT 7.2 — Validate remote address (target peer)
+	// Validate remote address (target peer)
 	if err := validateSourceAddress(remoteAddr, config); err != nil {
 		return oops.
 			Code("INVALID_REMOTE_ADDRESS").
@@ -350,7 +349,7 @@ func validateDialParams(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) 
 			Wrapf(err, "remote address validation failed")
 	}
 
-	// AUDIT 7.2 — Validate local address if specified
+	// Validate local address if specified
 	// NOTE: Port 0 is allowed for local addresses (means "bind to any available port")
 	if localAddr != nil {
 		if err := validateDialLocalAddress(localAddr, config); err != nil {
@@ -391,7 +390,7 @@ func validateListenParams(addr *net.UDPAddr, config *SSU2Config) error {
 			Errorf("listen operations require initiator=false in config")
 	}
 
-	// AUDIT 7.2 — Validate listen address (allows port 0)
+	// Validate listen address (allows port 0)
 	if err := validateListenAddress(addr, config); err != nil {
 		return oops.
 			Code("INVALID_LISTEN_ADDRESS").

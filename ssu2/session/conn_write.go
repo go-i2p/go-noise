@@ -216,7 +216,7 @@ func (h *SSU2Conn) writeBlock(block *SSU2Block) error {
 func (h *SSU2Conn) writeBlockWithNumber(block *SSU2Block) (uint32, error) {
 	flog("writeBlockWithNumber", logger.Fields{"blockType": block.Type}).Debug("sending block")
 
-	// AUDIT 2.2: Check write deadline BEFORE consuming sequence number to avoid
+	// Check write deadline BEFORE consuming sequence number to avoid
 	// wasting sequence numbers on writes that will be rejected by deadline anyway.
 	// This prevents sequence number gaps that cause unnecessary peer retransmissions.
 	select {
@@ -470,7 +470,7 @@ func (h *SSU2Conn) sendImmediateACK() {
 	}
 }
 
-// handleCongestionBlock processes a received Congestion block (G-6).
+// handleCongestionBlock processes a received Congestion block.
 // If the RequestACK flag (bit 0) is set, triggers an immediate ACK per spec.
 // If the ECN flag (bit 1) is set, signals the congestion controller.
 func (h *SSU2Conn) handleCongestionBlock(flags uint8) error {
@@ -484,7 +484,7 @@ func (h *SSU2Conn) handleCongestionBlock(flags uint8) error {
 	return nil
 }
 
-// handlePathChallengeData wraps PathValidator.HandlePathChallenge for the DataHandler callback (G-7).
+// handlePathChallengeData wraps PathValidator.HandlePathChallenge for the DataHandler callback.
 func (h *SSU2Conn) handlePathChallengeData(data []byte) error {
 	flog("handlePathChallengeData", logger.Fields{"dataLen": len(data)}).Debug("processing path challenge")
 	block := &SSU2Block{Type: BlockTypePathChallenge, Data: data}
@@ -494,7 +494,7 @@ func (h *SSU2Conn) handlePathChallengeData(data []byte) error {
 	return h.pathValidator.HandlePathChallenge(block, addr)
 }
 
-// handlePathResponseData wraps PathValidator.HandlePathResponse for the DataHandler callback (G-7).
+// handlePathResponseData wraps PathValidator.HandlePathResponse for the DataHandler callback.
 func (h *SSU2Conn) handlePathResponseData(data []byte) error {
 	flog("handlePathResponseData", logger.Fields{"dataLen": len(data)}).Debug("processing path response")
 	block := &SSU2Block{Type: BlockTypePathResponse, Data: data}
@@ -505,7 +505,7 @@ func (h *SSU2Conn) handlePathResponseData(data []byte) error {
 }
 
 // handleAddressBlock processes an Address block (Type 13) for passive NAT
-// detection (G-6). The block contains the sender's view of our IP and port.
+// detection. The block contains the sender's view of our IP and port.
 // Format: IP (4 or 16 bytes) + Port (2 bytes big-endian).
 func (h *SSU2Conn) handleAddressBlock(data []byte) error {
 	if len(data) != 6 && len(data) != 18 {
@@ -528,7 +528,7 @@ func (h *SSU2Conn) handleAddressBlock(data []byte) error {
 // When the sequence crosses rekeyThreshold, it fires a one-shot
 // NextNonce rekey so the cipher is refreshed before the 32-bit
 // counter wraps. Per SSU2 spec, the packet number must not wrap
-// around to zero (G-1); if the counter reaches 0xFFFFFFFF the
+// around to zero; if the counter reaches 0xFFFFFFFF the
 // connection is closed.
 //
 // NOTE: The SSU2 spec marks NextNonce (block type 11) as "TODO only if we
@@ -538,7 +538,7 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 	h.sendSeqMutex.Lock()
 	defer h.sendSeqMutex.Unlock()
 
-	// Hard reject: do not wrap past 0xFFFFFFFF (G-1).
+	// Hard reject: do not wrap past 0xFFFFFFFF.
 	if h.sendSequence == 0xFFFFFFFF {
 		flog("nextSendSequence").Error("packet number exhausted (0xFFFFFFFF): closing connection per SSU2 spec")
 		go h.Close()
@@ -549,7 +549,7 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 	h.sendSequence++
 
 	// Trigger rekey exactly once when we cross the threshold,
-	// but only if NextNonce is enabled via config (G-1).
+	// but only if NextNonce is enabled via config.
 	if !h.config.EnableNextNonce || seq < rekeyThreshold || h.rekeyInFlight.Load() {
 		return seq
 	}
@@ -575,7 +575,7 @@ func (h *SSU2Conn) initiateRekey() {
 	// succeeds or fails, so a transient failure doesn't permanently disable
 	// all future rekeys for the life of the connection, and a success
 	// correctly re-arms the mechanism for a later rekey in a long-lived
-	// connection (AUDIT.md Level 10 ssu2/session Finding 1).
+	// connection.
 	defer h.rekeyInFlight.Store(false)
 
 	h.cipherMutex.Lock()

@@ -114,7 +114,7 @@ func (pr *PacketRouter) AddSessionIfBelowCap(conn *SSU2Conn, maxSessions int) er
 	pr.sessionMutex.Lock()
 	defer pr.sessionMutex.Unlock()
 
-	// AUDIT 8.3: Check MaxSessions under write lock to ensure atomicity.
+	// Check MaxSessions under write lock to ensure atomicity.
 	// No concurrent worker can modify pr.sessions while we hold the write lock,
 	// so the check-then-add is atomic.
 	if maxSessions > 0 && len(pr.sessions) >= maxSessions {
@@ -217,7 +217,7 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 			// registerAndQueueConn, and a second AddSession would return
 			// "connection ID already registered", causing the error branch to call
 			// CloseImmediate on the freshly-queued session — breaking every inbound
-			// connection (AUDIT 1.2 / 3.2).
+			// connection.
 			newConn, err := pr.newSessionHandler(remoteAddr, packet)
 			if err != nil {
 				return oops.Wrapf(err, "failed to create new session")

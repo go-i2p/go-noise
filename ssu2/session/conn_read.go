@@ -40,7 +40,7 @@ func (h *SSU2Conn) Read(b []byte) (int, error) {
 	h.readMutex.Lock()
 	defer h.readMutex.Unlock()
 
-	// Enforce mutual exclusivity of Read and MessageChan delivery paths (MEDIUM-1, LOW-3).
+	// Enforce mutual exclusivity of Read and MessageChan delivery paths.
 	// Use a single atomic CompareAndSwap on readDeliveryMode to atomically check that
 	// the mode is Unset and set it to Read in one operation. This prevents TOCTOU races
 	// where both Read and MessageChan could observe the mode as unset concurrently.
@@ -79,7 +79,7 @@ func (h *SSU2Conn) readFromPendingMessage(b []byte) (int, bool) {
 func (h *SSU2Conn) waitForInboundMessage() ([]byte, error) {
 	// Block until a message arrives, the connection closes, or the deadline expires.
 	// Use a stoppable timer (rather than time.After) so the timer is released
-	// promptly instead of lingering until it fires (AUDIT 4.4).
+	// promptly instead of lingering until it fires.
 	var deadlineCh <-chan time.Time
 	if timer := h.getReadDeadlineTimer(); timer != nil {
 		defer timer.Stop()
@@ -100,7 +100,7 @@ func (h *SSU2Conn) copyInboundMessageToBuffer(b, msg []byte) (int, error) {
 	n := copy(b, msg)
 	if n < len(msg) {
 		// Buffer was too small. Store the unread remainder for the next Read call
-		// instead of silently dropping it. See MEDIUM-1 audit finding.
+		// instead of silently dropping it.
 		h.pendingMessage = make([]byte, len(msg)-n)
 		copy(h.pendingMessage, msg[n:])
 		flog("Read", logger.Fields{"needed": len(msg), "got": len(b), "buffered": len(h.pendingMessage)}).Debug("Buffer too small; buffering message remainder")
@@ -108,7 +108,7 @@ func (h *SSU2Conn) copyInboundMessageToBuffer(b, msg []byte) (int, error) {
 		// the next Read, so this is a successful partial read, not an error.
 		// Returning a non-nil error here would violate the io.Reader/net.Conn
 		// contract and cause io.Copy/bufio.Reader/io.ReadFull to abort despite
-		// no data loss. Mirrors conn.Conn.Read. See MED-1 audit finding.
+		// no data loss. Mirrors conn.Conn.Read.
 		return n, nil
 	}
 
@@ -329,7 +329,7 @@ func (h *SSU2Conn) shouldValidateMigratedAddress(udpAddr *net.UDPAddr) bool {
 func (h *SSU2Conn) initiatePathValidation(udpAddr *net.UDPAddr) {
 	if _, err := h.pathValidator.InitiatePathValidation(udpAddr); err != nil {
 		// Do not silently swallow: a failure to start validation means
-		// the address migration is not being verified (AUDIT 5.2).
+		// the address migration is not being verified.
 		flog("parseInboundPacket", logger.Fields{"new_addr": udpAddr.String()}).WithError(err).Warn("failed to initiate path validation for migrated address")
 	}
 }
@@ -350,11 +350,11 @@ func (h *SSU2Conn) keepaliveLoop() {
 
 			// Check if we need to send keepalive
 			if timeSinceActivity >= h.config.KeepaliveInterval {
-				// Send ACK-only packet as keepalive per spec §Keepalive (M-3)
+				// Send ACK-only packet as keepalive per spec §Keepalive.
 				h.sendImmediateACK()
 			}
 
-			// Check for timeout (M-2: configurable idle timeout)
+			// Check for timeout (configurable idle timeout).
 			idleTimeout := h.config.IdleTimeout
 			if idleTimeout <= 0 {
 				idleTimeout = 5 * time.Minute
@@ -440,9 +440,9 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 		}
 	}
 
-	// Check immediate-ack flag: header byte 13, bit 0 (M-5: this is also
+	// Check immediate-ack flag: header byte 13, bit 0. This is also
 	// checked via CongestionFlagRequestACK in the Congestion block handler,
-	// providing redundant but harmless ACK triggering)
+	// providing redundant but harmless ACK triggering.
 	if len(readyPacket.Header) > 13 && readyPacket.Header[13]&0x01 != 0 {
 		h.sendImmediateACK()
 	}
@@ -458,7 +458,7 @@ func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
 	// one forces reliance on the (slow) retransmit schedule and inflates
 	// handshake latency. Briefly block to enqueue rather than dropping on a
 	// transiently-full queue, but bound the wait so a stalled handshake
-	// reader cannot pin this worker indefinitely (AUDIT 4.2).
+	// reader cannot pin this worker indefinitely.
 	select {
 	case h.recvQueue <- packet:
 	case <-h.closeChan:
@@ -509,7 +509,7 @@ func (h *SSU2Conn) handlePeerNextNonce(newNonce uint64) error {
 	}
 
 	// Derive new recv cipher key per SSU2 spec §NextNonce:
-	// newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32) (G-5).
+	// newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
 	newKey, err := deriveRekeyKey(h.recvCipher)
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive rekey for recv cipher")
@@ -542,9 +542,9 @@ func (h *SSU2Conn) getReadDeadlineTimer() *time.Timer {
 //
 // IMPORTANT: Do not use MessageChan() and Read() concurrently on the same
 // connection. This method returns a closed channel (panic-free sentinel) if
-// Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
+// Read() has already been called, enforcing mutual exclusivity.
 func (h *SSU2Conn) MessageChan() <-chan []byte {
-	// Enforce mutual exclusivity of MessageChan and Read delivery paths (MEDIUM-1, LOW-3).
+	// Enforce mutual exclusivity of MessageChan and Read delivery paths.
 	// Use a single atomic CompareAndSwap on readDeliveryMode to atomically check that
 	// the mode is Unset and set it to Chan in one operation. This prevents TOCTOU races
 	// where both Read and MessageChan could observe the mode as unset concurrently.

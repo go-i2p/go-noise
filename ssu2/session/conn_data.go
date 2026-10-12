@@ -50,10 +50,10 @@ func (h *SSU2Conn) wireDataCallbacks() {
 	flog("wireDataCallbacks", logger.Fields{"next_nonce_enabled": h.config.EnableNextNonce}).Debug("Wiring data-phase callbacks")
 	cbs := h.dataHandler.getCallbacks()
 
-	// G-2: Warn if signature verification callbacks are not configured.
+	// Warn if signature verification callbacks are not configured.
 	h.warnMissingSignatureVerifiers(&cbs)
 
-	// Wire NextNonce callback only if enabled (G-1).
+	// Wire NextNonce callback only if enabled.
 	if h.config.EnableNextNonce {
 		cbs.OnNextNonce = h.handlePeerNextNonce
 	}
@@ -69,26 +69,24 @@ func (h *SSU2Conn) wireDataCallbacks() {
 	h.dataHandler.SetCallbacks(cbs)
 }
 
-// warnMissingSignatureVerifiers logs warnings for unset signature verifiers (G-2).
-// REACH-1 / REACH-2: The previous messages incorrectly stated these blocks
-// "will be rejected" when the verifier is nil. The actual behaviour in
+// warnMissingSignatureVerifiers logs warnings for unset signature verifiers.
+// When a verifier is nil, the actual behaviour in
 // handlePeerTest / handleRelayRequest / handleRelayResponse / handleRelayIntro
 // is to SKIP verification and continue processing. This is intentional (the
-// router layer plugs in the verifier), but the inaccurate log messages were
-// misleading operators and concealing the real risk: blocks with forged or
-// missing signatures are silently accepted when no verifier is registered.
+// router layer plugs in the verifier), but the risk is that blocks with forged
+// or missing signatures are silently accepted when no verifier is registered.
 func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	if cbs.VerifyPeerTestSignature == nil {
-		flog("warnMissingSignatureVerifiers").Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages")
 	}
 	if cbs.VerifyRelayRequestSignature == nil {
-		flog("warnMissingSignatureVerifiers").Warn("RelayRequest signature verifier not configured; signature verification will be SKIPPED for relay requests (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayRequest signature verifier not configured; signature verification will be SKIPPED for relay requests")
 	}
 	if cbs.VerifyRelayResponseSignature == nil {
-		flog("warnMissingSignatureVerifiers").Warn("RelayResponse signature verifier not configured; signature verification will be SKIPPED for signed relay responses (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayResponse signature verifier not configured; signature verification will be SKIPPED for signed relay responses")
 	}
 	if cbs.VerifyRelayIntroSignature == nil {
-		flog("warnMissingSignatureVerifiers").Warn("RelayIntro signature verifier not configured; signature verification will be SKIPPED for relay intros (G-2)")
+		flog("warnMissingSignatureVerifiers").Warn("RelayIntro signature verifier not configured; signature verification will be SKIPPED for relay intros")
 	}
 	// Warn about missing application-level dispatch callbacks: these are the
 	// handlers that actually implement NAT detection and relay coordination.
@@ -101,14 +99,14 @@ func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	}
 }
 
-// wrapTerminationCallback wraps the Termination callback to log packet-loss diagnostics (G-7).
+// wrapTerminationCallback wraps the Termination callback to log packet-loss diagnostics.
 func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 	existingOnTermination := cbs.OnTermination
 	cbs.OnTermination = func(peerReceived uint64, reason uint8, additionalData []byte) {
 		sent := h.validDataPacketsSent.Load()
 		if sent > 0 {
 			lost := int64(sent) - int64(peerReceived)
-			flog("wrapTerminationCallback", logger.Fields{"sent": sent, "peerReceived": peerReceived, "lost": lost, "reason": reason}).Info("Termination packet loss summary (G-7)")
+			flog("wrapTerminationCallback", logger.Fields{"sent": sent, "peerReceived": peerReceived, "lost": lost, "reason": reason}).Info("Termination packet loss summary")
 		}
 		if existingOnTermination != nil {
 			existingOnTermination(peerReceived, reason, additionalData)

@@ -134,7 +134,7 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 	fragmentSet.Fragments[0] = make([]byte, len(fragmentData))
 	copy(fragmentSet.Fragments[0], fragmentData)
 
-	// Check per-set size bound immediately (M-3): if a single first fragment
+	// Check per-set size bound immediately: if a single first fragment
 	// is already oversized, reject it. Though rare, this provides defense-in-depth.
 	if fragmentSet.ReceivedSize > maxI2NPMessageSize {
 		h.incrementStat(&h.stats.MessagesDropped)
@@ -201,7 +201,7 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	fragmentSet.LastUpdate = time.Now()
 	h.incrementStat(&h.stats.FragmentsReceived)
 
-	// Tighten per-set memory bound: drop immediately if exceeded (M-3).
+	// Tighten per-set memory bound: drop immediately if exceeded.
 	// Per-set bound is now the reassembled message limit (64 KB) rather than
 	// only checked at reassembly time. This prevents an attacker from flooding
 	// a single MessageID with large fragments to exhaust per-connection memory.
@@ -247,7 +247,7 @@ func (h *DataHandler) reassembleMessage(messageID uint32) error {
 
 	// Reassemble fragments in order, prepending the I2NP short header
 	// (type + messageID + shortExpiration) so the delivered message matches
-	// the format produced by handleI2NPMessage (G-3).
+	// the format produced by handleI2NPMessage.
 	header := make([]byte, 9)
 	header[0] = fragmentSet.I2NPType
 	binary.BigEndian.PutUint32(header[1:5], fragmentSet.MessageID)

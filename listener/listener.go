@@ -51,7 +51,7 @@ type Listener struct {
 	// transientErrorMutex protects updates to consecutiveTransientErrors
 	transientErrorMutex sync.Mutex
 
-	// maxConnSemaphore limits concurrent connections to prevent resource exhaustion DoS (M-6)
+	// maxConnSemaphore limits concurrent connections to prevent resource exhaustion DoS
 	// Nil if MaxConnections is 0 (unlimited). Non-nil if configured.
 	maxConnSemaphore chan struct{}
 
@@ -59,7 +59,7 @@ type Listener struct {
 	// blocked acquiring a maxConnSemaphore slot (acquireConnectionSlot) or
 	// sleeping in the transient-error backoff (acceptWithRetry) to unblock
 	// promptly instead of waiting indefinitely / for the full backoff
-	// duration. See AUDIT.md Level 7 HIGH finding.
+	// duration.
 	closeCh chan struct{}
 }
 
@@ -83,7 +83,7 @@ type ListenerConfig struct {
 	MaxAcceptErrors int
 
 	// MaxConnections limits the number of concurrent connections accepted by this
-	// listener, providing backpressure to prevent resource exhaustion DoS attacks (M-6).
+	// listener, providing backpressure to prevent resource exhaustion DoS attacks.
 	// Defaults to 0 (unlimited). Set to > 0 to enforce a limit.
 	// When the limit is reached, Accept() blocks until a connection closes.
 	MaxConnections int
@@ -262,7 +262,7 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 	// Create Noise address for this listener
 	addr := conn.NewNoiseAddr(underlying.Addr(), config.Pattern, "responder")
 
-	// Initialize semaphore for connection limiting (M-6)
+	// Initialize semaphore for connection limiting
 	var maxConnSem chan struct{}
 	if config.MaxConnections > 0 {
 		maxConnSem = make(chan struct{}, config.MaxConnections)
@@ -299,7 +299,7 @@ func NewNoiseListener(underlying net.Listener, config *ListenerConfig) (*Listene
 // from killing the accept loop. If MaxAcceptErrors consecutive transient errors
 // occur, the error is returned to the caller.
 //
-// Connection Limiting (M-6): If MaxConnections is configured, Accept blocks
+// Connection Limiting: If MaxConnections is configured, Accept blocks
 // until a connection slot becomes available. This provides backpressure against
 // resource exhaustion DoS attacks.
 func (nl *Listener) Accept() (net.Conn, error) {
@@ -551,7 +551,6 @@ func (nl *Listener) applyOptionalConnConfigSettings(cfg *conn.ConnConfig) *conn.
 // connection gets an independent instance. Modifiers that do not implement
 // ModifierCloner are assumed to be stateless (or internally immutable) and are
 // shared by reference, matching Config.Clone() semantics in the ntcp2 package.
-// See M-1 audit finding.
 func (nl *Listener) cloneModifiers() []handshake.HandshakeModifier {
 	out := make([]handshake.HandshakeModifier, len(nl.config.Modifiers))
 	for i, m := range nl.config.Modifiers {
@@ -641,7 +640,7 @@ func (nl *Listener) isClosed() bool {
 }
 
 // semaphoreReleaseWrapper wraps a *conn.Conn so that its Close() call releases
-// a connection limit semaphore. Used by Accept() when MaxConnections is configured (M-6).
+// a connection limit semaphore. Used by Accept() when MaxConnections is configured.
 // It embeds the concrete *conn.Conn type, not the net.Conn interface, so that all
 // Noise-specific methods (Handshake, GetConnectionState, etc.) are promoted and accessible
 // to callers that type-assert to *conn.Conn.
@@ -658,7 +657,7 @@ func newSemaphoreReleaseWrapper(noiseConn *conn.Conn, semaphore chan struct{}) n
 	return &semaphoreReleaseWrapper{Conn: noiseConn, semaphore: semaphore}
 }
 
-// Close closes the underlying connection and releases the semaphore slot (M-6).
+// Close closes the underlying connection and releases the semaphore slot.
 func (w *semaphoreReleaseWrapper) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()

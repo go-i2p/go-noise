@@ -35,8 +35,8 @@ const (
 )
 
 // ReadDeliveryMode tracks which delivery path has been used for reading messages.
-// Used to enforce mutual exclusivity between Read() and MessageChan() delivery paths
-// (see MEDIUM-1, LOW-3). Using a single atomic mode word prevents TOCTOU races where
+// Used to enforce mutual exclusivity between Read() and MessageChan() delivery paths.
+// Using a single atomic mode word prevents TOCTOU races where
 // both paths could concurrently observe the other path's flag as unset.
 type ReadDeliveryMode int32
 
@@ -60,8 +60,8 @@ const (
 	//
 	// WARNING: NextNonce (block type 11) is based on an UNFINALIZED spec
 	// area (see SSU2 spec §3.7 "NextNonce") with size "TBD".
-	// UNFINALIZED_SPEC: This threshold and the rekey mechanism may need
-	// revision for interoperability when the spec is finalized (M-2).
+	// This threshold and the rekey mechanism may need
+	// revision for interoperability when the spec is finalized.
 	// Only enabled via SSU2Config.EnableNextNonce (default: false).
 	rekeyThreshold uint32 = 0xFFFF_FF00
 
@@ -75,16 +75,16 @@ const (
 
 	// handshakeEnqueueTimeout bounds how long processInboundPacket will block
 	// trying to hand a handshake packet to the handshake reader when the
-	// recvQueue is transiently full, before dropping it (AUDIT 4.2).
-	// BUG-TO-2: reduced from 250 ms to 10 ms so that all 8 packetWorker
-	// goroutines do not simultaneously block for 250 ms each, which would
+	// recvQueue is transiently full, before dropping it.
+	// The value is kept short (10 ms) so that all 8 packetWorker
+	// goroutines do not simultaneously block for long, which would
 	// stall established-session datagrams by filling packetQueue.
 	handshakeEnqueueTimeout = 10 * time.Millisecond
 
 	// destroyTimeout is the default time to wait after sending a Termination
 	// block before releasing session resources. Per spec §Termination:
 	// "Wait for 11 seconds (the maximum RTO)" after sending a Termination
-	// block. Can be overridden via SSU2Config.DestroyTimeout (M-4).
+	// block. Can be overridden via SSU2Config.DestroyTimeout.
 	destroyTimeout = 11 * time.Second
 
 	// defaultHandshakeTimeout is the fallback deadline for SSU2 handshakes
@@ -135,7 +135,7 @@ type SSU2Conn struct {
 	// Header protection (nil = disabled)
 	headerProtector *HeaderProtectorManager
 
-	// Path validation for connection migration (G-7)
+	// Path validation for connection migration
 	pathValidator *PathValidator
 
 	// Connection state
@@ -148,13 +148,11 @@ type SSU2Conn struct {
 
 	// forceDestroy is closed by listener.Close() during parallel teardown to
 	// cancel the DestroyTimeout wait in CloseWithReason, preventing serial
-	// blocking when the listener shuts down multiple sessions. AUDIT 3.2.
+	// blocking when the listener shuts down multiple sessions.
 	forceDestroy chan struct{}
 	// forceDestroyOnce guards the close(forceDestroy) call so that concurrent
 	// calls to TriggerForceDestroy() cannot both observe the channel as
-	// not-yet-closed and both call close(), which would panic (AUDIT.md
-	// Level 10 ssu2/session Finding 4 — mirrors the DataHandler.Close
-	// closeOnce fix for the identical bug class, STATE-4).
+	// not-yet-closed and both call close(), which would panic.
 	forceDestroyOnce sync.Once
 
 	// Cipher states for transport phase (after handshake)
@@ -184,18 +182,17 @@ type SSU2Conn struct {
 	// pendingMessage holds the unread remainder of a message when the caller's
 	// buffer is smaller than the message. Subsequent Read calls drain from this
 	// buffer first. This mirrors conn.Conn.pendingPlaintext to maintain net.Conn
-	// compatibility. See MEDIUM-1 audit finding.
+	// compatibility.
 	pendingMessage []byte
 
 	// readDeliveryMode tracks which delivery path has been used for reading messages.
 	// Uses atomic CAS to atomically check and set the mode, preventing TOCTOU races
 	// where both Read() and MessageChan() could both observe the mode as unset.
 	// One of {ReadDeliveryModeUnset, ReadDeliveryModeRead, ReadDeliveryModeChan}.
-	// See MEDIUM-1, LOW-3.
 	readDeliveryMode atomic.Int32
 
 	// closedMessageChan is a closed channel returned as a sentinel by MessageChan()
-	// when Read() has already been called, enforcing mutual exclusivity. See MEDIUM-1.
+	// when Read() has already been called, enforcing mutual exclusivity.
 	closedMessageChan chan []byte
 
 	// Keepalive
@@ -206,7 +203,7 @@ type SSU2Conn struct {
 	// remoteConnectionID is the peer's connection ID, learned during
 	// the handshake. Outbound data-phase packets must use this value
 	// as the Destination Connection ID per SSU2 spec.
-	// AUDIT 1.4: Use atomic.Uint64 for thread-safe access without explicit locks,
+	// Use atomic.Uint64 for thread-safe access without explicit locks,
 	// consistent with other protocol fields. Written once during handshake,
 	// then read from all send paths.
 	remoteConnectionID atomic.Uint64
@@ -229,7 +226,7 @@ type SSU2Conn struct {
 	// This is independent of ownsUnderlying: DialSSU2WithConn may have ownsUnderlying=false
 	// but readsOwnSocket=true (the dial caller is the sole reader and responsible
 	// for not co-locating a listener on the same socket).
-	// AUDIT 1.2: Gate recvLoop startup on this flag to prevent listener and
+	// Gate recvLoop startup on this flag to prevent listener and
 	// responder from both reading the same shared socket.
 	readsOwnSocket bool
 
@@ -260,7 +257,7 @@ type SSU2Conn struct {
 	// closeHook, if set, is invoked once during CloseWithReason after the
 	// connection's goroutines have been torn down. The listener wires this
 	// to deregister the session from its routing maps so that closed
-	// sessions do not accumulate forever (AUDIT 2.2). It must not call back
+	// sessions do not accumulate forever. It must not call back
 	// into CloseWithReason (which would deadlock on closeOnce).
 	closeHook   func()
 	closeHookMu sync.Mutex
@@ -268,8 +265,7 @@ type SSU2Conn struct {
 	// destroySkip, when set, causes CloseWithReason to skip the
 	// DestroyTimeout Termination-wait. Used by CloseImmediate for sessions
 	// that are being abandoned before they were ever established, so a
-	// cleanup close cannot block a packet worker for up to DestroyTimeout
-	// (AUDIT 2.1).
+	// cleanup close cannot block a packet worker for up to DestroyTimeout.
 	destroySkip atomic.Bool
 
 	// Background goroutines coordination
@@ -280,7 +276,7 @@ type SSU2Conn struct {
 	parseErrors   atomic.Uint64
 	decryptErrors atomic.Uint64
 
-	// writeErrors counts UDP write failures in sendLoop (BUG-RL-1 / BUG-EH-1).
+	// writeErrors counts UDP write failures in sendLoop.
 	writeErrors atomic.Uint64
 
 	// validDataPacketsReceived counts successfully received data-phase packets.
@@ -289,7 +285,7 @@ type SSU2Conn struct {
 
 	// validDataPacketsSent counts successfully sent data-phase packets.
 	// Compared against the peer's reported count in Termination blocks
-	// to detect packet loss during close (G-7).
+	// to detect packet loss during close.
 	validDataPacketsSent atomic.Uint64
 
 	// handshakeMaterialMutex protects access to inbound handshake replay material.
@@ -452,7 +448,7 @@ func assembleSSU2Conn(
 	rttEst := NewRTTEstimator()
 
 	// Create a closed channel sentinel for MessageChan() to return when Read() has been called,
-	// enforcing mutual exclusivity per MEDIUM-1 audit finding.
+	// enforcing mutual exclusivity.
 	closedChan := make(chan []byte)
 	close(closedChan)
 
@@ -476,7 +472,7 @@ func assembleSSU2Conn(
 		recvQueue:            make(chan *SSU2Packet, 64),
 		pendingPackets:       make(map[uint32]*PendingPacket),
 		lastActivity:         time.Now(),
-		readsOwnSocket:       true, // AUDIT 1.2: default for dial paths; responders set to false
+		readsOwnSocket:       true, // default for dial paths; responders set to false
 	}
 
 	conn.pathValidator = NewPathValidator(conn)

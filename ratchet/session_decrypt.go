@@ -239,7 +239,7 @@ func (sm *SessionManager) initializeInboundRatchetState(remotePubKey [32]byte, k
 		sm.evictLRUSessionLocked()
 	}
 	// Enforce per-peer quota so one hostile identity cannot starve honest
-	// peers via LRU churn (AUDIT L-4).
+	// peers via LRU churn.
 	sm.enforcePerPeerQuotaLocked(remotePubKey)
 
 	sm.sessions[sessionHash] = session
@@ -268,7 +268,7 @@ func (sm *SessionManager) registerNSRTagLocked(session *Session, hs *noiseHandsh
 		return oops.Wrapf(err, "failed to generate NSR tag for initiator registration")
 	}
 	// Allocate a new [8]byte on the heap and copy the tag value to avoid
-	// taking the address of a stack-local variable (AUDIT M-3).
+	// taking the address of a stack-local variable.
 	session.nsrTag = new([8]byte)
 	*session.nsrTag = tag
 	sm.nsrTagIndex[tag] = session
@@ -397,9 +397,8 @@ func (sm *SessionManager) decryptExistingSession(
 	}
 
 	// Ensure the key cache covers the full current window.
-	// Use saturating addition to prevent uint32 overflow (AUDIT M-8).
-	// Cap windowEnd to recvFillMark + recvWindowSize to prevent multi-billion
-	// iteration loops when session lifetime approaches MaxUint32 (AUDIT M-2).
+	// Guard against uint32 overflow: cap windowEnd to recvFillMark + recvWindowSize
+	// to prevent multi-billion iteration loops when session lifetime approaches MaxUint32.
 	windowEnd := session.recvWindowBase + recvWindowSize
 	if windowEnd < session.recvWindowBase {
 		// Overflow: cap at recvFillMark + recvWindowSize instead of saturating

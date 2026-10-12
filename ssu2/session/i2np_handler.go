@@ -132,9 +132,9 @@ func (h *DataHandler) handleCongestion(data []byte) error {
 
 // handleSignedRelayBlock is the common handler for relay blocks that require
 // unconditional signature verification: decode → check signature → verify → dispatch.
-// Per SSU2 spec (G-2), if a signature is present, the verifier callback MUST be
+// Per SSU2 spec, if a signature is present, the verifier callback MUST be
 // configured and must succeed. If the verifier is nil, the block is rejected to
-// prevent fail-open authentication bypass (M-5).
+// prevent fail-open authentication bypass.
 func (h *DataHandler) handleSignedRelayBlock(
 	block *SSU2Block,
 	label string,
@@ -153,7 +153,7 @@ func (h *DataHandler) handleSignedRelayBlock(
 		return oops.Code("MISSING_SIGNATURE").Errorf("%s block has no signature", label)
 	}
 
-	// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+	// Fail-closed: If signature is present, verifier MUST be configured.
 	if verify == nil {
 		return oops.Code("VERIFIER_MISSING").Errorf("%s block has signature but verifier callback is not configured", label)
 	}
@@ -186,7 +186,7 @@ func (h *DataHandler) verifyConditionalSignature(
 		return oops.Code("MISSING_SIGNATURE").Errorf("%s", missingSignatureErr)
 	}
 
-	// Fail-closed (M-5): If signature is present, verifier MUST be configured.
+	// Fail-closed: If signature is present, verifier MUST be configured.
 	if verifier == nil {
 		return oops.Code("VERIFIER_MISSING").Errorf("%s", verifierMissingErr)
 	}
@@ -199,7 +199,7 @@ func (h *DataHandler) verifyConditionalSignature(
 }
 
 // handleRelayRequest processes a RelayRequest block (Type 7).
-// Per SSU2 spec §Relay Request, signatures MUST be verified before acting (G-2).
+// Per SSU2 spec §Relay Request, signatures MUST be verified before acting.
 func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayRequest(block)
@@ -228,7 +228,7 @@ func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 
 // handleRelayResponse processes a RelayResponse block (Type 8).
 // Per SSU2 spec §Relay Response, signatures MUST be verified for
-// accepted (code 0) and Charlie-rejected (code >= 64) responses (G-2).
+// accepted (code 0) and Charlie-rejected (code >= 64) responses.
 func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 	flog("handleRelayResponse", logger.Fields{"dataLength": len(block.Data)}).Debug("Received RelayResponse block")
 
@@ -263,7 +263,7 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 }
 
 // handleRelayIntro processes a RelayIntro block (Type 9).
-// Per SSU2 spec §Relay Intro, signatures MUST be verified before acting (G-2).
+// Per SSU2 spec §Relay Intro, signatures MUST be verified before acting.
 func (h *DataHandler) handleRelayIntro(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayIntro(block)
@@ -315,7 +315,7 @@ func (h *DataHandler) handleRelayTag(block *SSU2Block) error {
 }
 
 // handlePeerTest processes a PeerTest block (Type 10).
-// Per SSU2 spec §Peer Test, signatures MUST be verified for messages 1-4 (G-2).
+// Per SSU2 spec §Peer Test, signatures MUST be verified for messages 1-4.
 func (h *DataHandler) handlePeerTest(block *SSU2Block) error {
 	flog("handlePeerTest", logger.Fields{"dataLength": len(block.Data)}).Debug("Received PeerTest block")
 

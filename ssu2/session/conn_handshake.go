@@ -36,7 +36,7 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	h.stateMutex.Lock()
 	if h.state != StateInit {
 		h.stateMutex.Unlock()
-		// AUDIT 3.1: Return a specific error code for concurrent Handshake calls
+		// Return a specific error code for concurrent Handshake calls
 		// to distinguish from other state errors. StateHandshaking means another
 		// goroutine is already in the handshake; this should not be retried.
 		if h.state == StateHandshaking {
@@ -57,7 +57,7 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	// receiveLoop is the sole socket reader and feeds packets via RoutePacket →
 	// processInboundPacket → recvQueue. Starting recvLoop here would cause two
 	// goroutines reading the same socket, violating the SSU2 concurrent-reader
-	// multiplexing invariant (AUDIT 1.2).
+	// multiplexing invariant.
 	// Started here rather than in the constructor so that callers who create
 	// a conn but never call Handshake or Close don't leak a goroutine.
 	if h.readsOwnSocket {
@@ -68,7 +68,7 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	// Ensure recvLoop is cleaned up if handshake fails. The CloseWithReason
 	// call is idempotent (via closeOnce), so it's safe to call again later.
 	// This prevents goroutine leaks when the handshake fails before
-	// finalizeHandshake calls startDataLoops. (AUDIT H-8)
+	// finalizeHandshake calls startDataLoops.
 	var handshakeErr error
 	defer func() {
 		if handshakeErr != nil {
@@ -85,10 +85,9 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 }
 
 // handshakeInitiator performs the initiator side of XK handshake.
-// handshakeInitiator performs the initiator side of XK handshake.
 func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 	flog("handshakeInitiator").Debug("Starting SSU2 handshake as initiator")
-	// AUDIT 4.1: Establish a single deadline for the entire initiator handshake.
+	// Establish a single deadline for the entire initiator handshake.
 	// Without this, each call to receiveHandshakeWithRetransmit starts a fresh
 	// HandshakeTimeout window, allowing a malicious responder to keep the
 	// initiator pinned for N × HandshakeTimeout instead of 1 × HandshakeTimeout.
@@ -394,7 +393,7 @@ func (h *SSU2Conn) sendSessionConfirmed() error {
 // handshakeResponder performs the responder side of XK handshake.
 func (h *SSU2Conn) handshakeResponder(ctx context.Context) error {
 	flog("handshakeResponder").Debug("Starting SSU2 handshake as responder")
-	// AUDIT 4.1: Establish a single deadline for the entire responder handshake.
+	// Establish a single deadline for the entire responder handshake.
 	// Each receiveHandshakeWithRetransmit call would otherwise start a fresh
 	// HandshakeTimeout window; a stalling initiator can extend the total window
 	// to N × HandshakeTimeout without this guard.
@@ -545,7 +544,7 @@ func (h *SSU2Conn) collectConfirmedFragments(ctx context.Context, first *SSU2Pac
 	firstIdx, _ := extractFragmentInfo(first.Header[13])
 	seen[firstIdx] = true
 
-	// AUDIT 4.2: Use a single deadline for all fragments to prevent a peer from
+	// Use a single deadline for all fragments to prevent a peer from
 	// multiplying the timeout by stalling. Each fragment gets a proportional share
 	// of the handshake timeout, rather than a fresh full timeout per fragment.
 	// Calculate deadline once at the start of fragment collection.
@@ -676,16 +675,16 @@ func (h *SSU2Conn) applyNegotiatedPadding() {
 	h.pushNegotiatedPaddingToModifier(negotiated)
 }
 
-// logOptionsNegotiationWarnings logs M-3 warnings when options negotiation is one-sided.
+// logOptionsNegotiationWarnings logs warnings when options negotiation is one-sided.
 func (h *SSU2Conn) logOptionsNegotiationWarnings(localOpts, peerOpts *OptionsParams) {
 	h.remoteAddrLock.RLock()
 	remoteAddrStr := h.remoteAddr.String()
 	h.remoteAddrLock.RUnlock()
 
 	if localOpts != nil && peerOpts == nil {
-		flog("logOptionsNegotiationWarnings", logger.Fields{"side": "local_only", "peer": remoteAddrStr}).Warn("Options negotiation one-sided: local options set but peer did not send Options block (M-3)")
+		flog("logOptionsNegotiationWarnings", logger.Fields{"side": "local_only", "peer": remoteAddrStr}).Warn("Options negotiation one-sided: local options set but peer did not send Options block")
 	} else if localOpts == nil && peerOpts != nil {
-		flog("logOptionsNegotiationWarnings", logger.Fields{"side": "peer_only", "peer": remoteAddrStr}).Warn("Options negotiation one-sided: peer sent Options but no local options configured (M-3)")
+		flog("logOptionsNegotiationWarnings", logger.Fields{"side": "peer_only", "peer": remoteAddrStr}).Warn("Options negotiation one-sided: peer sent Options but no local options configured")
 	}
 }
 
@@ -793,13 +792,13 @@ func retransmitWait(attempt int, intervals []time.Duration, remaining time.Durat
 //   - Session Request: 1.25s, 2.5s, 5s
 //   - Session Created: 1s, 2s, 4s
 //
-// BUG-SM-3: if expectedTypes is non-empty, packets of other types are silently
+// If expectedTypes is non-empty, packets of other types are silently
 // discarded from the queue without consuming a retransmit attempt. This prevents
 // a queue pre-filled with retransmitted SessionRequests from blocking receipt of
 // the subsequent SessionConfirmed.
 func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent *SSU2Packet, totalTimeout time.Duration, expectedTypes ...uint8) (*SSU2Packet, error) {
 	intervals := retransmitSchedule(lastSent.MessageType)
-	// AUDIT 4.1: Use the context deadline when available so that the total
+	// Use the context deadline when available so that the total
 	// handshake budget is shared across all phases rather than each phase
 	// starting a fresh totalTimeout window.  If the caller (handshakeInitiator /
 	// handshakeResponder) has wrapped ctx with context.WithTimeout, the deadline
@@ -821,7 +820,7 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 
 		pkt, err := h.receivePacketWithTimeout(ctx, wait)
 		if err == nil {
-			// BUG-SM-3: discard stale packets of unexpected type (e.g., retransmitted
+			// Discard stale packets of unexpected type (e.g., retransmitted
 			// SessionRequests still in the queue when we are awaiting SessionConfirmed).
 			// Do NOT count this as a retransmit attempt so the budget is preserved.
 			if len(expectedTypes) > 0 && !matchesAny(pkt.MessageType, expectedTypes) {
@@ -877,7 +876,7 @@ func (h *SSU2Conn) checkHandshakeCancelled(ctx context.Context) error {
 // When the sequence crosses rekeyThreshold, it fires a one-shot
 // NextNonce rekey so the cipher is refreshed before the 32-bit
 // counter wraps. Per SSU2 spec, the packet number must not wrap
-// around to zero (G-1); if the counter reaches 0xFFFFFFFF the
+// around to zero; if the counter reaches 0xFFFFFFFF the
 // connection is closed.
 //
 // NOTE: The SSU2 spec marks NextNonce (block type 11) as "TODO only if we

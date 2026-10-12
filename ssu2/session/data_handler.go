@@ -53,12 +53,12 @@ type DataHandler struct {
 	// reaperWG tracks the reaper goroutine so Close() waits for it to exit.
 
 	// closeOnce ensures the stopReaper channel is closed exactly once even
-	// when Close() is called concurrently (STATE-4). The previous select-based
+	// when Close() is called concurrently. The previous select-based
 	// guard had a TOCTOU: two concurrent callers could both fall through to
 	// close(stopReaper), causing a panic on the second close.
 	closeOnce sync.Once
-	// BUG-RL-4: previously the goroutine was untracked — CloseWithReason could
-	// return while the reaper still accessed DataHandler.fragments.
+	// The reaper goroutine is tracked so that CloseWithReason cannot
+	// return while the reaper still accesses DataHandler.fragments.
 	reaperWG sync.WaitGroup
 }
 
@@ -126,24 +126,24 @@ type DataHandlerCallbacks struct {
 
 	// VerifyPeerTestSignature is called to verify a PeerTest block's signature
 	// before dispatching to OnPeerTest. Per SSU2 spec §Peer Test, signatures
-	// MUST be verified before acting on the message (G-2). If nil, blocks with
+	// MUST be verified before acting on the message. If nil, blocks with
 	// mandatory signatures (messages 1-4) are rejected.
 	VerifyPeerTestSignature func(block *PeerTestBlock) error
 
 	// VerifyRelayRequestSignature is called to verify a RelayRequest block's
 	// signature before dispatching to OnRelayRequest. Per SSU2 spec §Relay
-	// Request, signatures MUST be verified (G-2). If nil, blocks are rejected.
+	// Request, signatures MUST be verified. If nil, blocks are rejected.
 	VerifyRelayRequestSignature func(block *RelayRequestBlock) error
 
 	// VerifyRelayResponseSignature is called to verify a RelayResponse block's
 	// signature before dispatching to OnRelayResponse. Per SSU2 spec §Relay
-	// Response, signatures MUST be verified for code 0 and code >= 64 (G-2).
+	// Response, signatures MUST be verified for code 0 and code >= 64.
 	// If nil, signed responses are rejected.
 	VerifyRelayResponseSignature func(block *RelayResponseBlock) error
 
 	// VerifyRelayIntroSignature is called to verify a RelayIntro block's
 	// signature before dispatching to OnRelayIntro. Per SSU2 spec §Relay
-	// Intro, signatures MUST be verified (G-2). If nil, blocks are rejected.
+	// Intro, signatures MUST be verified. If nil, blocks are rejected.
 	VerifyRelayIntroSignature func(block *RelayIntroBlock) error
 }
 
@@ -227,7 +227,7 @@ func (h *DataHandler) initNonCriticalDispatch() {
 // after DataHandler is initialized. The reaper is stopped via Close(), which ensures
 // synchronization: stopReaper channel signals exit, reaperWG.Wait() guarantees the
 // goroutine has exited before Close() returns. This prevents Close() from returning
-// while the reaper still accesses DataHandler.fragments (BUG-RL-4).
+// while the reaper still accesses DataHandler.fragments.
 //
 // INVARIANT: reaperWG.Add(1) is paired with exactly one reaperWG.Done() in the
 // reaper goroutine's defer. This counter is checked in tests to catch accidental
@@ -253,14 +253,14 @@ func (h *DataHandler) StartReaper() {
 // Close stops the fragment reaper goroutine and waits for it to exit.
 func (h *DataHandler) Close() {
 	flog("Close").Debug("stopping DataHandler reaper")
-	// STATE-4: Use closeOnce to ensure stopReaper is closed exactly once.
+	// Use closeOnce to ensure stopReaper is closed exactly once.
 	// The previous select-based guard was not safe for concurrent Close()
 	// calls — two goroutines could both pass the "channel empty?" check and
 	// both call close(stopReaper), causing a panic.
 	h.closeOnce.Do(func() {
 		close(h.stopReaper)
 	})
-	// BUG-RL-4: wait for the reaper goroutine to exit before returning so
+	// Wait for the reaper goroutine to exit before returning so
 	// that CloseWithReason does not return while the goroutine still
 	// accesses DataHandler.fragments.
 	h.reaperWG.Wait()
