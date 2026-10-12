@@ -15,17 +15,25 @@ var _ BuildRecordEncryptor = (*BuildRequestCrypto)(nil)
 // BuildRequestCrypto handles asymmetric encryption and decryption of tunnel
 // build request records using ECIES-X25519-AEAD.
 //
-// This type handles only the asymmetric half of the tunnel-build crypto:
-// EncryptBuildRequest, DecryptBuildRequest, and VerifyIdentityHash.  Callers
-// that need only request record operations should use this type directly via
-// the BuildRecordEncryptor interface, so the expected key material
-// (X25519 public/private key) is clear at every call site.
+// A tunnel build request is the first message in an I2P tunnel: it asks a
+// peer to join a tunnel and carries the keys needed to encrypt the reply.
+// "Asymmetric" means the sender encrypts with the recipient's public key and
+// only the recipient's private key can decrypt.
 //
-// For the symmetric ChaCha20-Poly1305 reply half see BuildReplyCrypto.
-// For backward compatibility a combined type is available as BuildRecordCrypto.
+// This type handles only the request half of the tunnel-build crypto:
+// EncryptBuildRequest, DecryptBuildRequest, and VerifyIdentityHash. Callers
+// that need only request record operations should use this type directly via
+// the [BuildRecordEncryptor] interface, so the expected key material (X25519
+// public/private key) is clear at every call site.
+//
+// For the symmetric ChaCha20-Poly1305 reply half see [BuildReplyCrypto].
+// For backward compatibility a combined type is available as
+// [BuildRecordCrypto].
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type BuildRequestCrypto struct{}
 
-// NewBuildRequestCrypto creates a new BuildRequestCrypto handler.
+// NewBuildRequestCrypto creates a new [BuildRequestCrypto] handler.
 func NewBuildRequestCrypto() *BuildRequestCrypto {
 	return &BuildRequestCrypto{}
 }
@@ -34,18 +42,25 @@ func NewBuildRequestCrypto() *BuildRequestCrypto {
 // using ECIES-X25519-AEAD encryption.
 //
 // This implements the I2P specification for encrypted tunnel build records.
-// The caller (go-i2p) is responsible for extracting the recipient's public key
-// and identity hash from RouterInfo before calling this function.
+// The caller (go-i2p) is responsible for extracting the recipient's public
+// key and identity hash from RouterInfo before calling this function.
 //
 // Format of the 528-byte output:
-//   - Bytes 0-15: First 16 bytes of recipientIdentityHash
-//   - Bytes 16-297: ECIES-X25519 encrypted data (ephemeral_pubkey + nonce + AEAD ciphertext)
-//   - Bytes 298-527: Zero padding
+//
+//   - Bytes 0-15: First 16 bytes of recipientIdentityHash (lets the recipient
+//     quickly check whether the record is for them).
+//   - Bytes 16-297: ECIES-X25519 encrypted data (ephemeral public key +
+//     nonce + AEAD ciphertext).
+//   - Bytes 298-527: Zero padding.
 //
 // Parameters:
-//   - cleartext: 222-byte serialized BuildRequestRecord
-//   - recipientPubKey: recipient's 32-byte X25519 public key (extracted from RouterInfo by caller)
-//   - recipientIdentityHash: recipient's 32-byte identity hash (extracted from RouterInfo by caller)
+//   - cleartext: 222-byte serialized BuildRequestRecord.
+//   - recipientPubKey: recipient's 32-byte X25519 public key (extracted from
+//     RouterInfo by caller).
+//   - recipientIdentityHash: recipient's 32-byte identity hash (extracted
+//     from RouterInfo by caller).
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func (c *BuildRequestCrypto) EncryptBuildRequest(
 	cleartext []byte,
 	recipientPubKey, recipientIdentityHash [32]byte,
@@ -82,13 +97,14 @@ func (c *BuildRequestCrypto) EncryptBuildRequest(
 // DecryptBuildRequest decrypts a 528-byte encrypted build request record
 // using ECIES-X25519-AEAD.
 //
-// The caller (go-i2p) converts the returned cleartext to a BuildRequestRecord.
+// The caller (go-i2p) converts the returned cleartext to a
+// BuildRequestRecord.
 //
 // Parameters:
-//   - encrypted: 528-byte encrypted build request record
-//   - privateKey: our 32-byte X25519 private key
+//   - encrypted: 528-byte encrypted build request record.
+//   - privateKey: our 32-byte X25519 private key.
 //
-// Returns 222-byte cleartext.
+// Returns the 222-byte cleartext.
 func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey []byte) ([]byte, error) {
 	if err := validateSize("private key", len(privateKey), 32); err != nil {
 		return nil, err
@@ -114,24 +130,29 @@ func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey
 	return cleartext, nil
 }
 
-// VerifyIdentityHash checks if an encrypted build request record is intended
-// for us by comparing the first 16 bytes of the record with our identity hash.
+// VerifyIdentityHash checks whether an encrypted build request record is
+// intended for us by comparing the first 16 bytes of the record with our
+// identity hash.
 //
 // This provides a fast pre-check before attempting full ECIES decryption.
-// Uses constant-time comparison to prevent timing-based identity oracle attacks.
+// The comparison runs in constant time so an attacker cannot learn anything
+// about our identity by measuring how long the check takes.
 //
 // Parameters:
-//   - encrypted: 528-byte encrypted build request record
-//   - ourIdentityHash: our 32-byte identity hash
+//   - encrypted: 528-byte encrypted build request record.
+//   - ourIdentityHash: our 32-byte identity hash.
 func (c *BuildRequestCrypto) VerifyIdentityHash(encrypted [528]byte, ourIdentityHash [32]byte) bool {
 	flog("VerifyIdentityHash").Debug("Verifying identity hash prefix match")
 	return subtle.ConstantTimeCompare(encrypted[:16], ourIdentityHash[:16]) == 1
 }
 
 // ExtractIdentityHashPrefixRaw returns the first 16 bytes of an encrypted
-// record as a [32]byte (remaining bytes zero).
+// build request record as a [32]byte (remaining bytes zero).
 //
-// Useful for debugging and logging to identify the intended recipient.
+// These 16 bytes are the first half of the recipient's identity hash,
+// which is stored in cleartext so routers can route the record to the
+// right destination. Useful for debugging and logging to identify the
+// intended recipient.
 func ExtractIdentityHashPrefixRaw(encrypted [528]byte) [32]byte {
 	var hash [32]byte
 	readPrefix16ToArray32(&hash, encrypted[0:16])
@@ -139,7 +160,12 @@ func ExtractIdentityHashPrefixRaw(encrypted [528]byte) [32]byte {
 }
 
 // ComputeIdentityHash computes the SHA-256 hash of raw identity bytes.
-// The caller (go-i2p) serializes RouterIdentity.KeysAndCert to bytes before calling.
+// The caller (go-i2p) serializes RouterIdentity.KeysAndCert to bytes
+// before calling.
+//
+// The resulting 32-byte hash identifies a router's identity; the first 16
+// bytes of it are embedded in cleartext in every build request record so
+// the recipient can verify the record was addressed to it.
 func ComputeIdentityHash(identityBytes []byte) [32]byte {
 	return types.SHA256(identityBytes)
 }

@@ -9,48 +9,50 @@ import (
 )
 
 // BlockType identifies the type of a payload block.
-// Spec ref: ratchet.md §"Unencrypted data".
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type BlockType byte
 
 const (
-	// BlockDateTime is a timestamp block (type 0). Required first in New Session messages.
-	// Contains a 4-byte unsigned Unix timestamp in seconds.
+	// BlockDateTime is a timestamp block (type 0). It is required as the
+	// first block in New Session messages. It contains a 4-byte unsigned
+	// Unix timestamp in seconds.
 	BlockDateTime BlockType = 0
 
-	// BlockTermination signals session teardown (type 4).
-	// Must be the last non-padding block. Only in Existing Session messages.
+	// BlockTermination signals session teardown (type 4). It must be the
+	// last non-padding block and only appears in Existing Session messages.
 	BlockTermination BlockType = 4
 
 	// BlockOptions passes session parameters (type 5).
 	//
 	// WARNING: this block type is currently unimplemented in the I2P ECIES
-	// spec (ratchet.md §"Unencrypted data"). No deployed I2P router will
-	// process an Options block. Do not include this block type in any
-	// outgoing message until the spec is finalised.
-	// Spec ref: ratchet.md §"Unencrypted data" — "type 5: options (unimplemented)".
+	// spec. No deployed I2P router will process an Options block. Do not
+	// include this block type in any outgoing message until the spec is
+	// finalised.
 	BlockOptions BlockType = 5
 
-	// BlockMessageNumber carries the previous tag set message count (type 6).
-	// Contains a 2-byte big-endian PN value.
+	// BlockMessageNumber carries the previous tag set message count
+	// (type 6). It contains a 2-byte big-endian PN value.
 	BlockMessageNumber BlockType = 6
 
-	// BlockNextKey carries a DH ratchet public key for forward secrecy (type 7).
-	// Only in Existing Session messages.
+	// BlockNextKey carries a DH ratchet public key for forward secrecy
+	// (type 7). It only appears in Existing Session messages.
 	BlockNextKey BlockType = 7
 
-	// BlockAck acknowledges previously received messages (type 8).
-	// Only in Existing Session messages.
+	// BlockAck acknowledges previously received messages (type 8). It only
+	// appears in Existing Session messages.
 	BlockAck BlockType = 8
 
-	// BlockAckRequest requests an in-band acknowledgment (type 9).
-	// Only in Existing Session messages.
+	// BlockAckRequest requests an in-band acknowledgment (type 9). It only
+	// appears in Existing Session messages.
 	BlockAckRequest BlockType = 9
 
-	// BlockGarlicClove carries a single garlic clove (type 11).
+	// BlockGarlicClove carries a single garlic clove (type 11). A garlic
+	// clove is one encrypted unit of data inside a garlic message.
 	BlockGarlicClove BlockType = 11
 
-	// BlockPadding fills remaining space in a frame (type 254).
-	// Must be the last block if present.
+	// BlockPadding fills remaining space in a frame (type 254). It must be
+	// the last block if present.
 	BlockPadding BlockType = 254
 )
 
@@ -74,14 +76,15 @@ const maxPayloadSize = 65519
 const maxPayloadBlocks = maxPayloadSize / blockHeaderSize
 
 // NextKeyFlag bit definitions for the NextKey block's flag byte.
-// Spec ref: ratchet.md §"Next DH Ratchet Public Key".
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 const (
 	// NextKeyFlagKeyPresent indicates the 32-byte public key is included.
 	NextKeyFlagKeyPresent byte = 1 << 0
 	// NextKeyFlagReverse indicates this is a reverse key (bit 1).
 	NextKeyFlagReverse byte = 1 << 1
-	// NextKeyFlagRequestReverse requests a reverse key from the peer (bit 2).
-	// Only valid when bit 1 is not set.
+	// NextKeyFlagRequestReverse requests a reverse key from the peer
+	// (bit 2). Only valid when bit 1 is not set.
 	NextKeyFlagRequestReverse byte = 1 << 2
 )
 
@@ -89,15 +92,18 @@ const (
 type TerminationReason byte
 
 const (
-	// TerminationNormal indicates normal close or unspecified reason.
+	// TerminationNormal indicates a normal close or an unspecified reason.
 	TerminationNormal TerminationReason = 0
-	// TerminationReceived indicates a termination was received from the peer.
+	// TerminationReceived indicates a termination was received from the
+	// peer.
 	TerminationReceived TerminationReason = 1
 )
 
-// PayloadBlock represents a single block within an ECIES-X25519-AEAD-Ratchet payload.
-// Each block has a 1-byte type, 2-byte big-endian length, and variable-length data.
-// Spec ref: ratchet.md §"Unencrypted data".
+// PayloadBlock represents a single block within an ECIES-X25519-AEAD-Ratchet
+// payload. Each block has a 1-byte type, a 2-byte big-endian length, and
+// variable-length data.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type PayloadBlock struct {
 	Type BlockType
 	Data []byte
@@ -111,15 +117,17 @@ type PayloadBlock struct {
 // This keeps block creation uniform across New*Block helpers and makes wire
 // layout auditing straightforward.
 
-// NewDateTimeBlock creates a DateTime block with the given timestamp.
-// The timestamp is stored as a 4-byte unsigned big-endian Unix seconds value.
+// NewDateTimeBlock creates a DateTime block with the given timestamp. The
+// timestamp is stored as a 4-byte unsigned big-endian Unix seconds value.
 func NewDateTimeBlock(t time.Time) PayloadBlock {
 	data := make([]byte, 4)
 	binary.BigEndian.PutUint32(data, uint32(t.Unix()))
 	return PayloadBlock{Type: BlockDateTime, Data: data}
 }
 
-// NewTerminationBlock creates a Termination block with the given reason and optional data.
+// NewTerminationBlock creates a Termination block with the given reason
+// and optional extra data. A Termination block tells the peer why the
+// session is ending.
 func NewTerminationBlock(reason TerminationReason, additionalData []byte) PayloadBlock {
 	data := make([]byte, 1+len(additionalData))
 	data[0] = byte(reason)
@@ -127,8 +135,9 @@ func NewTerminationBlock(reason TerminationReason, additionalData []byte) Payloa
 	return PayloadBlock{Type: BlockTermination, Data: data}
 }
 
-// NewMessageNumberBlock creates a Message Number block with the given PN value.
-// PN is the index of the last tag sent in the previous tag set (2 bytes, big-endian).
+// NewMessageNumberBlock creates a Message Number block with the given PN
+// value. PN is the index of the last tag sent in the previous tag set,
+// stored as 2 bytes in big-endian order.
 func NewMessageNumberBlock(pn uint16) PayloadBlock {
 	data := make([]byte, 2)
 	binary.BigEndian.PutUint16(data, pn)
@@ -136,8 +145,14 @@ func NewMessageNumberBlock(pn uint16) PayloadBlock {
 }
 
 // NewNextKeyBlock creates a Next Key block for DH ratchet key exchange.
-// If pubKey is non-nil, the 32-byte key is included and the key-present flag is set.
-// Set reverse=true for a reverse key, requestReverse=true to request one (forward only).
+//
+// Parameters:
+//   - keyID: the key ID this block refers to.
+//   - pubKey: if non-nil, the 32-byte public key is included and the
+//     key-present flag is set.
+//   - reverse: set true for a reverse key.
+//   - requestReverse: set true to request a reverse key from the peer
+//     (only valid on a forward key).
 func NewNextKeyBlock(keyID uint16, pubKey *[32]byte, reverse, requestReverse bool) PayloadBlock {
 	var flags byte
 	if pubKey != nil {
@@ -163,12 +178,17 @@ func NewNextKeyBlock(keyID uint16, pubKey *[32]byte, reverse, requestReverse boo
 }
 
 // AckEntry represents a single acknowledgment of a received message.
+//
+// An acknowledgment (ack) tells the sender that a message was received, so
+// the sender can stop retransmitting it.
 type AckEntry struct {
 	TagSetID uint16
 	N        uint16
 }
 
-// NewAckBlock creates an Ack block acknowledging one or more received messages.
+// NewAckBlock creates an Ack block acknowledging one or more received
+// messages. Each entry tells the sender which messages arrived, so it can
+// stop retransmitting them.
 func NewAckBlock(acks []AckEntry) PayloadBlock {
 	data := make([]byte, 4*len(acks))
 	for i, ack := range acks {
@@ -199,8 +219,9 @@ func NewPaddingBlock(size int) PayloadBlock {
 	return PayloadBlock{Type: BlockPadding, Data: make([]byte, size)}
 }
 
-// DateTime parses a DateTime block and returns the timestamp.
-// Returns an error if the block type is wrong or data length is not 4.
+// DateTime parses a DateTime block and returns the timestamp. The
+// timestamp is stored as a 4-byte unsigned big-endian Unix seconds value.
+// Returns an error if the block type is wrong or the data length is not 4.
 func (b PayloadBlock) DateTime() (time.Time, error) {
 	flog("PayloadBlock.DateTime", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing DateTime block")
 	if b.Type != BlockDateTime {
@@ -213,7 +234,9 @@ func (b PayloadBlock) DateTime() (time.Time, error) {
 	return time.Unix(int64(secs), 0), nil
 }
 
-// TerminationInfo parses a Termination block and returns the reason and additional data.
+// TerminationInfo parses a Termination block and returns the reason the
+// session ended plus any extra data. Returns an error if the block is not
+// a Termination block or its data is empty.
 func (b PayloadBlock) TerminationInfo() (TerminationReason, []byte, error) {
 	flog("PayloadBlock.TerminationInfo", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Termination block")
 	if b.Type != BlockTermination {
@@ -226,6 +249,8 @@ func (b PayloadBlock) TerminationInfo() (TerminationReason, []byte, error) {
 }
 
 // MessageNumber parses a Message Number block and returns the PN value.
+// PN is the index of the last tag sent in the previous tag set, which the
+// peer uses to detect missing or out-of-order messages.
 func (b PayloadBlock) MessageNumber() (uint16, error) {
 	flog("PayloadBlock.MessageNumber", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing MessageNumber block")
 	if b.Type != BlockMessageNumber {
@@ -237,7 +262,9 @@ func (b PayloadBlock) MessageNumber() (uint16, error) {
 	return binary.BigEndian.Uint16(b.Data), nil
 }
 
-// NextKeyInfo holds parsed fields from a NextKey block.
+// NextKeyInfo holds the parsed fields from a NextKey block. A NextKey
+// block carries a peer's new DH ratchet public key so both sides can
+// rotate to fresh message keys (forward secrecy).
 type NextKeyInfo struct {
 	KeyPresent     bool
 	Reverse        bool
@@ -271,6 +298,7 @@ func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
 }
 
 // Acks parses an Ack block and returns the list of acknowledgment entries.
+// Each entry identifies a received message by its tag set ID and index.
 func (b PayloadBlock) Acks() ([]AckEntry, error) {
 	flog("PayloadBlock.Acks", logger.Fields{"block_type": b.Type, "data_len": len(b.Data)}).Debug("Parsing Ack block")
 	if b.Type != BlockAck {

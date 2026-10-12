@@ -5,14 +5,16 @@ import (
 	"github.com/samber/oops"
 )
 
-// CreateSessionCreated creates a SessionCreated message (Message 1, XK pattern message 2).
-// This is the second handshake message sent by the responder.
+// CreateSessionCreated creates a SessionCreated message (XK pattern
+// message 2). This is the second handshake message, sent by the responder.
 //
 // SessionCreated contains:
-// - Ephemeral key (32 bytes)
-// - Encrypted blocks (DateTime, Options)
+//   - Ephemeral key (32 bytes)
+//   - Encrypted blocks (DateTime, Options)
 //
 // XK pattern: ← e, ee
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) CreateSessionCreated(sourceConnID, destConnID uint64) (*SSU2Packet, error) {
 	flog("CreateSessionCreated", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionCreated")
 	if h.initiator {
@@ -28,7 +30,10 @@ func (h *HandshakeHandler) CreateSessionCreated(sourceConnID, destConnID uint64)
 // ProcessSessionCreated processes a received SessionCreated message.
 // This is called by the initiator to process the responder's response.
 //
-// After this, the handshake is complete and transport cipher states are available.
+// After this, the handshake is complete and transport cipher states are
+// available.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 	flog("ProcessSessionCreated").Debug("Processing received SessionCreated")
 	if !h.initiator {
@@ -76,7 +81,7 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 		return err
 	}
 
-	// Extract peer's Options block for padding negotiation (G-3).
+	// Extract peer's Options block for padding negotiation.
 	h.extractPeerOptions(blocks)
 
 	return nil

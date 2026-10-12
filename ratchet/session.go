@@ -10,12 +10,16 @@ import (
 )
 
 // Session represents an active encrypted session with a remote destination.
-// It maintains separate sending and receiving ratchet chains as required by
-// the ECIES-X25519-AEAD-Ratchet Double Ratchet protocol.
 //
-// Thread safety: Session has its own mutex that protects ratchet state during
-// crypto operations. The session manager lock and session lock have a defined
-// ordering to prevent deadlocks.
+// A session is the long-lived, encrypted conversation between two I2P
+// destinations. It maintains separate sending and receiving ratchet chains
+// as required by the ECIES-X25519-AEAD-Ratchet protocol.
+//
+// Thread safety: Session has its own mutex that protects ratchet state
+// during crypto operations. The session manager lock and session lock have a
+// defined ordering to prevent deadlocks.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type Session struct {
 	mu               sync.Mutex
 	RemotePublicKey  [32]byte

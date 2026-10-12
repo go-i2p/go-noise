@@ -7,9 +7,12 @@ import (
 	"github.com/go-i2p/go-noise/internal/baseconfig"
 )
 
-// SSU2Config contains configuration for creating SSU2 connections and listeners.
-// SSU2 (Secure Semi-reliable UDP version 2) is I2P's UDP-based transport protocol.
-// It follows the builder pattern for optional configuration and validation.
+// SSU2Config contains configuration for creating SSU2 connections and
+// listeners. SSU2 (Secure Semi-reliable UDP version 2) is I2P's UDP-based
+// transport protocol. It follows the builder pattern for optional
+// configuration and validation.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type SSU2Config struct {
 	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
 	// common to all Noise config types in this module.
@@ -23,11 +26,10 @@ type SSU2Config struct {
 	// For listeners, this is always false
 	Initiator bool
 
-	// AllowLoopback, when true, permits loopback addresses (127.0.0.0/8, ::1)
-	// for dial and listen operations. By default (true), loopback addresses
-	// are permitted for testing and development. In production, explicitly
-	// validate addresses before creating configs.
-	// AUDIT 7.2 — Address validation.
+	// AllowLoopback, when true, permits loopback addresses (127.0.0.0/8,
+	// ::1) for dial and listen operations. By default (true), loopback
+	// addresses are permitted for testing and development. In production,
+	// explicitly validate addresses before creating configs.
 	AllowLoopback bool
 
 	// RouterHash is the local router identity hash
@@ -130,8 +132,8 @@ type SSU2Config struct {
 	IdleTimeout time.Duration
 
 	// FragmentTimeout is the duration after which incomplete fragment sets
-	// are discarded by the DataHandler. The SSU2 spec does not prescribe
-	// a specific value; 10 seconds matches the Java I2P default (M-4).
+	// are discarded by the DataHandler. The SSU2 spec does not prescribe a
+	// specific value; 10 seconds matches the Java I2P default.
 	// Default: 10 seconds.
 	FragmentTimeout time.Duration
 
@@ -188,7 +190,7 @@ type SSU2Config struct {
 	// sessions a listener will hold. Once reached, new inbound handshakes
 	// are refused until existing sessions close. This caps the listener's
 	// session-map and per-session goroutine memory so a flood of handshake
-	// packets cannot exhaust resources (AUDIT 8.2). 0 means unlimited.
+	// packets cannot exhaust resources. 0 means unlimited.
 	// Default: 65536.
 	MaxSessions int
 
@@ -198,48 +200,50 @@ type SSU2Config struct {
 	// Default: 11 seconds (max RTO per spec). Set to 0 to skip the wait (e.g. in tests).
 	DestroyTimeout time.Duration
 
-	// EnableNextNonce enables the NextNonce rekey mechanism (block type 11).
+	// EnableNextNonce enables the NextNonce rekey mechanism (block type
+	// 11).
+	//
 	// WARNING: The SSU2 spec has NOT finalized this block's format or
-	// semantics (marked "TODO" with size "TBD"). Enabling this risks
-	// breaking interoperability with peers that implement a different
-	// (or no) rekey protocol.
+	// semantics (it is marked "TODO" with size "TBD"). Enabling this risks
+	// breaking interoperability with peers that implement a different (or
+	// no) rekey protocol.
 	//
-	// SECURITY TRADE-OFF: When disabled (default), long-lived sessions hold
-	// the same send/receive cipher keys for their entire lifetime. Without
-	// mid-session key rotation, forward secrecy is not refreshed — an attacker
-	// who later compromises the static key can decrypt the entire session
-	// retroactively. For a router holding sessions for weeks, this is a real
-	// forward-secrecy gap. Nonce exhaustion guards (elsewhere) mitigate the
-	// risk of nonce reuse, but forward secrecy is not recovered until the
-	// session closes and a new one is established.
+	// Security trade-off: when disabled (the default), long-lived sessions
+	// hold the same send/receive cipher keys for their entire lifetime.
+	// Without mid-session key rotation, forward secrecy is not refreshed —
+	// an attacker who later compromises the static key can decrypt the
+	// entire session retroactively. For a router holding sessions for
+	// weeks, this is a real forward-secrecy gap. Nonce exhaustion guards
+	// (elsewhere) mitigate the risk of nonce reuse, but forward secrecy is
+	// not recovered until the session closes and a new one is established.
 	//
-	// Default: false (disabled until spec is finalized) (M-2).
+	// Default: false (disabled until the spec is finalized).
 	EnableNextNonce bool
 
-	// ReplayCacheTTL is the time-to-live for entries in the handshake replay
-	// cache. The spec does not mandate a specific value; 4 minutes is a
-	// reasonable default for the handshake window.
-	// Default: 4 minutes (M-2).
+	// ReplayCacheTTL is the time-to-live for entries in the handshake
+	// replay cache. The spec does not mandate a specific value; 4 minutes
+	// is a reasonable default for the handshake window.
+	// Default: 4 minutes.
 	ReplayCacheTTL time.Duration
 
 	// MaxClockSkew is the maximum allowed difference between local and
-	// remote clocks for handshake timestamp validation (G-1). Per the SSU2
-	// spec, the receiver should verify that the DateTime block timestamp is
+	// remote clocks for handshake timestamp validation. Per the SSU2 spec,
+	// the receiver should verify that the DateTime block timestamp is
 	// within a certain window of local time.
 	// Default: 120 seconds. Set to 0 to disable skew validation.
 	MaxClockSkew time.Duration
 
 	// ReceiveWindowSize is the maximum number of out-of-order packets
-	// buffered by the receive window. Larger values improve throughput
-	// on lossy links at the cost of memory (M-3).
+	// buffered by the receive window. Larger values improve throughput on
+	// lossy links at the cost of memory.
 	// Default: 256. Use 0 for DefaultMaxWindowSize (512).
 	ReceiveWindowSize uint
 
 	// RouterInfoValidator is a callback invoked after the handshake
 	// completes on the responder side. It receives the raw RouterInfo block
 	// from SessionConfirmed and the Noise-authenticated static public key.
-	// The validator MUST verify that the RouterInfo's identity key corresponds
-	// to the static key authenticated by the Noise handshake (C-2).
+	// The validator MUST verify that the RouterInfo's identity key
+	// corresponds to the static key authenticated by the Noise handshake.
 	// Required for responder configs (Initiator=false); use
 	// DefaultRouterInfoValidator or provide a custom implementation.
 	RouterInfoValidator func(routerInfo, authenticatedStaticKey []byte) error
@@ -247,7 +251,7 @@ type SSU2Config struct {
 	// MessageQueueSize is the capacity of the inbound message queue for
 	// complete reassembled I2NP messages. When the queue is full and a new
 	// message is received, the oldest message is dropped with a counter
-	// incremented. L-6: Configurable backpressure.
+	// incremented.
 	// Default: 100 messages.
 	MessageQueueSize int
 }

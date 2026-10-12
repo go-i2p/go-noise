@@ -13,19 +13,32 @@ import (
 	"github.com/samber/oops"
 )
 
-// FrameLengthFieldSize is the size of the SipHash-obfuscated length field.
+// FrameLengthFieldSize is the size, in bytes, of the frame length field
+// that prefixes every NTCP2 data frame. The length is hidden by XORing it
+// with a SipHash mask, so an observer cannot tell how big each frame is.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 const FrameLengthFieldSize = 2
 
-// Read implements net.Conn.Read.
-// When a length obfuscator is set, reads use NTCP2 framed I/O:
-//  1. Return any buffered plaintext from a previous frame first
-//  2. Read exactly 2 bytes from the underlying TCP connection
-//  3. XOR with SipHash inbound mask to recover the frame length
-//  4. Read exactly frameLength bytes of ciphertext from TCP
-//  5. Decrypt the ciphertext via the Noise cipher state
-//  6. Copy plaintext into the caller's buffer; buffer any remainder
+// Read reads data from the NTCP2 connection, implementing the net.Conn
+// interface.
 //
-// When no length obfuscator is set, delegates directly to NoiseConn.Read.
+// When SipHash length obfuscation is active, reads use NTCP2 framed I/O:
+//
+//  1. Return any plaintext left over from a previous frame, if there is
+//     some.
+//  2. Read exactly 2 bytes from the underlying TCP connection.
+//  3. XOR them with the SipHash inbound mask to recover the real frame
+//     length.
+//  4. Read exactly that many bytes of ciphertext from TCP.
+//  5. Decrypt the ciphertext with the Noise cipher state.
+//  6. Copy the plaintext into the caller's buffer; any remainder is
+//     buffered for the next Read call.
+//
+// When no length obfuscator is set, Read delegates directly to the
+// underlying Noise connection.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) Read(b []byte) (int, error) {
 	if nc.broken.Load() {
 		flog("NTCP2Conn.Read").Warn("Read attempted on broken NTCP2 connection")
@@ -34,11 +47,11 @@ func (nc *Conn) Read(b []byte) (int, error) {
 			In("ntcp2").
 			Errorf("connection is broken due to previous framing error (SipHash state desynchronized)")
 	}
-	// STATE-1 / RACE-3: reject all data-phase reads until the handshake has
-	// completed and the SipHash cipher state has been installed. Without this
-	// guard a caller can drive readDirect() before cipher keys are set, which
-	// either forwards plaintext bytes from the handshake stream or operates on
-	// an uninitialised cipher state.
+	// Reject all data-phase reads until the handshake has completed and
+	// the SipHash cipher state has been installed. Without this guard a
+	// caller can drive readDirect() before cipher keys are set, which
+	// either forwards plaintext bytes from the handshake stream or
+	// operates on an uninitialised cipher state.
 	if !nc.established.Load() {
 		return 0, oops.
 			Code("NOT_ESTABLISHED").
@@ -194,12 +207,13 @@ func (nc *Conn) readAndDecryptFrame(underlying net.Conn, frameLen uint16) ([]byt
 	return plaintext, nil
 }
 
-// bufferPlaintext copies decrypted plaintext into the caller's buffer and stores
-// any remainder in readBuffer for subsequent Read calls.
-// LEAK-3: cap the readBuffer to prevent a stalling consumer from being used as
-// a remote memory-exhaustion vector. The maximum data-phase frame is 65535 bytes;
-// a Poly1305 tag adds 16 bytes of overhead, so the largest legitimate overflow is
-// SpecMaxFrameSize bytes. Anything larger indicates a bug or an attack.
+// bufferPlaintext copies decrypted plaintext into the caller's buffer and
+// stores any remainder in readBuffer for subsequent Read calls.
+// The readBuffer is capped to prevent a stalling consumer from being used
+// as a remote memory-exhaustion vector. The maximum data-phase frame is
+// 65535 bytes; a Poly1305 tag adds 16 bytes of overhead, so the largest
+// legitimate overflow is SpecMaxFrameSize bytes. Anything larger
+// indicates a bug or an attack.
 const maxReadBufferSize = 65535
 
 func (nc *Conn) bufferPlaintext(b, plaintext []byte) int {
@@ -261,16 +275,24 @@ func (nc *Conn) validateFrameLength(frameLen uint16) error {
 	return nil
 }
 
-// Write implements net.Conn.Write.
-// When a length obfuscator is set, writes use NTCP2 framed I/O:
-//  1. Encrypt the plaintext via the Noise cipher state
-//  2. Compute the ciphertext length as a uint16
-//  3. XOR with SipHash outbound mask to obfuscate the length
-//  4. Write [2-byte obfuscated length][ciphertext] to the underlying TCP connection
+// Write writes data to the NTCP2 connection, implementing the net.Conn
+// interface.
 //
-// When no length obfuscator is set, delegates directly to NoiseConn.Write.
+// When SipHash length obfuscation is active, writes use NTCP2 framed I/O:
+//
+//  1. Encrypt the plaintext with the Noise cipher state.
+//  2. Compute the ciphertext length as a 16-bit number.
+//  3. XOR it with the SipHash outbound mask to hide the length.
+//  4. Write the 2-byte obfuscated length followed by the ciphertext to
+//     the underlying TCP connection.
+//
+// When no length obfuscator is set, Write delegates directly to the
+// underlying Noise connection.
+//
 // Large writes are transparently split into multiple frames of at most
 // MaxFrameSize minus Poly1305Overhead bytes of plaintext each.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) Write(b []byte) (int, error) {
 	if nc.broken.Load() {
 		flog("NTCP2Conn.Write").Warn("Write attempted on broken NTCP2 connection")
@@ -279,8 +301,8 @@ func (nc *Conn) Write(b []byte) (int, error) {
 			In("ntcp2").
 			Errorf("connection is broken due to previous framing error (SipHash state desynchronized)")
 	}
-	// STATE-1 / RACE-3: mirror the Read guard — reject writes before the
-	// handshake has finished and SipHash outbound keys are installed.
+	// Mirror the Read guard — reject writes before the handshake has
+	// finished and SipHash outbound keys are installed.
 	if !nc.established.Load() {
 		return 0, oops.
 			Code("NOT_ESTABLISHED").
@@ -527,14 +549,16 @@ func (nc *Conn) buildWireFrame(encrypted []byte, slm *SipHashLengthModifier) ([]
 	return frame, err
 }
 
-// buildWireFrameWithMask is identical to buildWireFrame but also returns the
-// SipHash mask used for the obfuscated length field, for diagnostic logging.
-// Returns error (L-1) if encrypted frame length exceeds maximum (defense-in-depth check).
+// buildWireFrameWithMask is identical to buildWireFrame but also returns
+// the SipHash mask used for the obfuscated length field, for diagnostic
+// logging.
+// Returns an error if the encrypted frame length exceeds the maximum
+// (defense-in-depth check).
 func (nc *Conn) buildWireFrameWithMask(encrypted []byte, slm *SipHashLengthModifier) ([]byte, uint16, error) {
 	// Defensive check: upstream encryptFrame() guarantees len(encrypted) <= SpecMaxFrameSize (0xFFFF).
 	// This guard is unreachable in production, but retained as defense-in-depth
 	// to prevent integer overflow during uint16 cast.
-	// L-1: Return error instead of panicking
+	// Return an error instead of panicking.
 	if len(encrypted) > 0xFFFF {
 		return nil, 0, oops.
 			Code("FRAME_TOO_LARGE_AT_CAST").

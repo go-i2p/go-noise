@@ -9,7 +9,7 @@ package ratchet
 // NextKey block containing its own new DH key. Both sides then perform a DH
 // ratchet to derive a new tag set.
 //
-// Spec ref: ratchet.md §"Next DH Ratchet Public Key", §"DH Ratchet Message Flow".
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 
 import (
 	"fmt"
@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	// MaxKeyID is the maximum allowed key ID per the spec.
-	// Spec ref: ratchet.md — "The maximum Key ID is 32767."
+	// MaxKeyID is the maximum allowed key ID per the spec. A key ID is a
+	// small number that identifies which DH key a NextKey block refers to.
 	MaxKeyID = 32767
 )
 
@@ -51,10 +51,11 @@ func (s *Session) HasPendingNextKeys() bool {
 	return len(s.pendingNextKeys) > 0
 }
 
-// ProcessReceivedNextKey handles a NextKey block received from a peer
-// in a decrypted Existing Session message.
+// ProcessReceivedNextKey handles a NextKey block received from a peer in a
+// decrypted Existing Session message.
 //
 // There are two NextKey flows:
+//
 //  1. Forward key (bit 1 = 0): The peer generated a new DH key and sent it.
 //     We update the peer's public key and perform a receiving DH ratchet.
 //     If request-reverse is set, we generate our own new key and queue a
@@ -62,10 +63,11 @@ func (s *Session) HasPendingNextKeys() bool {
 //  2. Reverse key (bit 1 = 1): The peer is responding to our forward key.
 //     We update the peer's public key and perform a receiving DH ratchet.
 //
-// sessionTag identifies the session (used for lookup).
-// info is the parsed NextKey block.
+// Parameters:
+//   - sessionTag: the 8-byte tag that identifies the session.
+//   - info: the parsed NextKey block.
 //
-// Spec ref: ratchet.md §"DH Ratchet Message Flow".
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func (sm *SessionManager) ProcessReceivedNextKey(sessionTag [8]byte, info NextKeyInfo) error {
 	flog("ProcessReceivedNextKey", logger.Fields{"key_present": info.KeyPresent, "reverse": info.Reverse, "key_id": info.KeyID}).Debug("Processing received NextKey block")
 	session, err := sm.lookupLockedSession(sessionTag)

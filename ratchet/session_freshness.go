@@ -25,17 +25,25 @@ const (
 	nsReplayCacheCleanupInterval = 30 * time.Second
 )
 
-// SessionManagerOption configures optional SessionManager parameters.
+// SessionManagerOption configures optional [SessionManager] parameters.
+//
+// Options are passed to [NewSessionManager] to customize behavior without
+// changing the function signature.
 type SessionManagerOption func(*SessionManager)
 
-// WithNSMaxPastAge overrides the default maximum past age for NS DateTime freshness.
+// WithNSMaxPastAge overrides the default maximum past age for New Session
+// DateTime freshness. A New Session message whose timestamp is older than
+// this is rejected as stale or replayed. The default is 5 minutes.
 func WithNSMaxPastAge(d time.Duration) SessionManagerOption {
 	return func(sm *SessionManager) {
 		sm.nsMaxPastAge = d
 	}
 }
 
-// WithNSMaxFutureAge overrides the default maximum future age for NS DateTime freshness.
+// WithNSMaxFutureAge overrides the default maximum future age for New
+// Session DateTime freshness. A New Session message whose timestamp is more
+// than this far in the future is rejected (it indicates clock skew or a
+// forged message). The default is 2 minutes.
 func WithNSMaxFutureAge(d time.Duration) SessionManagerOption {
 	return func(sm *SessionManager) {
 		sm.nsMaxFutureAge = d

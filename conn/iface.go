@@ -9,7 +9,9 @@ import (
 // ConnIface defines the public interface for Noise protocol connections.
 // It embeds net.Conn and adds handshake and state management methods.
 //
-// This interface allows consumers to substitute test doubles or alternative
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
+//
+// This interface lets consumers substitute test doubles or alternative
 // implementations without depending on the concrete *Conn type.
 type ConnIface interface {
 	net.Conn
@@ -22,12 +24,12 @@ type ConnIface interface {
 	// retry logic based on the connection configuration.
 	HandshakeWithRetry(ctx context.Context) error
 
-	// GetConnectionState returns the current connection state (Init, Handshaking,
-	// Established, or Closed).
+	// GetConnectionState returns the current connection state (Init,
+	// Handshaking, Established, or Closed).
 	GetConnectionState() ConnState
 
-	// GetConnectionMetrics returns connection performance metrics:
-	// bytes read, bytes written, and handshake duration.
+	// GetConnectionMetrics returns connection performance metrics: bytes
+	// read, bytes written, and handshake duration.
 	GetConnectionMetrics() (bytesRead, bytesWritten int64, handshakeDuration time.Duration)
 }
 

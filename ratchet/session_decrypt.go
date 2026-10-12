@@ -11,13 +11,21 @@ import (
 )
 
 // DecryptGarlicMessage decrypts an encrypted garlic message.
-// Handles New Session, New Session Reply, and Existing Session message types.
+//
+// It automatically detects and handles all three message types: New Session
+// (a fresh handshake), New Session Reply (the handshake reply), and Existing
+// Session (the fast path for an established session).
 //
 // Returns:
-//   - plaintext: the decrypted garlic payload
-//   - sessionTag: the 8-byte tag used to identify the session (zero for NS and NSR)
-//   - sessionHash: SHA-256(initiatorStaticPub) for New Session messages; nil otherwise.
-//     Callers that need to send a New Session Reply must pass this value to EncryptNewSessionReply.
+//   - plaintext: the decrypted garlic payload.
+//   - sessionTag: the 8-byte tag used to identify the session (zero for New
+//     Session and New Session Reply messages).
+//   - sessionHash: SHA-256 of the initiator's static public key for New
+//     Session messages; nil otherwise. Callers that need to send a New
+//     Session Reply must pass this value to
+//     [SessionManager.EncryptNewSessionReply].
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func (sm *SessionManager) DecryptGarlicMessage(encryptedGarlic []byte) ([]byte, [8]byte, *[32]byte, error) {
 	flog("DecryptGarlicMessage", logger.Fields{"message_len": len(encryptedGarlic)}).Debug("Decrypting garlic message")
 	if len(encryptedGarlic) < 8 {

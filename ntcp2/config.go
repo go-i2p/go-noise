@@ -16,122 +16,146 @@ import (
 	"github.com/samber/oops"
 )
 
-// DefaultHandshakeTimeoutSeconds is the default handshake timeout in seconds.
+// DefaultHandshakeTimeoutSeconds is the default handshake timeout, in seconds.
+// A handshake that takes longer than this is aborted.
 const DefaultHandshakeTimeoutSeconds = 30
 
-// DefaultHandshakeRetries is the default number of handshake retry attempts.
+// DefaultHandshakeRetries is the default number of times a failed handshake
+// is retried before giving up.
 const DefaultHandshakeRetries = 3
 
-// Config contains configuration for creating NTCP2 connections and listeners.
-// It follows the builder pattern for optional configuration and validation,
-// similar to the main ConnConfig but with NTCP2-specific parameters.
+// Config holds all the settings for creating NTCP2 connections and listeners.
+//
+// Use NewNTCP2Config to create a Config with sensible defaults, then adjust
+// the fields you care about with the With* methods. Call Validate before
+// using the config to catch mistakes early.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 type Config struct {
-	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
-	// common to all Noise config types in this module.
+	// BaseHandshakeConfig holds the shared timeout, retry, and modifier
+	// settings used by all Noise config types in this module.
 	baseconfig.BaseHandshakeConfig
 
-	// Pattern is the Noise protocol pattern for NTCP2
-	// Default: "XK" (standard NTCP2 pattern)
+	// Pattern is the Noise protocol pattern to use.
+	// NTCP2 always uses "XK".
 	Pattern string
 
-	// Initiator indicates if this connection is the handshake initiator
-	// For listeners, this is always false
+	// Initiator is true when this side starts the handshake.
+	// Listeners are always the responder, so this is false for them.
 	Initiator bool
 
-	// BobRouterHash is Bob's (the responder's) router hash.
-	// Per the I2P NTCP2 spec, both Alice (initiator) and Bob (responder)
-	// use RH_B as the AES-256-CBC key for ephemeral key obfuscation.
-	// For the responder, this is their own router hash.
-	// For the initiator, this is the remote peer's router hash.
-	// Required for NTCP2 addressing and AES obfuscation.
+	// BobRouterHash is the responder's router hash (RH_B in the spec).
+	// Both sides use this hash as the AES key that hides the ephemeral
+	// (one-time) keys sent in the clear during the handshake.
+	// A responder sets its own router hash here; an initiator sets the
+	// remote peer's router hash.
 	BobRouterHash data.Hash
 
-	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
+	// StaticKey is this peer's long-term Curve25519 key (32 bytes).
+	// It is used to sign the handshake and to derive the session keys.
 	StaticKey []byte
 
 	// RemoteRouterHash is the remote peer's router identity hash.
 	// Required for outbound connections, optional for listeners.
 	RemoteRouterHash *data.Hash
 
-	// RemoteStaticKey is the remote peer's Curve25519 static public key (32 bytes)
-	// Required for initiator connections using XK pattern (pre-message: ← s)
-	// Distinct from RemoteRouterHash (which is SHA-256 of RouterIdentity)
+	// RemoteStaticKey is the remote peer's Curve25519 static public key
+	// (32 bytes). The XK pattern requires the initiator to already know
+	// the responder's static key, so this is required for outbound
+	// connections.
+	//
+	// This is different from RemoteRouterHash: the router hash is the
+	// SHA-256 of the peer's RouterIdentity, while the static key is a
+	// Curve25519 public key.
 	RemoteStaticKey []byte
 
-	// EnableAESObfuscation enables AES-based ephemeral key obfuscation
-	// Default: true (recommended for production)
+	// EnableAESObfuscation turns on AES obfuscation of the cleartext
+	// ephemeral keys in handshake messages 1 and 2.
+	// Enabled by default.
 	EnableAESObfuscation bool
 
-	// ObfuscationIV is the 16-byte IV for AES obfuscation
-	// If nil, will be derived from router hash (recommended)
+	// ObfuscationIV is the 16-byte initialization vector (IV) for the AES
+	// obfuscation. If nil, it is derived from the router hash, which is
+	// the recommended setup.
 	ObfuscationIV []byte
 
-	// EnableSipHashLength enables SipHash-based frame length obfuscation
-	// Default: true (recommended for production)
+	// EnableSipHashLength turns on SipHash obfuscation of the two-byte
+	// frame length field in the data phase.
+	// Enabled by default.
 	EnableSipHashLength bool
 
-	// SipHashKeys are the k1, k2 keys for SipHash length obfuscation
-	// If empty, will be derived during handshake
+	// SipHashKeys are the two SipHash keys (k1 and k2) used to obfuscate
+	// frame lengths. If left empty, they are derived from the session
+	// keys during the handshake.
 	SipHashKeys [2]uint64
 
-	// MaxFrameSize is the maximum size of NTCP2 data frames
-	// Default: 16384 bytes (16KB)
+	// MaxFrameSize is the largest NTCP2 data frame this side will send,
+	// in bytes. Default: 16384 (16 KB).
 	MaxFrameSize int
 
-	// FramePaddingEnabled enables random padding in NTCP2 frames
-	// Default: true (recommended for traffic analysis resistance)
+	// FramePaddingEnabled adds random padding to data frames. Padding
+	// makes frame sizes less predictable, which helps against traffic
+	// analysis. Enabled by default.
 	FramePaddingEnabled bool
 
-	// MinPaddingSize is the minimum padding size for frames
-	// Default: 0 bytes
+	// MinPaddingSize is the smallest amount of padding added to a frame,
+	// in bytes. Default: 0.
 	MinPaddingSize int
 
-	// MaxPaddingSize is the maximum padding size for frames
-	// Default: 64 bytes
+	// MaxPaddingSize is the largest amount of padding added to a frame,
+	// in bytes. Default: 64.
 	MaxPaddingSize int
 
-	// LocalRouterInfo contains Alice's serialized RouterInfo bytes.
-	// Required for outbound NTCP2 connections: its length determines m3p2Len
-	// in the message 1 options block and it is sent as the encrypted payload
-	// in message 3 part 2.
+	// LocalRouterInfo is this peer's serialized RouterInfo bytes.
+	// Required for outbound connections: its length is written into the
+	// m3p2Len field of message 1, and the bytes themselves are sent as
+	// the encrypted payload of message 3 part 2.
 	LocalRouterInfo []byte
 
-	// StrictRouterInfoVerification is retained for backward compatibility only.
+	// StrictRouterInfoVerification is kept only for backward
+	// compatibility.
 	//
 	// Deprecated: the local RouterInfo / static-key match is now ALWAYS
-	// enforced as a hard error during the initiator handshake, regardless of
-	// this field's value. It no longer has any effect. The check is a no-op
-	// when no static key or no LocalRouterInfo is configured, so it never
-	// fires on partially-configured connections.
+	// enforced as a hard error during the initiator handshake, regardless
+	// of this field's value. It no longer has any effect. The check is a
+	// no-op when no static key or no LocalRouterInfo is configured, so it
+	// never fires on partially-configured connections.
 	StrictRouterInfoVerification bool
 
-	// sipHashModifier stores the SipHash modifier created during ToConnConfig()
-	// so it can be passed to NTCP2Conn for data-phase framing.
+	// sipHashModifier stores the SipHash modifier created during
+	// ToConnConfig() so it can be passed to NTCP2Conn for data-phase
+	// framing.
 	// Access is via atomic.Pointer to avoid data races between the
 	// PostHandshakeHook goroutine and SipHashModifier() callers.
 	sipHashModifier atomic.Pointer[SipHashLengthModifier]
 
 	// ReplayDetector checks for replayed ephemeral keys during handshakes.
-	// If nil, replay detection is disabled (not recommended for production).
+	// If nil, replay detection is disabled (not recommended for
+	// production).
 	// Shared across all responder connections using this config (typically
-	// instantiated once per listener). Initiator connections ignore this field.
+	// instantiated once per listener). Initiator connections ignore this
+	// field.
 	ReplayDetector ReplayDetector
 
-	// AllowReuseAddress, when true, enables SO_REUSEADDR socket option for
-	// ListenNTCP2. This reduces restart-race delay by allowing quick rebinding
-	// to the same address after shutdown. Use with caution in production as it
-	// can allow stale packets from previous incarnations to be delivered.
+	// AllowReuseAddress, when true, enables the SO_REUSEADDR socket
+	// option for ListenNTCP2. This reduces restart-race delay by allowing
+	// quick rebinding to the same address after shutdown. Use with caution
+	// in production as it can allow stale packets from previous
+	// incarnations to be delivered.
 	// Default: false (conservative, matches net.Listen behavior).
-	// AUDIT 7.3: Documented restart-race behavior.
 	AllowReuseAddress bool
 }
 
-// NewNTCP2Config creates a new NTCP2Config with sensible defaults.
-// bobRouterHash is Bob's (the responder's) router hash (RH_B). Per the NTCP2
-// spec, both initiator and responder use RH_B for AES ephemeral key obfuscation.
-// For a responder, pass your own router hash; for an initiator, pass the remote
+// NewNTCP2Config creates a new Config with sensible defaults.
+//
+// bobRouterHash is the responder's router hash (RH_B in the spec). Both
+// sides use it as the AES key for ephemeral key obfuscation, so a
+// responder passes its own router hash and an initiator passes the remote
 // peer's router hash.
-// initiator indicates whether this connection will initiate the handshake.
+//
+// initiator is true when this connection will start the handshake.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
 	flog("NewNTCP2Config", logger.Fields{"initiator": initiator}).Debug("Creating new NTCP2Config")
 	return &Config{
@@ -155,7 +179,7 @@ func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
 }
 
 // WithPattern sets the Noise protocol pattern.
-// For NTCP2, this should typically remain "XK".
+// NTCP2 always uses "XK", so this should normally be left alone.
 func (nc *Config) WithPattern(pattern string) *Config {
 	nc.Pattern = pattern
 	return nc
@@ -173,9 +197,9 @@ func copyKeyBytes(key []byte) []byte {
 	return dst
 }
 
-// WithStaticKey sets the static key for this connection.
-// key must be 32 bytes for Curve25519. Invalid lengths are ignored;
-// call Validate() to check all fields before use.
+// WithStaticKey sets this peer's long-term Curve25519 key.
+// key must be 32 bytes. Keys of any other length are silently ignored,
+// so call Validate() to check all fields before use.
 func (nc *Config) WithStaticKey(key []byte) *Config {
 	if len(key) == StaticKeySize {
 		nc.StaticKey = copyKeyBytes(key)
@@ -183,20 +207,21 @@ func (nc *Config) WithStaticKey(key []byte) *Config {
 	return nc
 }
 
-// WithRemoteRouterHash sets the remote peer's router identity.
-// hash must be 32 bytes. Required for outbound connections.
-// Invalid lengths are ignored; call Validate() to check all fields before use.
+// WithRemoteRouterHash sets the remote peer's router identity hash.
+// Required for outbound connections.
 func (nc *Config) WithRemoteRouterHash(hash data.Hash) *Config {
 	nc.RemoteRouterHash = &hash
 	return nc
 }
 
 // WithRemoteStaticKey sets the remote peer's Curve25519 static public key.
-// key must be exactly 32 bytes. Required for initiator connections using the
-// XK pattern, where the initiator must know the responder's static key as a
-// pre-message (← s). This is distinct from RemoteRouterHash (which is
-// SHA-256 of the RouterIdentity).
-// Invalid lengths are ignored; call Validate() to check all fields before use.
+// key must be exactly 32 bytes; other lengths are silently ignored, so
+// call Validate() to check all fields before use.
+//
+// The XK pattern requires the initiator to already know the responder's
+// static key, so this is required for outbound connections. It is a
+// different value from RemoteRouterHash, which is the SHA-256 of the
+// peer's RouterIdentity.
 func (nc *Config) WithRemoteStaticKey(key []byte) *Config {
 	if len(key) == StaticKeySize {
 		nc.RemoteStaticKey = copyKeyBytes(key)
@@ -204,42 +229,52 @@ func (nc *Config) WithRemoteStaticKey(key []byte) *Config {
 	return nc
 }
 
-// WithHandshakeTimeout sets the handshake timeout.
+// WithHandshakeTimeout sets how long a handshake may take before it is
+// aborted.
 func (nc *Config) WithHandshakeTimeout(timeout time.Duration) *Config {
 	baseconfig.SetHandshakeTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
-// WithReadTimeout sets the read timeout for post-handshake operations.
+// WithReadTimeout sets how long a read may take after the handshake is
+// done. A zero value means no timeout.
 func (nc *Config) WithReadTimeout(timeout time.Duration) *Config {
 	baseconfig.SetReadTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
-// WithWriteTimeout sets the write timeout for post-handshake operations.
+// WithWriteTimeout sets how long a write may take after the handshake is
+// done. A zero value means no timeout.
 func (nc *Config) WithWriteTimeout(timeout time.Duration) *Config {
 	baseconfig.SetWriteTimeout(&nc.BaseHandshakeConfig, timeout)
 	return nc
 }
 
-// WithHandshakeRetries sets the number of handshake retry attempts.
-// Use 0 for no retries, -1 for infinite retries.
+// WithHandshakeRetries sets how many times a failed handshake is retried.
+// Use 0 for no retries, or -1 to retry forever.
 func (nc *Config) WithHandshakeRetries(retries int) *Config {
 	baseconfig.SetHandshakeRetries(&nc.BaseHandshakeConfig, retries)
 	return nc
 }
 
-// WithRetryBackoff sets the base delay between retry attempts.
+// WithRetryBackoff sets the base delay between handshake retry attempts.
+// The delay grows with each attempt.
 func (nc *Config) WithRetryBackoff(backoff time.Duration) *Config {
 	baseconfig.SetRetryBackoff(&nc.BaseHandshakeConfig, backoff)
 	return nc
 }
 
-// WithAESObfuscation enables or disables AES-based ephemeral key obfuscation.
-// When enabled with a custom IV, the IV must be exactly 16 bytes; invalid
-// IV lengths are ignored. Call Validate() to check all fields before use.
-// Note: Options negotiation (padding limits as 4.4 fixed-point, dummy traffic,
-// delay parameters) is the responsibility of the higher-level router transport.
+// WithAESObfuscation enables or disables the AES obfuscation of the
+// cleartext ephemeral keys in handshake messages 1 and 2.
+//
+// When enabled with a custom IV, the IV must be exactly 16 bytes; other
+// lengths are silently ignored, so call Validate() to check all fields
+// before use.
+//
+// Note: options negotiation (padding limits, dummy traffic, delay
+// parameters) is handled by the higher-level router transport, not here.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Config) WithAESObfuscation(enabled bool, customIV []byte) *Config {
 	nc.EnableAESObfuscation = enabled
 	if len(customIV) == IVSize {
@@ -249,8 +284,14 @@ func (nc *Config) WithAESObfuscation(enabled bool, customIV []byte) *Config {
 	return nc
 }
 
-// WithSipHashLength enables or disables SipHash-based frame length obfuscation.
-// When enabled with custom keys, both k1 and k2 must be provided.
+// WithSipHashLength enables or disables SipHash obfuscation of the
+// two-byte frame length field in the data phase.
+//
+// When enabled with custom keys, both k1 and k2 must be provided. If both
+// are zero, the keys are derived from the session keys during the
+// handshake.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Config) WithSipHashLength(enabled bool, k1, k2 uint64) *Config {
 	nc.EnableSipHashLength = enabled
 	if enabled && (k1 != 0 || k2 != 0) {
@@ -260,8 +301,8 @@ func (nc *Config) WithSipHashLength(enabled bool, k1, k2 uint64) *Config {
 	return nc
 }
 
-// WithModifiers sets additional handshake modifiers for custom obfuscation.
-// These are applied in addition to NTCP2's standard modifiers.
+// WithModifiers adds extra handshake modifiers for custom obfuscation.
+// They run in addition to NTCP2's standard modifiers.
 func (nc *Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *Config {
 	// Make defensive copy
 	nc.Modifiers = make([]handshake.HandshakeModifier, len(modifiers))
@@ -269,9 +310,11 @@ func (nc *Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *Confi
 	return nc
 }
 
-// WithLocalRouterInfo sets Alice's serialized RouterInfo bytes for outbound
-// NTCP2 connections. The length is used to populate m3p2Len in the message 1
-// options block; the bytes are encrypted and sent as message 3 part 2.
+// WithLocalRouterInfo sets this peer's serialized RouterInfo bytes for
+// outbound connections. The length is written into the m3p2Len field of
+// message 1, and the bytes are encrypted and sent as message 3 part 2.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Config) WithLocalRouterInfo(ri []byte) *Config {
 	if len(ri) > 0 {
 		nc.LocalRouterInfo = make([]byte, len(ri))
@@ -280,41 +323,54 @@ func (nc *Config) WithLocalRouterInfo(ri []byte) *Config {
 	return nc
 }
 
-// WithStrictRouterInfoVerification is retained for backward compatibility.
+// WithStrictRouterInfoVerification is kept only for backward
+// compatibility.
 //
-// Deprecated: the local RouterInfo / static-key match is now always enforced
-// as a hard error during the initiator handshake, so this builder is a no-op.
-// It continues to set the (now-unused) field to avoid breaking callers that
-// still invoke it.
+// Deprecated: the local RouterInfo / static-key match is now always
+// enforced as a hard error during the initiator handshake, so this
+// builder does nothing. It still sets the (now-unused) field to avoid
+// breaking callers that still invoke it.
 func (nc *Config) WithStrictRouterInfoVerification(strict bool) *Config {
 	nc.StrictRouterInfoVerification = strict
 	return nc
 }
 
-// WithReplayDetector sets the replay detector for responder handshakes.
+// WithReplayDetector sets the replay detector used by responder
+// handshakes. A replay detector remembers the ephemeral keys it has seen
+// and rejects handshakes that reuse one, which stops an attacker from
+// replaying a captured handshake.
+//
 // If nil, replay detection is disabled (not recommended for production).
-// The detector is shared across all responder connections using this config
-// (typically instantiated once per listener). Initiator connections ignore
-// this field.
+// The detector is shared across all responder connections that use this
+// config, so create one per listener. Initiator connections ignore this
+// field.
 func (nc *Config) WithReplayDetector(detector ReplayDetector) *Config {
 	nc.ReplayDetector = detector
 	return nc
 }
 
-// WithReuseAddress enables SO_REUSEADDR for ListenNTCP2 listener binding.
-// When enabled, the listener can quickly rebind to the same port after shutdown,
-// reducing restart-race delay. Default is false (conservative).
-// Use with caution: stale packets from previous socket instances may arrive.
-// AUDIT 7.3: Opt-in SO_REUSEADDR support for fast restart scenarios.
+// WithReuseAddress enables the SO_REUSEADDR socket option for
+// ListenNTCP2 listener binding.
+//
+// When enabled, the listener can quickly rebind to the same port after
+// shutdown, which shortens the delay before a restarted router can accept
+// connections again. Default is false (conservative).
+//
+// Use with caution: stale packets from a previous socket instance may
+// still arrive.
 func (nc *Config) WithReuseAddress(allow bool) *Config {
 	nc.AllowReuseAddress = allow
 	return nc
 }
 
-// WithFrameSettings configures NTCP2 frame handling parameters.
-// maxSize sets the maximum frame size (default: 16384 bytes).
-// paddingEnabled enables random padding (default: true).
-// minPadding and maxPadding set the padding size range (default: 0-64 bytes).
+// WithFrameSettings configures NTCP2 data frame handling in one call.
+//
+//   - maxSize: the largest frame this side will send (default: 16384
+//     bytes).
+//   - paddingEnabled: whether to add random padding to frames (default:
+//     true).
+//   - minPadding, maxPadding: the padding size range in bytes (default:
+//     0-64).
 func (nc *Config) WithFrameSettings(maxSize int, paddingEnabled bool, minPadding, maxPadding int) *Config {
 	if maxSize > 0 {
 		nc.MaxFrameSize = maxSize
@@ -329,7 +385,9 @@ func (nc *Config) WithFrameSettings(maxSize int, paddingEnabled bool, minPadding
 	return nc
 }
 
-// Validate checks if the configuration is valid for NTCP2.
+// Validate checks that the configuration is valid for NTCP2.
+// Call it before creating connections or listeners to catch mistakes
+// early.
 func (nc *Config) Validate() error {
 	return validation.RunValidators(
 		nc.validateCoreConfiguration,
@@ -437,8 +495,7 @@ func (nc *Config) validateFrameConfiguration() error {
 	// Delegate to the stricter ValidatePaddingParams (same gate used by
 	// createPaddingModifierIfEnabled/ToConnConfig) so an invalid padding
 	// config is rejected here rather than passing Validate() and only
-	// failing later at ToConnConfig() with a different error code
-	// (AUDIT.md Level 9 ntcp2 Finding 2).
+	// failing later at ToConnConfig() with a different error code.
 	if err := handshake.ValidatePaddingParams("ntcp2", nc.MinPaddingSize, nc.MaxPaddingSize, 0.0); err != nil {
 		return err
 	}
@@ -461,10 +518,19 @@ func (nc *Config) validateModifiers() error {
 	return nil
 }
 
-// ToConnConfig converts NTCP2Config to a standard ConnConfig for use with NoiseConn.
-// This includes setting up NTCP2-specific modifiers based on the configuration.
-// A PostHandshakeHook is automatically registered when SipHash length obfuscation
-// is enabled — the hook captures the handshake hash for future SipHash key derivation.
+// ToConnConfig converts this NTCP2 Config into the standard Noise
+// ConnConfig used by the underlying Noise connection.
+//
+// It first calls Validate, then sets up the NTCP2-specific modifiers
+// (AES obfuscation, padding, SipHash length obfuscation) based on the
+// configuration.
+//
+// When SipHash length obfuscation is enabled, a post-handshake hook is
+// registered automatically. After the handshake finishes, the hook
+// derives the per-direction SipHash keys from the session keys and
+// stores them for the data phase.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Config) ToConnConfig() (*noise.ConnConfig, error) {
 	flog("NTCP2Config.ToConnConfig").Debug("Converting NTCP2Config to ConnConfig")
 	if err := nc.Validate(); err != nil {
@@ -656,14 +722,17 @@ func (nc *Config) createAESModifierIfEnabled() (handshake.HandshakeModifier, err
 	return aesModifier, nil
 }
 
-// createSipHashModifierIfEnabled creates a new SipHash length modifier if enabled.
-// A fresh instance is created on every call to prevent shared state between connections.
+// createSipHashModifierIfEnabled creates a new SipHash length modifier if
+// enabled.
+// A fresh instance is created on every call to prevent shared state
+// between connections.
 //
-// UNFINALIZED_SPEC(ntcp2): After the Noise XK handshake completes, the router
-// transport layer must call DeriveSipHashKeys() to obtain per-direction keys
-// and then create a directional modifier via NewSipHashLengthModifierDirectional().
-// The placeholder modifier returned here uses shared zero keys and is only
-// suitable as a handshake-phase pass-through (SipHash is a no-op before PhaseFinal).
+// After the Noise XK handshake completes, the router transport layer must
+// call DeriveSipHashKeys() to obtain per-direction keys and then create a
+// directional modifier via NewSipHashLengthModifierDirectional(). The
+// placeholder modifier returned here uses shared zero keys and is only
+// suitable as a handshake-phase pass-through (SipHash is a no-op before
+// PhaseFinal).
 func (nc *Config) createSipHashModifierIfEnabled() *SipHashLengthModifier {
 	if !nc.EnableSipHashLength {
 		return nil
@@ -699,35 +768,40 @@ func (nc *Config) createPaddingModifierIfEnabled() (handshake.HandshakeModifier,
 	return mod, nil
 }
 
-// SipHashModifier returns the SipHash length modifier created during ToConnConfig().
+// SipHashModifier returns the SipHash length modifier created during
+// ToConnConfig().
 //
-// PRECONDITION: This method returns nil until the PostHandshakeHook has executed
-// during Handshake(). Callers MUST NOT call this method before the handshake completes,
-// as the modifier's keys are derived from the handshake state. Calling PropagateSipHash()
-// before the handshake will return an error rather than silently no-op.
+// It returns nil until the post-handshake hook has run during
+// Handshake(), because the modifier's keys are derived from the
+// handshake state. Do not call this method before the handshake
+// completes; calling PropagateSipHash() early returns an error instead
+// of silently doing nothing.
 //
-// Returns nil if SipHash length obfuscation is disabled or ToConnConfig() hasn't been called.
-// Each call to ToConnConfig() creates a fresh modifier instance, so configs can be safely
-// reused for multiple connections without sharing IV state.
+// It also returns nil if SipHash length obfuscation is disabled or
+// ToConnConfig() has not been called. Each call to ToConnConfig()
+// creates a fresh modifier instance, so a config can be reused for
+// multiple connections without sharing IV state.
 func (nc *Config) SipHashModifier() *SipHashLengthModifier {
 	return nc.sipHashModifier.Load()
 }
 
-// Clone creates a deep copy of this NTCP2Config that is safe to use
-// independently (e.g., for per-connection configs on the listener path).
-// The atomic.Pointer[SipHashLengthModifier] field is NOT copied — the
-// returned config has a fresh zero-value atomic, which is correct
-// because the PostHandshakeHook will populate it after the handshake.
+// Clone creates a deep copy of this Config that is safe to use
+// independently, for example for per-connection configs on the listener
+// path.
 //
-// IMPORTANT: The Modifiers slice is shallow-copied — individual modifier
-// interface values (pointers to AESObfuscationModifier, SipHashLengthModifier,
-// etc.) are shared between the original and clone. Since modifiers carry
-// mutable state (AES cipher state, SipHash IVs), the clone MUST NOT be
-// used concurrently with the original for handshakes. Callers MUST call
-// ToConnConfig() on the clone before use, which creates fresh modifier
-// instances with independent state. The listener path does this correctly.
-// Direct use of Clone() without ToConnConfig() will cause data races
-// and corrupt handshake state if both configs are active concurrently.
+// The SipHash modifier field is not copied: the clone starts with a
+// fresh zero value, which is correct because the post-handshake hook
+// fills it in after the handshake.
+//
+// Important: the Modifiers slice is shallow-copied, so the individual
+// modifiers (AES obfuscation, SipHash, etc.) are shared between the
+// original and the clone. Modifiers carry mutable state (AES cipher
+// state, SipHash IVs), so the clone must not be used concurrently with
+// the original for handshakes. Call ToConnConfig() on the clone before
+// use; it creates fresh modifier instances with independent state. The
+// listener path does this correctly. Using Clone() without
+// ToConnConfig() while both configs are active concurrently causes data
+// races and corrupts handshake state.
 func (nc *Config) Clone() *Config {
 	clone := &Config{
 		Pattern:   nc.Pattern,

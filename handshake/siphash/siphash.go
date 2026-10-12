@@ -1,10 +1,23 @@
 // Package siphash implements the SipHash-2-4 length obfuscation modifier
-// shared by NTCP2 and SSU2. Both transports use the identical algorithm with
-// per-direction keys derived from their respective KDFs.
+// shared by the NTCP2 and SSU2 transports.
 //
-// The canonical implementation lives here; both ntcp2 and ssu2 re-export the
-// type and constructors as package-level aliases so callers only ever import
-// one concrete type.
+// # What it does
+//
+// In the data phase, both NTCP2 and SSU2 hide the true length of each
+// message by XORing its 2-byte length field with a mask. The masks come from
+// a chain of SipHash-2-4 values: each mask is derived from the previous one,
+// so an observer cannot predict the next mask without the key. Both
+// transports use the identical algorithm, with per-direction keys derived
+// from their respective key derivation functions (KDFs).
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+//
+// # Where it lives
+//
+// The canonical implementation is in this package. Both the ntcp2 and ssu2
+// packages re-export the type and constructors as package-level aliases, so
+// callers only ever import one concrete type.
 package siphash
 
 import (
@@ -17,10 +30,11 @@ import (
 	"github.com/samber/oops"
 )
 
-// LengthFieldSize is the 2-byte length field used in both NTCP2 and SSU2.
+// LengthFieldSize is the size in bytes of the length field that both NTCP2
+// and SSU2 obfuscate (2 bytes).
 const LengthFieldSize = 2
 
-// IVSize is the byte size of a SipHash IV (uint64 = 8 bytes).
+// IVSize is the size in bytes of a SipHash IV (uint64 = 8 bytes).
 const IVSize = 8
 
 // Compile-time assertions that *LengthModifier implements the interfaces it
@@ -30,30 +44,30 @@ var (
 	_ handshake.ModifierCloner    = (*LengthModifier)(nil)
 )
 
-// NextMask computes the next SipHash-2-4 mask value. It updates the IV
-// in place and returns the low 16 bits of the hash as the mask.
+// NextMask computes the next SipHash-2-4 mask value. It updates the IV in
+// place and returns the low 16 bits of the hash as the mask.
 //
-// This implements the shared core of the SipHash length obfuscation chain used
-// by both NTCP2 and SSU2:
+// This is the shared core of the SipHash length obfuscation chain used by
+// both NTCP2 and SSU2:
 //
 //	IV[n] = SipHash-2-4(k1, k2, IV[n-1])
 //	mask  = uint16(IV[n] & 0xFFFF)
 //
-// Endianness (intentional, spec-mandated, not a bug): the wire length field
-// masked by applyMask is big-endian, while the IV fed into the next
+// Endianness (intentional and spec-mandated, not a bug): the wire length
+// field that gets masked is big-endian, while the IV fed into the next
 // SipHash-2-4 call is serialized little-endian. This matches the NTCP2 spec
-// verbatim (https://i2p.net/en/docs/specs/ntcp2, "Data Phase" > "SipHash
-// obfuscated length"):
+// verbatim ("Data Phase" > "SipHash obfuscated length"):
 //
 //	"length is big endian."
 //	"If you use a SipHash library function that returns an unsigned long
 //	 integer, use the least significant two bytes as the Mask. Convert the
 //	 long integer to the next IV as little endian."
 //
-// SSU2 (see i2p.net/en/docs/specs/ssu2) reuses the identical NTCP2 SipHash
-// length-obfuscation construction, so the same endianness rules apply there
-// too. See TestSipHash_OfficialReferenceVectors and TestNextMask_FixedVector
-// in siphash_test.go for vector-pinned regression coverage of this behavior.
+// SSU2 reuses the identical NTCP2 SipHash length-obfuscation construction, so
+// the same endianness rules apply there too.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	var input [8]byte
 	binary.LittleEndian.PutUint64(input[:], *iv)
@@ -62,9 +76,9 @@ func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	return uint16(hash & 0xFFFF)
 }
 
-// LengthModifier implements SipHash-2-4 length obfuscation for
-// data-phase packet/frame lengths. Both NTCP2 and SSU2 use this identical
-// algorithm with per-direction keys derived from their respective KDFs.
+// LengthModifier implements SipHash-2-4 length obfuscation for data-phase
+// packet and frame lengths. Both NTCP2 and SSU2 use this identical algorithm
+// with per-direction keys derived from their respective KDFs.
 //
 // After Close() (or ZeroKeys()) is called, ModifyOutbound and ModifyInbound
 // return an error instead of silently computing a deterministic all-zero-key
@@ -82,8 +96,8 @@ type LengthModifier struct {
 	closed       bool
 }
 
-// NewLengthModifier creates a new SipHash length modifier with shared
-// keys for both directions.
+// NewLengthModifier creates a new SipHash length modifier that uses the same
+// keys and starting IV for both directions.
 func NewLengthModifier(name string, sipKeys [2]uint64, initialIV uint64) *LengthModifier {
 	flog("NewLengthModifier", logger.Fields{"name": name}).Debug("Creating SipHash length modifier")
 	return &LengthModifier{
@@ -96,7 +110,8 @@ func NewLengthModifier(name string, sipKeys [2]uint64, initialIV uint64) *Length
 }
 
 // NewLengthModifierDirectional creates a SipHash length modifier with
-// per-direction keys as required by the NTCP2 and SSU2 specifications.
+// separate keys and starting IVs for each direction, as required by the NTCP2
+// and SSU2 specifications.
 func NewLengthModifierDirectional(name string, outKeys, inKeys [2]uint64, outIV, inIV uint64) *LengthModifier {
 	flog("NewLengthModifierDirectional", logger.Fields{"name": name}).Debug("Creating directional SipHash length modifier")
 	return &LengthModifier{
@@ -108,13 +123,18 @@ func NewLengthModifierDirectional(name string, outKeys, inKeys [2]uint64, outIV,
 	}
 }
 
-// ModifyOutbound obfuscates a 2-byte length field using SipHash.
+// ModifyOutbound obfuscates a 2-byte length field by XORing it with the next
+// outbound SipHash mask. It only acts during the data phase; for earlier
+// phases, or when data is not exactly 2 bytes, it returns data unchanged.
 func (slm *LengthModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	flog("LengthModifier.ModifyOutbound", logger.Fields{"name": slm.name, "phase": phase, "data_len": len(data)}).Debug("SipHash ModifyOutbound")
 	return slm.applyMask(phase, data, slm.getNextOutboundMask)
 }
 
-// ModifyInbound deobfuscates a 2-byte length field using SipHash.
+// ModifyInbound deobfuscates a 2-byte length field by XORing it with the next
+// inbound SipHash mask, recovering the original length. It only acts during
+// the data phase; for earlier phases, or when data is not exactly 2 bytes, it
+// returns data unchanged.
 func (slm *LengthModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	flog("LengthModifier.ModifyInbound", logger.Fields{"name": slm.name, "phase": phase, "data_len": len(data)}).Debug("SipHash ModifyInbound")
 	return slm.applyMask(phase, data, slm.getNextInboundMask)
@@ -166,9 +186,9 @@ func (slm *LengthModifier) getNextInboundMask() uint16 {
 // ntcp2/conn_framing.go, bypassing the HandshakeModifier interface, and
 // changing it to return an error would be a breaking API change for a
 // narrow-precondition issue (a caller bug continuing to use the modifier
-// after the connection that owns it has already been torn down). Callers
-// are responsible for not invoking this after Close(); use Closed() to
-// check state defensively if needed.
+// after the connection that owns it has already been torn down). Callers are
+// responsible for not invoking this after Close(); use Closed() to check
+// state defensively if needed.
 func (slm *LengthModifier) NextInboundMask() uint16 {
 	slm.mu.Lock()
 	mask := slm.getNextInboundMask()
@@ -177,7 +197,8 @@ func (slm *LengthModifier) NextInboundMask() uint16 {
 }
 
 // NextOutboundMask returns the next SipHash mask for the outbound direction.
-// See NextInboundMask's doc comment for why this does not error after Close().
+// See NextInboundMask's doc comment for why this does not error after
+// Close().
 func (slm *LengthModifier) NextOutboundMask() uint16 {
 	slm.mu.Lock()
 	mask := slm.getNextOutboundMask()

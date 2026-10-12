@@ -11,17 +11,24 @@ import (
 // Compile-time interface check: ModifierChain must implement HandshakeModifier.
 var _ HandshakeModifier = (*ModifierChain)(nil)
 
-// ModifierChain represents a chain of HandshakeModifier instances that are
-// applied in sequence. The chain ensures that modifiers are applied in the
-// correct order and provides error handling for the entire chain.
-// Moved from: handshake/chain.go
+// ModifierChain applies several [HandshakeModifier]s in sequence.
 //
-// Thread-safety: ModifierChain is safe for concurrent use after construction.
-// The internal modifiers slice is immutable (copied at construction time and never
-// written afterwards). PaddingModifier uses crypto/rand (goroutine-safe);
-// XORModifier is read-only after construction. Callers do not need additional
-// synchronisation for concurrent ModifyOutbound/ModifyInbound calls, but must not
-// call Close() concurrently with other methods (Close() is not re-entrant).
+// On the way out, modifiers run in the order they were added (first to last).
+// On the way in, they run in reverse order (last to first). This keeps the
+// transformations balanced: if modifier A wraps modifier B's output, inbound
+// unwraps B first, then A.
+//
+// Example:
+//
+//	chain := NewModifierChain("chain", xor, padding)
+//	// Outbound: data -> xor -> padding
+//	// Inbound:  data -> padding -> xor
+//
+// Thread-safety: a chain is safe for concurrent use after it is built. The
+// list of modifiers is copied at construction time and never changed, so
+// concurrent ModifyOutbound/ModifyInbound calls need no extra synchronisation.
+// Do not call Close() at the same time as other methods (Close is not
+// re-entrant).
 type ModifierChain struct {
 	modifiers []HandshakeModifier
 	name      string
@@ -71,8 +78,9 @@ func (mc *ModifierChain) wrapModifierError(direction string, modifier HandshakeM
 		Wrap(fmt.Errorf("%s: %w", msg, err))
 }
 
-// ModifyOutbound applies all modifiers in the chain to outbound data.
-// Modifiers are applied in the order they were added to the chain.
+// ModifyOutbound runs every modifier in the chain over outbound data, in the
+// order the modifiers were added. It returns the transformed data, or an error
+// naming the modifier that failed.
 func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	mc.logModifyStart("ModifyOutbound", phase, len(data))
 	result := data
@@ -88,9 +96,9 @@ func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]by
 	return result, nil
 }
 
-// ModifyInbound applies all modifiers in the chain to inbound data.
-// Modifiers are applied in reverse order to undo the transformations
-// applied during outbound processing.
+// ModifyInbound runs every modifier in the chain over inbound data, in reverse
+// order, to undo the transformations applied during outbound processing. It
+// returns the recovered data, or an error naming the modifier that failed.
 func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	mc.logModifyStart("ModifyInbound", phase, len(data))
 	result := data

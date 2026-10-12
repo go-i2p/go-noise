@@ -10,7 +10,10 @@ import (
 )
 
 // PatternHandlerFunc is the signature for a Noise handshake pattern handler.
-// Consumers can implement custom patterns and register them via RegisterPattern.
+// Consumers can implement custom patterns and register them via
+// RegisterPattern.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
 // The handler receives a PatternContext interface that provides access to
 // configuration, logging, and handshake message operations without exposing
@@ -184,7 +187,7 @@ func (nc *Conn) performResponderHandshake(ctx context.Context) error {
 // RegisterPattern registers custom initiator and responder handlers for the
 // given Noise pattern name. Both handlers must be non-nil. RegisterPattern is
 // safe to call concurrently with connection handshakes and is intended to be
-// called once at program start (e.g., from an init() function).
+// called once at program start (for example, from an init() function).
 func RegisterPattern(name string, initiator, responder PatternHandlerFunc) {
 	if name == "" || initiator == nil || responder == nil {
 		return
@@ -214,9 +217,12 @@ func parseHandshakePattern(patternName string) (noise.HandshakePattern, error) {
 
 // ValidateHandshakePattern reports whether pattern is a known Noise handshake
 // pattern name. It accepts both short names ("XX") and full protocol names
-// ("Noise_XX_25519_AESGCM_SHA256"). Returns a non-nil error if the pattern
-// is unknown. This exported form allows sibling packages (e.g., noise/listener)
-// to validate patterns without importing the unexported parseHandshakePattern.
+// ("Noise_XX_25519_ChaChaPoly_SHA256"). It returns a non-nil error if the
+// pattern is unknown. This exported form lets sibling packages (for example,
+// noise/listener) validate patterns without importing the unexported
+// parseHandshakePattern.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 func ValidateHandshakePattern(pattern string) error {
 	_, err := parseHandshakePattern(pattern)
 	return err

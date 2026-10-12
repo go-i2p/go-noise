@@ -62,7 +62,9 @@ func (sm *SessionManager) GetPublicKey() [32]byte {
 	return sm.ourPublicKey
 }
 
-// Close stops the cleanup loop, removes all sessions, and zeroes the private key.
+// Close stops the cleanup loop, removes all sessions, and zeroes the
+// private key so it cannot be recovered from memory.
+//
 // It is safe to call Close multiple times.
 func (sm *SessionManager) Close() error {
 	sm.cancel()
@@ -97,19 +99,19 @@ func (sm *SessionManager) Close() error {
 	return nil
 }
 
-// StartCleanupLoop starts periodic cleanup of expired sessions in a background
-// goroutine. The loop stops when EITHER of the following occurs:
+// StartCleanupLoop starts periodic cleanup of expired sessions in a
+// background goroutine. The loop runs every 2 minutes and stops when
+// either of the following occurs:
 //
 //  1. The caller-supplied ctx is cancelled.
-//  2. Close() is called on this SessionManager (which cancels the internal
-//     context regardless of the caller's ctx).
+//  2. [SessionManager.Close] is called on this SessionManager (which
+//     cancels the internal context regardless of the caller's ctx).
 //
-// Dual-stop behaviour: callers that hold only the GarlicSessionManager interface
-// value should be aware that Close() can terminate the loop independently of
-// the ctx they supplied here. This is intentional — it prevents orphaned cleanup
-// goroutines when the SessionManager is shut down. If the caller wants to stop
-// the loop without destroying the SessionManager, cancel the ctx passed here;
-// to stop both the loop and the manager, call Close().
+// Note: Close() can terminate the loop independently of the ctx supplied
+// here. This is intentional — it prevents orphaned cleanup goroutines when
+// the SessionManager is shut down. To stop only the loop without
+// destroying the SessionManager, cancel the ctx passed here; to stop both
+// the loop and the manager, call Close().
 func (sm *SessionManager) StartCleanupLoop(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(2 * time.Minute)

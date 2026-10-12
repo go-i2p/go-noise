@@ -22,13 +22,17 @@ const (
 	sessionConfirmedMaxFragments = 15
 )
 
-// CreateSessionConfirmed creates a SessionConfirmed message (XK pattern message 3).
-// This is the third handshake message sent by the initiator.
+// CreateSessionConfirmed creates a SessionConfirmed message (XK pattern
+// message 3). This is the third handshake message, sent by the initiator.
 //
-// SessionConfirmed uses a short header (16 bytes) and contains no ephemeral key.
-// It contains the initiator's RouterInfo block so the responder can learn the
-// initiator's identity. routerInfo may be nil for testing.
-// This message completes the XK handshake (→ s, se) and produces transport cipher states.
+// SessionConfirmed uses a short header (16 bytes) and contains no ephemeral
+// key. It carries the initiator's RouterInfo block so the responder can learn
+// the initiator's identity. routerInfo may be nil for testing.
+//
+// This message completes the XK handshake (→ s, se) and produces the
+// transport cipher states.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber uint32, routerInfo []byte) (*SSU2Packet, error) {
 	flog("CreateSessionConfirmed", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed")
 	if !h.initiator {
@@ -112,7 +116,10 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 // ProcessSessionConfirmed processes a received SessionConfirmed message.
 // This is called by the responder to complete the XK handshake (→ s, se).
 //
-// After this, both sides have completed the handshake and can send Data messages.
+// After this, both sides have completed the handshake and can send Data
+// messages.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) ProcessSessionConfirmed(packet *SSU2Packet) error {
 	flog("ProcessSessionConfirmed").Debug("Processing received SessionConfirmed")
 	if h.initiator {
@@ -173,15 +180,18 @@ func (h *HandshakeHandler) finalizeSessionConfirmed(noiseMessage []byte) error {
 	return nil
 }
 
-// CreateSessionConfirmedFragments creates one or more SessionConfirmed packets.
-// When the payload fits in a single packet, it returns a slice of length 1
-// (identical to CreateSessionConfirmed). When the Noise ciphertext exceeds
-// the per-packet limit, it splits the ciphertext across multiple fragments
-// using the frag field at header byte 13 (bits 7-4 = fragment number,
-// bits 3-0 = total fragments) per SSU2 spec §Session Confirmed.
+// CreateSessionConfirmedFragments creates one or more SessionConfirmed
+// packets. When the payload fits in a single packet, it returns a slice of
+// length 1 (identical to CreateSessionConfirmed). When the Noise ciphertext
+// exceeds the per-packet limit, it splits the ciphertext across multiple
+// fragments using the frag field at header byte 13 (bits 7-4 = fragment
+// number, bits 3-0 = total fragments) per SSU2 spec §Session Confirmed.
 //
-// Only the first fragment's header is MixHash'd into the handshake. Subsequent
-// fragment headers carry the same connection ID with incrementing packet numbers.
+// Only the first fragment's header is MixHash'd into the handshake.
+// Subsequent fragment headers carry the same connection ID with incrementing
+// packet numbers.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packetNumber uint32, routerInfo []byte) ([]*SSU2Packet, error) {
 	flog("CreateSessionConfirmedFragments", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed with fragmentation")
 	if !h.initiator {
@@ -293,7 +303,10 @@ func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32,
 // SessionConfirmed message. The packets slice must contain all fragments
 // ordered by fragment number (0 .. totalFrags-1).
 //
-// For a single-fragment message, this behaves identically to ProcessSessionConfirmed.
+// For a single-fragment message, this behaves identically to
+// ProcessSessionConfirmed.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packet) error {
 	flog("ProcessSessionConfirmedFragments", logger.Fields{"fragmentCount": len(packets)}).Debug("Processing SessionConfirmed fragments")
 	if h.initiator {
@@ -321,12 +334,8 @@ func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packe
 // validateFragmentOrdering checks that the fragment ordering and completeness
 // is correct for a set of SessionConfirmed packets.
 //
-// Defense-in-depth: every packets[i].Header is bounds-checked (>= 14 bytes)
-// before indexing Header[13], so this function is safe to call in isolation
-// even if a future caller does not replicate the equivalent guard already
-// present in its current sole production caller
-// (SSU2Conn.collectConfirmedFragments/validateConfirmedFragment in
-// ssu2/session). See AUDIT.md Level 6/10.
+// Every packets[i].Header is bounds-checked (>= 14 bytes) before indexing
+// Header[13], so this function is safe to call in isolation.
 func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error {
 	flog("validateFragmentOrdering", logger.Fields{"packetCount": len(packets)}).Debug("Checking fragment ordering")
 	if len(packets) == 0 {

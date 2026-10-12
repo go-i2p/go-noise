@@ -10,7 +10,8 @@ import (
 	"github.com/samber/oops"
 )
 
-// GetConnectionMetrics returns the current connection statistics.
+// GetConnectionMetrics returns the current connection statistics: bytes read,
+// bytes written, and the handshake duration.
 func (nc *Conn) GetConnectionMetrics() (bytesRead, bytesWritten int64, handshakeDuration time.Duration) {
 	return nc.metrics.GetStats()
 }
@@ -25,8 +26,8 @@ func (nc *Conn) metricsForTest() *mod.ConnectionMetrics {
 // GetConnectionState returns the current connection state.
 //
 // Thread Safety: This method is safe for concurrent use. It uses a read lock
-// on the state mutex, allowing multiple goroutines to read the state simultaneously
-// while preventing inconsistent reads during state transitions.
+// on the state mutex, so multiple goroutines can read the state at the same
+// time without seeing an inconsistent value during a state transition.
 func (nc *Conn) GetConnectionState() ConnState {
 	return nc.getState()
 }
@@ -60,9 +61,11 @@ func getHandshakeStateAttr[T any](
 	return value
 }
 
-// PeerStatic returns the static public key provided by the remote peer
-// during the Noise handshake. Returns nil if the handshake has not completed
-// or if the handshake pattern does not transmit a static key.
+// PeerStatic returns the static public key provided by the remote peer during
+// the Noise handshake. It returns nil if the handshake has not completed or
+// if the handshake pattern does not transmit a static key.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 func (nc *Conn) PeerStatic() []byte {
 	return getHandshakeStateAttr(
 		nc,
@@ -75,10 +78,16 @@ func (nc *Conn) PeerStatic() []byte {
 	)
 }
 
-// ChannelBinding returns the handshake hash (h) from the completed Noise session.
-// This is the hash of all handshake transcript data and can be used for:
-//   - Channel binding (tying an application-layer credential to the Noise session)
-//   - Deriving additional key material via HKDF (e.g., NTCP2's SipHash keys)
+// ChannelBinding returns the handshake hash (h) from the completed Noise
+// session. This is the hash of all handshake transcript data and can be used
+// for:
+//   - Channel binding (tying an application-layer credential to the Noise
+//     session)
+//   - Deriving additional key material via HKDF (for example, NTCP2's
+//     SipHash keys)
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 //
 // Returns nil if the handshake has not been initiated.
 func (nc *Conn) ChannelBinding() []byte {
@@ -93,9 +102,11 @@ func (nc *Conn) ChannelBinding() []byte {
 	)
 }
 
-// SendCipherState returns the send-direction CipherState for direct access
-// by protocol layers (e.g., NTCP2 SipHash key derivation).
-// Returns nil before the handshake produces cipher states.
+// SendCipherState returns the send-direction CipherState for direct access by
+// protocol layers (for example, NTCP2 SipHash key derivation). It returns nil
+// before the handshake produces cipher states.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) SendCipherState() *noise.CipherState {
 	nc.stateMutex.RLock()
 	defer nc.stateMutex.RUnlock()
@@ -103,8 +114,8 @@ func (nc *Conn) SendCipherState() *noise.CipherState {
 }
 
 // RecvCipherState returns the receive-direction CipherState for direct access
-// by protocol layers.
-// Returns nil before the handshake produces cipher states.
+// by protocol layers. It returns nil before the handshake produces cipher
+// states.
 func (nc *Conn) RecvCipherState() *noise.CipherState {
 	nc.stateMutex.RLock()
 	defer nc.stateMutex.RUnlock()
@@ -112,11 +123,11 @@ func (nc *Conn) RecvCipherState() *noise.CipherState {
 }
 
 // ZeroKeys securely zeroes the send and receive cipher state key material.
-// This delegates to the upstream CipherState.ZeroKey() which overwrites the
+// It delegates to the upstream CipherState.ZeroKey(), which overwrites the
 // key bytes with zeros and marks the cipher states as invalid.
 //
-// After calling ZeroKeys, the connection can no longer encrypt or decrypt data.
-// Any subsequent Read/Write calls will fail.
+// After calling ZeroKeys, the connection can no longer encrypt or decrypt
+// data. Any subsequent Read or Write calls will fail.
 func (nc *Conn) ZeroKeys() {
 	log.WithFields(i2plogger.Fields{"pkg": "noise", "func": "NoiseConn.ZeroKeys"}).Debug("zeroing cipher state key material")
 	if nc.sendCipherState != nil {
@@ -128,9 +139,12 @@ func (nc *Conn) ZeroKeys() {
 }
 
 // AdditionalSymmetricKeys returns the Additional Symmetric Key (ASK) values
-// derived during the handshake Split(), per Noise spec Section 10.3.
-// Returns nil if no labels were configured or the handshake hasn't completed.
-// The returned keys correspond 1:1 to the configured AdditionalSymmetricKeyLabels.
+// derived during the handshake Split(), per Noise spec Section 10.3. It
+// returns nil if no labels were configured or the handshake has not
+// completed. The returned keys correspond 1:1 to the configured
+// AdditionalSymmetricKeyLabels.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 func (nc *Conn) AdditionalSymmetricKeys() [][]byte {
 	return getHandshakeStateAttr(
 		nc,
@@ -146,12 +160,16 @@ func (nc *Conn) AdditionalSymmetricKeys() [][]byte {
 	)
 }
 
-// Rekey triggers a rekey operation on the underlying cipher state.
-// This advances the encryption key material per the Noise Protocol specification
-// (encrypts 32 zero bytes with nonce 2^64-1, takes first 32 bytes as new key).
+// Rekey triggers a rekey operation on the underlying cipher state. It
+// advances the encryption key material per the Noise Protocol specification
+// (encrypts 32 zero bytes with nonce 2^64-1, then takes the first 32 bytes
+// as the new key).
 //
-// Rekey requires the handshake to be complete (connection in Established state).
-// It is safe for concurrent use; the underlying CipherState.Rekey() is mutex-protected.
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
+//
+// Rekey requires the handshake to be complete (connection in Established
+// state). It is safe for concurrent use; the underlying CipherState.Rekey()
+// is mutex-protected.
 func (nc *Conn) Rekey() error {
 	if nc.getState() != mod.StateEstablished {
 		return oops.
@@ -178,9 +196,9 @@ func (nc *Conn) Rekey() error {
 	return nil
 }
 
-// SetShutdownManager sets the shutdown manager for this connection.
-// If a shutdown manager is set, the connection will be automatically
-// registered for graceful shutdown coordination.
+// SetShutdownManager sets the shutdown manager for this connection. If a
+// shutdown manager is set, the connection is automatically registered for
+// graceful shutdown coordination.
 func (nc *Conn) SetShutdownManager(sm shutdown.Shutdowner) {
 	nc.shutdownManager = sm
 	if sm != nil {

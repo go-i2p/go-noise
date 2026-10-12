@@ -11,9 +11,14 @@ import (
 	"github.com/samber/oops"
 )
 
-// Transport owns a Pool and ShutdownManager and provides Dial/Listen methods.
-// Construct one with NewTransport; use the package-level Default for the
-// conventional singleton.
+// Transport is the main entry point of this package. It owns a connection
+// pool (which reuses idle TCP connections) and a shutdown manager (which
+// closes everything in order on the way out), and it provides Dial and
+// Listen methods for opening and accepting Noise connections.
+//
+// Build one with NewTransport. The package-level Default variable is a
+// shared Transport for convenience, but it is deprecated; build your own
+// Transport so each part of your program controls its own connections.
 type Transport struct {
 	mu   sync.RWMutex
 	pool pool.Pool
@@ -21,13 +26,15 @@ type Transport struct {
 }
 
 // NewTransport creates a Transport backed by the given pool and shutdown
-// manager. Either may be nil: a nil pool disables connection reuse; a nil
-// ShutdownManager disables shutdown registration.
+// manager. Either argument may be nil: a nil pool disables connection
+// reuse, and a nil shutdown manager disables shutdown registration.
 func NewTransport(p pool.Pool, sm Shutdowner) *Transport {
 	return &Transport{pool: p, sm: sm}
 }
 
-// GracefulShutdown shuts down this Transport's ShutdownManager and Pool.
+// GracefulShutdown shuts down this Transport's shutdown manager and closes
+// its connection pool. Call it (often via defer) when your application is
+// stopping so that connections are closed in an orderly way.
 func (t *Transport) GracefulShutdown() error {
 	t.mu.RLock()
 	sm := t.sm
@@ -75,8 +82,10 @@ func (t *Transport) dialFreshAndHandshake(ctx context.Context, network, addr str
 	return t.createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)
 }
 
-// Dial creates a Noise-wrapped connection to the given address using this Transport's
-// ShutdownManager and Pool. It is the Transport-scoped equivalent of DialNoise.
+// Dial opens a new TCP connection to addr and wraps it in a NoiseConn. It
+// does not perform the Noise handshake; call the returned connection's
+// Handshake method to finish setup. The connection is registered with this
+// Transport's shutdown manager.
 func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	sm := t.logAndGetShutdownManager(network, addr, "Transport.Dial")
 	return openAndWrapTransport(
@@ -89,8 +98,9 @@ func (t *Transport) Dial(network, addr string, config *ConnConfig) (*NoiseConn, 
 	)
 }
 
-// Listen creates a Noise-wrapped listener on the given address using this Transport's
-// ShutdownManager. It is the Transport-scoped equivalent of ListenNoise.
+// Listen creates a NoiseListener on addr. Every connection the listener
+// accepts is wrapped in a NoiseConn. The listener is registered with this
+// Transport's shutdown manager.
 func (t *Transport) Listen(network, addr string, config *ListenerConfig) (*NoiseListener, error) {
 	sm := t.logAndGetShutdownManager(network, addr, "Transport.Listen")
 	return openAndWrapTransport(
@@ -103,10 +113,11 @@ func (t *Transport) Listen(network, addr string, config *ListenerConfig) (*Noise
 	)
 }
 
-// DialWithPool creates a connection to the given address, checking this Transport's pool first.
-// If a suitable connection is available in the pool, it will be reused.
-// Otherwise, a new connection is created. The connection will be automatically
-// returned to the pool when the NoiseConn is closed.
+// DialWithPool creates a connection to addr, checking this Transport's
+// connection pool first. If the pool has an idle connection to addr, it is
+// reused; otherwise a new one is created. When the NoiseConn is closed, the
+// underlying TCP connection goes back to the pool for reuse instead of being
+// closed.
 func (t *Transport) DialWithPool(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	flog("Transport.DialWithPool", logger.Fields{"network": network, "address": addr}).Debug("starting")
 	if err := validateDialParams(network, addr, config); err != nil {
@@ -151,14 +162,16 @@ func (t *Transport) DialWithPool(network, addr string, config *ConnConfig) (*Noi
 	return noiseConn, nil
 }
 
-// DialWithHandshake creates a connection to the given address, wraps it with NoiseConn,
-// and performs the handshake with retry logic.
+// DialWithHandshake creates a connection to addr, wraps it in a NoiseConn,
+// and performs the Noise handshake, retrying if it fails. The returned
+// connection is ready to send and receive data.
 func (t *Transport) DialWithHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return t.DialWithHandshakeContext(context.Background(), network, addr, config)
 }
 
-// DialWithHandshakeContext creates a connection with context support for cancellation.
-// It combines dialing, NoiseConn creation, and handshake with retry in a single operation.
+// DialWithHandshakeContext is like DialWithHandshake but takes a context.
+// Cancelling the context (or letting its deadline pass) stops the dial and
+// handshake. This is the recommended way to open a connection.
 func (t *Transport) DialWithHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	if err := validateDialParams(network, addr, config); err != nil {
 		return nil, err
@@ -168,17 +181,19 @@ func (t *Transport) DialWithHandshakeContext(ctx context.Context, network, addr 
 	return t.dialFreshAndHandshake(ctx, network, addr, config, sm)
 }
 
-// DialWithPoolAndHandshake creates a connection with pool support and handshake retry.
-// It checks the pool first, creates new if needed, and performs handshake with retry logic.
+// DialWithPoolAndHandshake combines connection pooling with the Noise
+// handshake: it reuses a pooled TCP connection when one is available,
+// otherwise dials a new one, and then performs the handshake with retry.
 func (t *Transport) DialWithPoolAndHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return t.DialWithPoolAndHandshakeContext(context.Background(), network, addr, config)
 }
 
-// DialWithPoolAndHandshakeContext combines pool checking, dialing, and handshake with context.
-// It reuses a pooled raw TCP connection when available (the pool keys by
-// conn.RemoteAddr().String(), which equals addr), wraps it in a new NoiseConn,
-// and performs the Noise handshake. Falls back to a fresh dial if the pool is
-// empty or the pooled connection fails the handshake.
+// DialWithPoolAndHandshakeContext is like DialWithPoolAndHandshake but
+// takes a context for cancellation. It reuses a pooled TCP connection when
+// one is available (the pool keys connections by their remote address, which
+// equals addr), wraps it in a new NoiseConn, and performs the Noise
+// handshake. If the pool is empty, or a pooled connection fails the
+// handshake, it falls back to a fresh dial.
 func (t *Transport) DialWithPoolAndHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	if err := validateDialParams(network, addr, config); err != nil {
 		return nil, err
@@ -204,16 +219,16 @@ func (t *Transport) DialWithPoolAndHandshakeContext(ctx context.Context, network
 	return t.dialFreshAndHandshake(ctx, network, addr, config, sm)
 }
 
-// createAndHandshakeConnTransport creates a NoiseConn and performs handshake with retry logic.
-// On error, the function closes conn (directly or via noiseConn.Close) so the
-// caller must NOT close conn when an error is returned.
+// createAndHandshakeConnTransport creates a NoiseConn and performs the
+// handshake with retry logic. On error, the function closes conn (directly
+// or via noiseConn.Close), so the caller must NOT close conn when an error
+// is returned.
 //
-// If conn implements pool.PooledConnection (i.e. it was retrieved from a
+// If conn implements pool.PooledConnection (that is, it was retrieved from a
 // connection pool via DialWithPoolAndHandshake*), a failure here calls
-// Discard() instead of Close() so the broken/protocol-desynced connection is
-// permanently evicted from the pool rather than silently returned for reuse
-// and repeatedly re-failing future Dial calls to the same address. See
-// AUDIT.md Level 8 HIGH finding ("Pool-Retrieved Connection Not Discarded").
+// Discard() instead of Close(). This permanently removes the broken or
+// out-of-sync connection from the pool, so it is not handed out again and
+// does not keep failing future Dial calls to the same address.
 func (t *Transport) createAndHandshakeConnTransport(ctx context.Context, conn net.Conn, config *ConnConfig, network, addr string, sm Shutdowner) (*NoiseConn, error) {
 	noiseConn, err := NewNoiseConn(conn, config)
 	if err != nil {

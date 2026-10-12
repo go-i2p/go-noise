@@ -26,30 +26,38 @@ const (
 	buildRecordCiphertextSize = 544 // 528 bytes ciphertext + 16-byte Poly1305 tag
 )
 
-// BuildReplyCrypto handles symmetric encryption and decryption of tunnel build
-// reply records using ChaCha20-Poly1305 (I2P 0.9.44+).
+// BuildReplyCrypto handles symmetric encryption and decryption of tunnel
+// build reply records using ChaCha20-Poly1305 (I2P 0.9.44+).
 //
-// This type handles only the symmetric half of the tunnel-build crypto:
-// EncryptReplyRecord and DecryptReplyRecord.  Callers that need only reply
-// record operations should use this type directly via the BuildReplyEncryptor
-// interface, so the expected key material (32-byte session key + 16-byte IV)
-// is clear at every call site.
+// A tunnel build reply is the peer's answer to a build request: it either
+// accepts the tunnel (and returns the session keys) or rejects it.
+// "Symmetric" means the same 32-byte session key is used to both encrypt and
+// decrypt, and that key was established during the build request exchange.
 //
-// For the asymmetric ECIES-X25519 request half see BuildRequestCrypto.
-// For backward compatibility a combined type is available as BuildRecordCrypto.
+// This type handles only the reply half of the tunnel-build crypto:
+// EncryptReplyRecord and DecryptReplyRecord. Callers that need only reply
+// record operations should use this type directly via the
+// [BuildReplyEncryptor] interface, so the expected key material (32-byte
+// session key + 16-byte IV) is clear at every call site.
+//
+// For the asymmetric ECIES-X25519 request half see [BuildRequestCrypto].
+// For backward compatibility a combined type is available as
+// [BuildRecordCrypto].
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type BuildReplyCrypto struct{}
 
-// NewBuildReplyCrypto creates a new BuildReplyCrypto handler.
+// NewBuildReplyCrypto creates a new [BuildReplyCrypto] handler.
 func NewBuildReplyCrypto() *BuildReplyCrypto {
 	return &BuildReplyCrypto{}
 }
 
 // BuildRecordCrypto is a backward-compatible wrapper that implements both
-// BuildReplyEncryptor (ChaCha20-Poly1305) and BuildRecordEncryptor
+// [BuildReplyEncryptor] (ChaCha20-Poly1305) and [BuildRecordEncryptor]
 // (ECIES-X25519) by embedding the two focused types.
 //
-// New code should prefer BuildReplyCrypto or BuildRequestCrypto directly so
-// that required key material is explicit at every call site.
+// New code should prefer [BuildReplyCrypto] or [BuildRequestCrypto] directly
+// so that required key material is explicit at every call site.
 //
 // Deprecated: Use BuildReplyCrypto or BuildRequestCrypto instead.
 // This type will be removed in the next major version.
@@ -76,11 +84,14 @@ func NewBuildRecordCrypto() *BuildRecordCrypto {
 // EncryptReplyRecord encrypts a serialized 528-byte response record using the
 // reply key and IV.
 //
-// Uses ChaCha20-Poly1305 AEAD encryption (I2P 0.9.44+):
+// Uses ChaCha20-Poly1305 AEAD encryption (I2P 0.9.44+). AEAD means the
+// cipher both encrypts and authenticates: the output includes a 16-byte tag
+// that lets the receiver detect any tampering.
 //
-// Output: 528 bytes encrypted data + 16 bytes authentication tag = 544 bytes
+// Output: 528 bytes encrypted data + 16 bytes authentication tag = 544 bytes.
 //
-// The caller (go-i2p) serializes BuildResponseRecord to cleartext before calling.
+// The caller (go-i2p) serializes BuildResponseRecord to cleartext before
+// calling.
 func (c *BuildReplyCrypto) EncryptReplyRecord(
 	cleartext []byte,
 	replyKey [32]byte,
@@ -102,9 +113,9 @@ func (c *BuildReplyCrypto) EncryptReplyRecord(
 
 // DecryptReplyRecord decrypts an encrypted reply record.
 //
-// Uses ChaCha20-Poly1305 AEAD decryption (I2P 0.9.44+).
-// Expects 544 bytes input (528 ciphertext + 16 auth tag).
-// Returns 528 bytes plaintext; the caller (go-i2p) parses and verifies the hash.
+// Uses ChaCha20-Poly1305 AEAD decryption (I2P 0.9.44+). Expects 544 bytes
+// input (528 bytes ciphertext + 16 bytes authentication tag). Returns 528
+// bytes plaintext; the caller (go-i2p) parses and verifies the hash.
 func (c *BuildReplyCrypto) DecryptReplyRecord(
 	encryptedData []byte,
 	replyKey [32]byte,
@@ -127,13 +138,17 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 	return cleartext, nil
 }
 
-// SerializeResponseRecord converts response record fields to wire format (528 bytes).
+// SerializeResponseRecord converts response record fields to wire format
+// (528 bytes).
 //
 // Format:
 //
-// bytes 0-31:   SHA-256 hash of bytes 32-527
-// bytes 32-526: Random data (495 bytes)
-// byte 527:     Reply status code
+//	bytes 0-31:   SHA-256 hash of bytes 32-527
+//	bytes 32-526: Random data (495 bytes)
+//	byte 527:     Reply status code
+//
+// The hash lets the receiver verify that the record has not been tampered
+// with; see [VerifyResponseRecordHash].
 func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []byte {
 	flog("SerializeResponseRecord", logger.Fields{"reply_code": reply}).Debug("Serializing response record")
 	buf := make([]byte, 528)
@@ -153,8 +168,11 @@ func buildResponseRecordHashInput(randomData *[495]byte, reply byte) []byte {
 	return data
 }
 
-// VerifyResponseRecordHash verifies the SHA-256 hash in a serialized response record.
-// The hash covers bytes 32-527 (randomData + reply byte).
+// VerifyResponseRecordHash verifies the SHA-256 hash in a serialized
+// response record. The hash covers bytes 32-527 (randomData + reply byte).
+//
+// Returns an error if the hash does not match, which means the record was
+// tampered with or corrupted in transit.
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
 	flog("VerifyResponseRecordHash", logger.Fields{"reply_code": reply}).Debug("Verifying response record hash")
 	data := buildResponseRecordHashInput(&randomData, reply)

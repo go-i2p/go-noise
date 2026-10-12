@@ -103,11 +103,12 @@ func (nc *Conn) sendTCPRST(conn net.Conn) {
 		// Same best-effort cleanup semantics for non-TCP connections.
 		conn.Close() //nolint:errcheck
 	}
-	// BUG-RC-4: store flag AFTER the close operations so that a panic between
-	// the store and the close cannot permanently prevent a subsequent Close()
-	// call from closing the fd. Between this store and the Close() call above,
-	// a concurrent Close() goroutine may also call noiseConn.Close() — but
-	// noiseConn.Close() on an already-closed socket merely returns an error
-	// that is suppressed by the nc.broken.Load() check in Close().
+	// Store the flag AFTER the close operations so that a panic between
+	// the store and the close cannot permanently prevent a subsequent
+	// Close() call from closing the fd. Between this store and the Close()
+	// call above, a concurrent Close() goroutine may also call
+	// noiseConn.Close() — but noiseConn.Close() on an already-closed socket
+	// merely returns an error that is suppressed by the nc.broken.Load()
+	// check in Close().
 	nc.underlyingClosed.Store(true)
 }

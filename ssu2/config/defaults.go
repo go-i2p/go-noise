@@ -11,23 +11,25 @@ import (
 	"github.com/samber/oops"
 )
 
-// Default timeout values per SSU2 specification (ssu2.rst)
+// Default timeout values per the SSU2 specification.
 const (
-	// DefaultHandshakeTimeout is the spec-defined handshake timeout of 15 seconds.
-	// Per ssu2.rst: "Handshake timeout: 15 seconds"
+	// DefaultHandshakeTimeout is the spec-defined handshake timeout of 15
+	// seconds.
 	DefaultHandshakeTimeout = 15 * time.Second
 )
 
 // DefaultRouterInfoValidator validates that the Noise-authenticated static
 // key matches the "s" option in an SSU2 address within the RouterInfo.
 //
-// It parses the RouterInfo binary payload, locates SSU2 router addresses,
-// and compares the static key from the "s" option against the
+// It parses the RouterInfo binary payload, locates the SSU2 router
+// addresses, and compares the static key from the "s" option against the
 // Noise-authenticated static key using constant-time comparison.
 //
-// Per SSU2 spec §SessionConfirmed Notes, the responder must verify that
-// the static key authenticated by the Noise handshake corresponds to the
-// key published in the peer's RouterInfo.
+// Per the SSU2 spec, the responder must verify that the static key
+// authenticated by the Noise handshake corresponds to the key published in
+// the peer's RouterInfo.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error {
 	flog("DefaultRouterInfoValidator", logger.Fields{"router_info_len": len(routerInfo), "static_key_len": len(authenticatedStaticKey)}).Debug("Validating router info against authenticated static key")
 	if len(routerInfo) == 0 {
@@ -71,8 +73,10 @@ func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error
 }
 
 // NewSSU2Config creates a new SSU2Config with sensible defaults.
-// routerHash is the local router identity hash.
-// initiator indicates whether this connection will initiate the handshake.
+//
+//   - routerHash is the local router identity hash.
+//   - initiator indicates whether this connection will initiate the
+//     handshake.
 func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 	flog("NewSSU2Config", logger.Fields{"initiator": initiator}).Debug("Creating new SSU2Config")
 	return &SSU2Config{
@@ -107,9 +111,9 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		FirstSightMaxEntries:     50000,
 		MaxSessions:              65536,
 		DestroyTimeout:           11 * time.Second,  // Per spec §Termination: 11s (max RTO)
-		MaxClockSkew:             120 * time.Second, // Per spec: ±120s skew tolerance (G-1)
+		MaxClockSkew:             120 * time.Second, // Per spec: ±120s skew tolerance
 		ReplayCacheTTL:           4 * time.Minute,
-		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize (M-3)
-		RouterInfoValidator:      nil, // C-1: no default; callers must explicitly set via WithRouterInfoValidator
+		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize
+		RouterInfoValidator:      nil, // No default; callers must explicitly set via WithRouterInfoValidator
 	}, nil
 }

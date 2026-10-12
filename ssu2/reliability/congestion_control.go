@@ -112,6 +112,8 @@ func (s CongestionState) String() string {
 // yielding better throughput on lossy I2P overlay links.
 //
 // The controller is thread-safe and can be used concurrently.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type CongestionController struct {
 	// cwnd is the congestion window in bytes
 	cwnd int
@@ -141,11 +143,11 @@ type CongestionController struct {
 
 	// congestionEpochStart is the time the current loss/recovery epoch began.
 	// Loss events within one RTT of this time are coalesced to prevent
-	// over-reducing cwnd from multiple losses in the same window (G-1).
+	// over-reducing cwnd from multiple losses in the same window.
 	congestionEpochStart time.Time
 
 	// mtu is the session's Maximum Segment Size, used as the linear increment
-	// in congestion avoidance (M-1). Defaults to MinCongestionWindow (1280).
+	// in congestion avoidance. Defaults to MinCongestionWindow (1280).
 	mtu int
 
 	// mutex protects all fields for concurrent access
@@ -153,9 +155,9 @@ type CongestionController struct {
 }
 
 // NewCongestionController creates a new congestion controller.
-// If rttEstimator is nil, congestion control will work without RTT-based decisions.
-// Uses the default IPv4 MTU for initial CWND; prefer NewCongestionControllerWithMTU
-// to derive CWND from the session's actual MTU (M-5).
+// If rttEstimator is nil, congestion control will work without RTT-based
+// decisions. Uses the default IPv4 MTU for the initial CWND; prefer
+// NewCongestionControllerWithMTU to derive CWND from the session's actual MTU.
 func NewCongestionController(rttEstimator *RTTEstimator) *CongestionController {
 	flog("NewCongestionController").Debug("Creating with default IPv4 MTU")
 	return NewCongestionControllerWithMTU(rttEstimator, MaxPacketSizeIPv4)
@@ -164,7 +166,9 @@ func NewCongestionController(rttEstimator *RTTEstimator) *CongestionController {
 // NewCongestionControllerWithMTU creates a congestion controller with the
 // initial CWND derived from the given MTU (3 × mtu per SSU2 spec §Congestion).
 // This correctly handles IPv6 sessions where the MTU (1452) differs from
-// the IPv4 default (1472) (M-5).
+// the IPv4 default (1472).
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func NewCongestionControllerWithMTU(rttEstimator *RTTEstimator, mtu int) *CongestionController {
 	flog("NewCongestionControllerWithMTU", logger.Fields{"mtu": mtu}).Debug("Creating new CongestionController")
 	if mtu <= 0 {
@@ -310,8 +314,8 @@ func (cc *CongestionController) handleCongestionAvoidanceAck(ackedBytes int) {
 	// Accumulate acknowledged bytes
 	cc.bytesAcked += ackedBytes
 
-	// M-1: Use the session's actual MTU as MSS increment instead of
-	// the minimum (1280). This correctly handles IPv4 (1472) and IPv6 (1452).
+	// Use the session's actual MTU as the MSS increment instead of the
+	// minimum (1280). This correctly handles IPv4 (1472) and IPv6 (1452).
 	mss := cc.mtu
 	if mss < MinCongestionWindow {
 		mss = MinCongestionWindow
@@ -367,7 +371,7 @@ func (cc *CongestionController) handleCongestionEvent(targetState CongestionStat
 //
 // Loss events within the same RTT window are coalesced: only the first
 // loss triggers a cwnd reduction. Subsequent losses within one RTT of the
-// epoch start are absorbed without further reduction (G-1).
+// epoch start are absorbed without further reduction.
 func (cc *CongestionController) OnPacketLoss() {
 	flog("OnPacketLoss").Debug("Packet loss detected")
 	cc.handleCongestionEvent(Recovery)

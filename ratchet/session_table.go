@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	// MaxGarlicSessions is the upper bound on active garlic sessions.
+	// MaxGarlicSessions is the upper bound on the number of active garlic
+	// sessions a single [SessionManager] may hold at once. When the limit
+	// is reached, the least recently used session is evicted to make room.
 	MaxGarlicSessions = 5000
 
 	// MaxSessionsPerPeer caps the number of concurrent garlic sessions that
 	// may exist for a single remote static public key. An attacker who can
-	// replay many NS messages from a forged or reused identity cannot use up
-	// more than this fraction of the global session table (AUDIT L-4).
+	// replay many New Session messages from a forged or reused identity
+	// cannot use up more than this fraction of the global session table.
 	// When exceeded, the oldest session for that peer is evicted first,
 	// protecting sessions from other honest peers from LRU churn.
 	MaxSessionsPerPeer = 32
@@ -51,11 +53,13 @@ func (sm *SessionManager) removeSessionByPointer(session *Session) {
 
 // FindSessionByTag checks if a session tag matches a known session.
 // Returns true if the tag was found (and consumed), false otherwise.
-// This implements the TagResolver interface for independent tag-only resolution.
+// This implements the [TagResolver] interface for independent tag-only
+// resolution.
 //
-// Two-phase locking: the global index lookup (sm.mu) and per-session validation
-// (session.mu) are performed in separate, non-overlapping critical sections.
-// Tag replenishment (HKDF) is performed outside both locks.
+// Two-phase locking: the global index lookup (sm.mu) and per-session
+// validation (session.mu) are performed in separate, non-overlapping
+// critical sections. Tag replenishment (HKDF) is performed outside both
+// locks.
 func (sm *SessionManager) FindSessionByTag(tag [8]byte) bool {
 	flog("FindSessionByTag").Debug("Finding session by tag")
 	sm.mu.Lock()

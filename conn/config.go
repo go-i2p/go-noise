@@ -12,56 +12,68 @@ import (
 	"github.com/samber/oops"
 )
 
-// ConnConfig contains configuration for creating a NoiseConn.
-// It follows the builder pattern for optional configuration and validation.
+// ConnConfig holds the settings for a Noise connection. It combines the
+// common handshake settings (timeouts, retries, and modifiers) with the
+// Noise-specific fields that describe which pattern to use and which side of
+// the handshake this connection is on.
+//
+// A ConnConfig is normally built with NewConnConfig and the With* methods,
+// then passed to NewNoiseConn. See the package documentation for an overview
+// of how the pattern and modifiers work together.
 type ConnConfig struct {
 	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
 	// common to all Noise config types in this module.
 	baseconfig.BaseHandshakeConfig
 
-	// Pattern is the Noise protocol pattern (e.g., "Noise_XX_25519_AESGCM_SHA256")
+	// Pattern is the Noise protocol pattern to use, for example
+	// "Noise_XX_25519_AESGCM_SHA256". The pattern names the key exchange
+	// steps and the cipher suite in one string.
 	Pattern string
 
-	// Initiator indicates if this connection is the handshake initiator
+	// Initiator reports whether this connection starts the handshake
+	// (true) or waits for the other side to start it (false).
 	Initiator bool
 
-	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
+	// StaticKey is this peer's long-term private static key. It must be 32
+	// bytes for Curve25519.
 	StaticKey []byte
 
-	// RemoteKey is the remote peer's static public key (32 bytes for Curve25519)
-	// Required for some patterns, optional for others
+	// RemoteKey is the other peer's static public key. It must be 32 bytes
+	// for Curve25519. Some patterns require it; others do not.
 	RemoteKey []byte
 
-	// CipherSuite specifies the Noise cipher suite to use for the handshake.
-	// If nil, defaults to DH25519 + CipherAESGCM + SHA256.
-	// Protocols like NTCP2 require DH25519 + CipherChaChaPoly + SHA256.
+	// CipherSuite names the Noise cipher suite used for the handshake. If
+	// nil, it defaults to DH25519 + CipherAESGCM + SHA256. Protocols like
+	// NTCP2 require DH25519 + CipherChaChaPoly + SHA256 instead.
 	CipherSuite noise.CipherSuite
 
-	// ProtocolName overrides the auto-generated Noise protocol name used
-	// for InitializeSymmetric(). When set, this exact byte string is used
-	// instead of constructing "Noise_" + Pattern.Name + "_" + CipherSuite.Name().
-	// Required for protocols like NTCP2 that use non-standard protocol names
-	// (e.g., "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256").
-	// If nil/empty, the standard Noise protocol name is constructed as usual.
+	// ProtocolName overrides the auto-generated Noise protocol name used to
+	// initialize the symmetric state. When set, this exact byte string is
+	// used instead of constructing "Noise_" + Pattern.Name + "_" +
+	// CipherSuite.Name(). Protocols like NTCP2 need this because they use a
+	// non-standard protocol name (for example,
+	// "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256"). If nil or empty,
+	// the standard Noise protocol name is constructed as usual.
 	ProtocolName []byte
 
-	// AdditionalSymmetricKeyLabels specifies labels for Additional Symmetric
-	// Key (ASK) derivation at Split() time, per Noise spec §10.3. Each label
-	// produces a 32-byte key derived from the chaining key. The derived keys
-	// are available via NoiseConn.AdditionalSymmetricKeys() after the
-	// handshake completes.
+	// AdditionalSymmetricKeyLabels names the labels used to derive
+	// Additional Symmetric Keys (ASKs) when the handshake splits into send
+	// and receive cipher states, per Noise spec §10.3. Each label produces a
+	// 32-byte key derived from the chaining key. The derived keys are
+	// available via Conn.AdditionalSymmetricKeys() after the handshake
+	// completes.
 	//
-	// For NTCP2, this should be set to [][]byte{[]byte("ask")} to derive
-	// the ask_master used for SipHash key derivation.
+	// For NTCP2, this should be set to [][]byte{[]byte("ask")} to derive the
+	// ask_master used for SipHash key derivation.
 	AdditionalSymmetricKeyLabels [][]byte
 
-	// PostHandshakeHook is an optional callback invoked after the Noise
-	// handshake completes successfully but before the connection transitions
-	// to the Established state. This allows protocol layers (e.g., NTCP2)
-	// to derive additional key material from the handshake hash, set up
-	// data-phase obfuscators, or perform any post-handshake validation.
+	// PostHandshakeHook is an optional callback run after the Noise
+	// handshake succeeds but before the connection moves to the Established
+	// state. It lets a protocol layer (for example, NTCP2) derive extra key
+	// material from the handshake hash, set up data-phase obfuscators, or
+	// run any post-handshake checks.
 	//
-	// If the hook returns an error, the handshake is considered failed and
+	// If the hook returns an error, the handshake is treated as failed and
 	// the connection reverts to the Init state.
 	PostHandshakeHook func(*Conn) error
 
@@ -78,7 +90,9 @@ type ConnConfig struct {
 	chainMu sync.Mutex
 }
 
-// NewConnConfig creates a new ConnConfig with sensible defaults.
+// NewConnConfig creates a new ConnConfig with sensible defaults. The pattern
+// names the Noise protocol to use, and initiator selects which side of the
+// handshake this connection is on.
 func NewConnConfig(pattern string, initiator bool) *ConnConfig {
 	flog("NewConnConfig", logger.Fields{"pattern": pattern, "initiator": initiator}).Debug("Creating new ConnConfig")
 	return &ConnConfig{
@@ -94,68 +108,64 @@ func NewConnConfig(pattern string, initiator bool) *ConnConfig {
 	}
 }
 
-// WithStaticKey sets the static key for this connection.
-// key must be 32 bytes for Curve25519.
+// WithStaticKey sets this peer's long-term private static key. The key must
+// be 32 bytes for Curve25519.
 func (c *ConnConfig) WithStaticKey(key []byte) *ConnConfig {
 	c.StaticKey = make([]byte, len(key))
 	copy(c.StaticKey, key)
 	return c
 }
 
-// WithRemoteKey sets the remote peer's static public key.
-// key must be 32 bytes for Curve25519.
+// WithRemoteKey sets the other peer's static public key. The key must be 32
+// bytes for Curve25519.
 func (c *ConnConfig) WithRemoteKey(key []byte) *ConnConfig {
 	c.RemoteKey = make([]byte, len(key))
 	copy(c.RemoteKey, key)
 	return c
 }
 
-// WithHandshakeTimeout sets the handshake timeout.
-//
-// Note: this assigns the promoted BaseHandshakeConfig.HandshakeTimeout field
-// directly rather than calling baseconfig.SetHandshakeTimeout. Both forms are
-// equally supported and behaviorally identical today (the shared helpers are
-// single-field assignments with no additional logic); ntcp2.Config and
-// ssu2/config.SSU2Config use the baseconfig.Set* helpers instead. This is a
-// stylistic difference, not a functional one — see the equivalent
-// WithReadTimeout/WithWriteTimeout/WithHandshakeRetries/WithRetryBackoff
-// methods below, which follow the same direct-assignment pattern.
+// WithHandshakeTimeout sets how long the handshake may take before it is
+// considered to have failed.
 func (c *ConnConfig) WithHandshakeTimeout(timeout time.Duration) *ConnConfig {
 	c.HandshakeTimeout = timeout
 	return c
 }
 
-// WithReadTimeout sets the read timeout for post-handshake operations.
+// WithReadTimeout sets how long a read may block before it times out. A zero
+// value means no timeout.
 func (c *ConnConfig) WithReadTimeout(timeout time.Duration) *ConnConfig {
 	c.ReadTimeout = timeout
 	return c
 }
 
-// WithWriteTimeout sets the write timeout for post-handshake operations.
+// WithWriteTimeout sets how long a write may block before it times out. A
+// zero value means no timeout.
 func (c *ConnConfig) WithWriteTimeout(timeout time.Duration) *ConnConfig {
 	c.WriteTimeout = timeout
 	return c
 }
 
-// WithHandshakeRetries sets the number of handshake retry attempts
-// used by HandshakeWithRetry. Handshake() always performs a single
-// attempt regardless of this setting.
-// Use 0 for no retries, -1 for infinite retries.
+// WithHandshakeRetries sets how many times HandshakeWithRetry may retry a
+// failed handshake. Handshake() always makes a single attempt regardless of
+// this setting. Use 0 for no retries and -1 for unlimited retries.
 func (c *ConnConfig) WithHandshakeRetries(retries int) *ConnConfig {
 	c.HandshakeRetries = retries
 	return c
 }
 
-// WithRetryBackoff sets the base delay between retry attempts.
-// Actual delay uses exponential backoff: delay = backoff * (2^attempt).
+// WithRetryBackoff sets the base delay between handshake retry attempts. The
+// actual delay grows with each attempt using exponential backoff:
+// delay = backoff * (2^attempt).
 func (c *ConnConfig) WithRetryBackoff(backoff time.Duration) *ConnConfig {
 	c.RetryBackoff = backoff
 	return c
 }
 
-// WithModifiers sets the handshake modifiers for obfuscation and padding.
-// Modifiers are applied in the order provided for outbound data and in
-// reverse order for inbound data.
+// WithModifiers replaces the configured handshake modifiers with the given
+// list. Modifiers are the extension point that lets protocols like NTCP2 and
+// SSU2 add obfuscation and padding on top of the shared Noise core. They are
+// applied in the order provided for outbound data and in reverse order for
+// inbound data.
 func (c *ConnConfig) WithModifiers(modifiers ...handshake.HandshakeModifier) *ConnConfig {
 	c.chainMu.Lock()
 	c.Modifiers = make([]handshake.HandshakeModifier, len(modifiers))
@@ -166,7 +176,8 @@ func (c *ConnConfig) WithModifiers(modifiers ...handshake.HandshakeModifier) *Co
 	return c
 }
 
-// AddModifier appends a single modifier to the existing modifier list.
+// AddModifier appends a single modifier to the end of the existing modifier
+// list.
 func (c *ConnConfig) AddModifier(modifier handshake.HandshakeModifier) *ConnConfig {
 	c.chainMu.Lock()
 	c.Modifiers = append(c.Modifiers, modifier)
@@ -177,6 +188,8 @@ func (c *ConnConfig) AddModifier(modifier handshake.HandshakeModifier) *ConnConf
 }
 
 // ClearModifiers removes all modifiers from the configuration.
+//
+// Note: this method is not currently used by any caller in this module.
 func (c *ConnConfig) ClearModifiers() *ConnConfig {
 	c.chainMu.Lock()
 	c.Modifiers = nil
@@ -186,10 +199,10 @@ func (c *ConnConfig) ClearModifiers() *ConnConfig {
 	return c
 }
 
-// GetModifierChain returns a ModifierChain containing all configured modifiers.
-// Returns nil if no modifiers are configured. The chain is lazily initialized
-// and cached; subsequent calls return the same instance until the modifier
-// list is mutated via WithModifiers, AddModifier, or ClearModifiers.
+// GetModifierChain returns a ModifierChain containing all configured
+// modifiers, or nil if none are configured. The chain is built on first use
+// and then cached; repeated calls return the same instance until the modifier
+// list is changed via WithModifiers, AddModifier, or ClearModifiers.
 func (c *ConnConfig) GetModifierChain() *handshake.ModifierChain {
 	c.chainMu.Lock()
 	defer c.chainMu.Unlock()
@@ -209,11 +222,11 @@ func buildModifierChain(modifiers []handshake.HandshakeModifier) *handshake.Modi
 }
 
 // invalidateModifierCache resets the cached modifier chain so it will be
-// recomputed on the next call to GetModifierChain. Exposed for any future
-// caller that mutates c.Modifiers directly under chainMu itself; WithModifiers/
-// AddModifier/ClearModifiers now inline this instead of calling it separately,
-// so the whole read-modify-write of c.Modifiers happens under one lock
-// acquisition (see AUDIT.md Level 6 finding on the prior unsynchronized write).
+// recomputed on the next call to GetModifierChain. It is kept for any future
+// caller that mutates c.Modifiers directly under chainMu itself;
+// WithModifiers, AddModifier, and ClearModifiers now inline this instead of
+// calling it separately, so the whole read-modify-write of c.Modifiers
+// happens under one lock acquisition.
 func (c *ConnConfig) invalidateModifierCache() {
 	c.chainMu.Lock()
 	c.cachedChain = nil
@@ -221,8 +234,9 @@ func (c *ConnConfig) invalidateModifierCache() {
 	c.chainMu.Unlock()
 }
 
-// Validate checks if the configuration is valid and complete.
-// Returns an error with context if validation fails.
+// Validate checks that the configuration is complete and consistent. It
+// returns a descriptive error if anything is missing or wrong, such as an
+// unrecognized pattern or a static key of the wrong length.
 func (c *ConnConfig) Validate() error {
 	flog("ConnConfig.Validate", logger.Fields{"pattern": c.Pattern}).Debug("Validating ConnConfig")
 	return validation.RunValidators(

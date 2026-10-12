@@ -8,6 +8,8 @@ import (
 )
 
 // MessageOp represents a single send or receive operation in a handshake.
+// Its fields are unexported; it is only constructed and consumed internally
+// by the pattern template machinery.
 type MessageOp struct {
 	isSend bool // true for send, false for receive
 	phase  handshake.HandshakePhase

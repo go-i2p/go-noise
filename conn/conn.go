@@ -1,3 +1,57 @@
+// Package conn provides a high-level wrapper around the go-i2p/noise package
+// that implements the net.Conn and net.Addr interfaces for the Noise Protocol
+// Framework. It is the core building block for I2P's modern transport
+// protocols, NTCP2 and SSU2.
+//
+// # How it works
+//
+// At its heart, this package puts the Noise Protocol on top of an ordinary
+// net.Conn. A net.Conn is Go's standard interface for a network connection
+// (for example, a TCP socket). The Noise Protocol is a set of rules for two
+// parties to agree on shared encryption keys and then exchange encrypted
+// messages. By combining the two, a Conn in this package behaves like a
+// normal network connection, but everything that passes over it is encrypted.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
+//
+// # The protocols it supports
+//
+// I2P uses two modern transport protocols, and both are built on the same
+// Noise foundation:
+//
+//   - NTCP2 is I2P's TCP-based transport. It uses the Noise pattern
+//     Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256.
+//   - SSU2 is I2P's UDP-based transport. It uses the Noise pattern
+//     Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256.
+//
+// Both patterns start from the same base pattern, XK, and use the same
+// building blocks: X25519 for key exchange, ChaCha20-Poly1305 for encryption,
+// and SHA-256 for hashing. The only real difference is how each protocol
+// shapes the handshake messages and adds its own obfuscation and padding.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+//
+// # Handshake modifiers
+//
+// Because NTCP2 and SSU2 share the same Noise core, this package does not
+// hard-code either protocol. Instead, it exposes a small extension point
+// called a handshake modifier. A modifier is a function that can inspect or
+// change a single step of the handshake, or the data flowing through the
+// connection, without touching the core Noise cryptography.
+//
+// Think of modifiers as a chain of filters. Each protocol plugs in the
+// filters it needs. For example, NTCP2 and SSU2 each add their own
+// obfuscation and padding filters, while the shared Noise socket, key
+// exchange, and encryption logic stays exactly the same. This is what lets
+// one implementation serve both protocols.
+//
+// # Typical use
+//
+// A caller creates a ConnConfig to describe the connection (which pattern to
+// use, which side it is on, and any modifiers to apply), wraps an existing
+// net.Conn with NewNoiseConn, runs the handshake with Handshake, and then
+// reads and writes encrypted data with the usual Read and Write methods.
 package conn
 
 import (
@@ -34,9 +88,17 @@ const (
 // ConnState represents the state of a NoiseConn
 type ConnState = mod.ConnState
 
-// Conn implements net.Conn with Noise Protocol encryption.
-// It wraps an underlying net.Conn and provides encrypted communication
-// following the Noise Protocol Framework specification.
+// Conn is an encrypted network connection that implements the net.Conn
+// interface. It wraps an ordinary net.Conn and encrypts everything that
+// passes over it using the Noise Protocol.
+//
+// A Conn moves through a few states over its lifetime: it starts in
+// StateInit, moves to StateHandshaking while the two sides agree on keys,
+// reaches StateEstablished once the handshake is done, and ends in
+// StateClosed. You can read and write data only after the handshake has
+// completed.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
 // Thread Safety:
 // Conn is safe for concurrent use by multiple goroutines with the following guarantees:
@@ -60,7 +122,7 @@ type Conn struct {
 
 	// privateStaticKey is a per-connection copy of the static key, isolated from
 	// the caller-owned config. It is zeroed on Close() to prevent the caller's
-	// config from being corrupted. See HIGH-1 audit finding.
+	// config from being corrupted.
 	privateStaticKey []byte
 
 	// sendCipherState handles encryption for outgoing data after handshake.
@@ -112,19 +174,18 @@ type Conn struct {
 	pendingPlaintext []byte
 }
 
-// NewNoiseConn creates a new NoiseConn wrapping the underlying connection.
-// The handshake must be completed before using Read/Write operations.
+// NewNoiseConn creates a new encrypted connection that wraps the given
+// underlying network connection. The handshake must be completed (via
+// Handshake) before Read and Write can be used.
 //
-// Contract: once config has been passed to NewNoiseConn, the caller must
-// treat it as effectively read-only for the lifetime of the returned *Conn.
-// config is stored by reference (not deep-copied, aside from StaticKey — see
-// the privateStaticKey handling below), and most of its fields are read
-// directly by Read/Write/Handshake with no synchronization of their own
-// (Config.Modifiers is the one exception, synchronized via chainMu — see
-// GetModifierChain/WithModifiers/AddModifier/ClearModifiers). Continuing to
-// mutate a *ConnConfig after passing it here — including via a second
-// concurrent NewNoiseConn call sharing the same config — is a data race.
-// Build a fresh ConnConfig per connection if per-connection tuning is needed.
+// The config is stored by reference, not copied. Because of this, once you
+// pass a *ConnConfig to NewNoiseConn you should treat it as read-only for as
+// long as the returned *Conn exists. Most of its fields are read directly by
+// Read, Write, and Handshake without any locking of their own (the Modifiers
+// field is the one exception, which is synchronized internally). Changing a
+// *ConnConfig after passing it here — including sharing the same config
+// between two concurrent NewNoiseConn calls — is a data race. If you need
+// different settings per connection, build a fresh ConnConfig for each one.
 func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*Conn, error) {
 	if err := validateNewConnParams(underlying, config); err != nil {
 		return nil, err
@@ -132,7 +193,6 @@ func NewNoiseConn(underlying net.Conn, config *ConnConfig) (*Conn, error) {
 
 	// Make a per-connection copy of the static key to isolate from the caller's
 	// config. This prevents Close() from corrupting the caller's key material.
-	// See HIGH-1 audit finding.
 	var privateStaticKey []byte
 	if len(config.StaticKey) > 0 {
 		privateStaticKey = make([]byte, len(config.StaticKey))
@@ -261,23 +321,23 @@ func (nc *Conn) Write(b []byte) (int, error) {
 	return nc.writeEncryptedData(b, encrypted)
 }
 
-// Close closes the connection.
+// Close closes the connection and releases its resources. It is safe to call
+// more than once; only the first call does the real work.
 //
 // Thread Safety: This method is safe for concurrent use and is idempotent.
 // Multiple goroutines can call Close simultaneously - only the first call
 // will perform the actual close operation, subsequent calls will return nil.
 // The close mutex ensures atomic close operations.
 //
-// Liveness: nc.underlying.Close() is called BEFORE acquiring readMutex/
-// writeMutex, not after. Read()/Write() hold their respective mutex for the
-// entire duration of a blocking underlying I/O call (including when no
-// ReadTimeout/WriteTimeout is configured, the default). If Close() acquired
-// those mutexes first, a concurrently blocked Read()/Write() with no
-// configured timeout would never release the mutex, and Close() would hang
-// indefinitely — this was empirically reproduced (see AUDIT.md CRITICAL
-// finding). Closing the underlying connection first forces any blocked
-// syscall to return an error immediately, releasing the mutex promptly, so
-// Close() can then safely zero key material.
+// Liveness: the underlying connection is closed BEFORE the read and write
+// mutexes are acquired, not after. Read() and Write() hold their respective
+// mutex for the entire duration of a blocking underlying I/O call (including
+// when no ReadTimeout/WriteTimeout is configured, which is the default). If
+// Close() acquired those mutexes first, a concurrently blocked Read() or
+// Write() with no configured timeout would never release the mutex, and
+// Close() would hang indefinitely. Closing the underlying connection first
+// forces any blocked syscall to return an error immediately, releasing the
+// mutex promptly, so Close() can then safely zero the key material.
 func (nc *Conn) Close() error {
 	nc.closeMutex.Lock()
 	defer nc.closeMutex.Unlock()
@@ -325,14 +385,13 @@ func (nc *Conn) Close() error {
 	}
 
 	// Zero the per-connection static key copy instead of the caller's config.
-	// This prevents corrupting a reused ConnConfig. See HIGH-1 audit finding.
+	// This prevents corrupting a reused ConnConfig.
 	if len(nc.privateStaticKey) > 0 {
 		securemem.SecureZero(nc.privateStaticKey)
 	}
 
 	// Zero any undelivered decrypted plaintext so it does not linger on the
 	// heap after close. Guarded by readMutex to avoid racing a concurrent Read.
-	// See L-1 audit finding.
 	nc.readMutex.Lock()
 	if len(nc.pendingPlaintext) > 0 {
 		securemem.SecureZero(nc.pendingPlaintext)

@@ -15,15 +15,14 @@ import (
 // fallback path without relying on OS-level entropy failures.
 var randReader io.Reader = rand.Reader
 
-// XORModifier implements a simple XOR-based obfuscation modifier.
-// It XORs handshake data with a configurable key pattern to provide
-// basic obfuscation without compromising Noise protocol security.
-// Moved from: handshake/modifiers.go
+// XORModifier is a simple obfuscation modifier. It scrambles handshake data
+// by XORing it with a repeating key pattern, and unscrambles it the same way
+// on the way in. This adds a layer of obfuscation without affecting the
+// security of the underlying Noise protocol.
 //
 // After Close() is called, ModifyOutbound and ModifyInbound return an error.
-// This prevents silent security degradation where zeroed key material would
-// cause XOR to become a no-op (identity function), passing data through
-// without any obfuscation.
+// This prevents a silent security problem: with a zeroed key, XOR would do
+// nothing, and data would pass through with no obfuscation at all.
 type XORModifier struct {
 	mu      sync.Mutex
 	name    string
@@ -32,27 +31,27 @@ type XORModifier struct {
 	closed  bool
 }
 
-// NewXORModifier creates a new XOR modifier with the specified key.
-// The key is repeated as needed to match the data length.
+// NewXORModifier creates a new XOR modifier that uses the given key. The key
+// is repeated as needed to match the length of the data being transformed.
 //
-// Security note: if key is nil or empty, a 32-byte cryptographically random
-// key is generated automatically. Callers must NOT rely on any particular
-// default value — the old well-known default (0xAA) provided no meaningful
-// obfuscation and has been replaced by this random fallback.
+// If key is nil or empty, a 32-byte cryptographically random key is generated
+// automatically. Do not rely on any particular default value — the old
+// well-known default (0xAA) provided no meaningful obfuscation and has been
+// replaced by this random fallback.
 //
-// IMPORTANT: If the OS entropy source is unavailable (crypto/rand fails),
-// this function returns an error. Callers MUST NOT proceed with a connection
-// that cannot be obfuscated, as silently degrading to a weak key breaks
-// anonymity guarantees (M-3 audit finding).
+// If the OS entropy source is unavailable (crypto/rand fails), this function
+// returns an error. Callers MUST NOT proceed with a connection that cannot be
+// obfuscated, because silently degrading to a weak key breaks anonymity
+// guarantees.
 func NewXORModifier(name string, xorKey []byte) (*XORModifier, error) {
 	if len(xorKey) == 0 {
 		// Generate a cryptographically random 32-byte key so that each modifier
 		// instance with no explicit key still produces distinct output.
 		randomKey := make([]byte, 32)
 		if _, err := io.ReadFull(randReader, randomKey); err != nil {
-			// Return error instead of silently degrading to a 1-byte key.
+			// Return an error instead of silently degrading to a 1-byte key.
 			// This forces callers to handle the entropy failure explicitly
-			// rather than proceeding with broken obfuscation (M-3 audit finding).
+			// rather than proceeding with broken obfuscation.
 			flog("NewXORModifier", logger.Fields{"name": name}).WithError(err).Error("crypto/rand failed; cannot create XOR modifier without degradation")
 			return nil, oops.
 				Code("RNG_FAILED").
@@ -72,17 +71,17 @@ func NewXORModifier(name string, xorKey []byte) (*XORModifier, error) {
 	}, nil
 }
 
-// ModifyOutbound applies XOR obfuscation to outbound handshake data.
-// Returns an error if Close() has been called.
+// ModifyOutbound applies XOR obfuscation to outbound handshake data. It
+// returns an error if Close() has been called.
 //
-// For PhaseData (and any future phase beyond PhaseFinal), data is returned
-// unmodified. xorKey is a single static, non-advancing keystream: applying
-// it at the same byte offsets to every post-handshake message would reuse
-// the same keystream bytes across the connection's entire data phase — an
-// adversary who learns or guesses plaintext at any offset in one message
-// immediately recovers the keystream bytes needed to de-obfuscate that same
-// offset in every other message. Confining XOR to the one-shot handshake
-// phases avoids this repeated-keystream break; see AUDIT.md.
+// For [PhaseData] (and any future phase beyond [PhaseFinal]), data is
+// returned unmodified. The XOR key is a single static, non-advancing
+// keystream: applying it at the same byte offsets to every post-handshake
+// message would reuse the same keystream bytes across the connection's
+// entire data phase. An adversary who learns or guesses plaintext at any
+// offset in one message would then recover the keystream bytes needed to
+// de-obfuscate that same offset in every other message. Confining XOR to the
+// one-shot handshake phases avoids this repeated-keystream break.
 func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	xm.mu.Lock()
 	defer xm.mu.Unlock()
@@ -111,8 +110,8 @@ func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte
 	return result, nil
 }
 
-// ModifyInbound removes XOR obfuscation from inbound handshake data.
-// Since XOR is symmetric, this performs the same operation as ModifyOutbound.
+// ModifyInbound removes XOR obfuscation from inbound handshake data. Because
+// XOR is symmetric, this performs the same operation as ModifyOutbound.
 func (xm *XORModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	return xm.ModifyOutbound(phase, data)
 }

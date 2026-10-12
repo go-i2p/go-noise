@@ -10,15 +10,24 @@ import (
 	"github.com/samber/oops"
 )
 
-// AESObfuscationModifier implements NTCP2's AES-based ephemeral key obfuscation.
-// This modifier encrypts/decrypts the X and Y ephemeral keys in messages 1 and 2
-// using AES-256-CBC with the router hash as key and published IV.
+// AESObfuscationModifier implements NTCP2's AES-based ephemeral key
+// obfuscation.
 //
-// Per the NTCP2 spec, the AES state (last ciphertext block) from message 1
-// encryption is carried forward as the IV for message 2 encryption.
+// In NTCP2, the ephemeral keys in handshake messages 1 and 2 are sent in
+// cleartext, but they are hidden from network observers by encrypting them
+// with AES-256-CBC. The key is the peer's router hash, and the initial IV
+// (initialization vector, the starting value for the cipher) is published
+// in the network database.
+//
+// Per the NTCP2 spec, the AES state (the last ciphertext block) from
+// message 1 encryption is carried forward as the IV for message 2
+// encryption.
 //
 // After AES decryption, received keys are validated per the NTCP2 spec:
-// X[31]&0x80 must be 0 (Curve25519 requirement). Invalid keys cause message rejection.
+// X[31]&0x80 must be 0 (a Curve25519 requirement). Invalid keys cause the
+// message to be rejected.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 type AESObfuscationModifier struct {
 	mu         sync.Mutex
 	name       string
@@ -28,8 +37,11 @@ type AESObfuscationModifier struct {
 	block      cipher.Block // cached AES cipher (key schedule computed once)
 }
 
-// NewAESObfuscationModifier creates a new AES obfuscation modifier for NTCP2.
-// routerHash must be 32 bytes (RH_B), iv must be 16 bytes from network database.
+// NewAESObfuscationModifier creates a new AES obfuscation modifier for
+// NTCP2.
+//
+// routerHash must be 32 bytes (RH_B, the peer's router hash), and iv must
+// be the 16-byte IV published in the network database.
 func NewAESObfuscationModifier(name string, routerHash, iv []byte) (*AESObfuscationModifier, error) {
 	flog("NewAESObfuscationModifier", logger.Fields{"name": name}).Debug("Creating AES obfuscation modifier")
 	if len(routerHash) != RouterHashSize {
@@ -72,13 +84,17 @@ func NewAESObfuscationModifier(name string, routerHash, iv []byte) (*AESObfuscat
 	}, nil
 }
 
-// ModifyOutbound applies AES obfuscation to ephemeral keys in handshake messages.
-// For message 1: encrypts X key with RH_B and published IV
-// For message 2: encrypts Y key with RH_B and AES state from message 1
+// ModifyOutbound applies AES obfuscation to the ephemeral key in an
+// outbound handshake message.
 //
-// The modifier chain receives the full Noise message (e.g. 64 bytes for msg1/msg2:
-// 32-byte ephemeral key + AEAD payload). Only the first 32 bytes (the ephemeral
-// key) are AES-CBC encrypted; the remainder is passed through unchanged.
+//   - Message 1: encrypts the X key with RH_B and the published IV.
+//   - Message 2: encrypts the Y key with RH_B and the AES state left over
+//     from message 1.
+//
+// The modifier chain receives the full Noise message (e.g. 64 bytes for
+// msg1/msg2: 32-byte ephemeral key + AEAD payload). Only the first 32
+// bytes (the ephemeral key) are AES-CBC encrypted; the remainder is passed
+// through unchanged.
 func (aom *AESObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	aom.mu.Lock()
 	defer aom.mu.Unlock()
@@ -137,11 +153,13 @@ func (aom *AESObfuscationModifier) saveAESState(data []byte) {
 	copy(aom.aesState, data[IVSize:StaticKeySize])
 }
 
-// ModifyInbound removes AES obfuscation from ephemeral keys in handshake messages.
+// ModifyInbound removes AES obfuscation from the ephemeral key in an
+// inbound handshake message.
 //
-// The modifier chain receives the full Noise message (e.g. 64 bytes for msg1/msg2:
-// 32-byte ephemeral key + AEAD payload). Only the first 32 bytes (the ephemeral
-// key) are AES-CBC decrypted; the remainder is passed through unchanged.
+// The modifier chain receives the full Noise message (e.g. 64 bytes for
+// msg1/msg2: 32-byte ephemeral key + AEAD payload). Only the first 32
+// bytes (the ephemeral key) are AES-CBC decrypted; the remainder is passed
+// through unchanged.
 func (aom *AESObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	aom.mu.Lock()
 	defer aom.mu.Unlock()
@@ -199,13 +217,13 @@ func (aom *AESObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase,
 	return result, nil
 }
 
-// Name returns the modifier name for logging and debugging.
+// Name returns the modifier name, used for logging and debugging.
 func (aom *AESObfuscationModifier) Name() string {
 	return aom.name
 }
 
-// Close zeroes the AES key material and IV stored in the modifier to prevent
-// sensitive data from lingering in memory after the connection is closed.
+// Close zeroes the AES key material and IV stored in the modifier, so
+// sensitive data does not linger in memory after the connection is closed.
 // This method is safe for concurrent use.
 func (aom *AESObfuscationModifier) Close() error {
 	flog("AESObfuscationModifier.Close", logger.Fields{"modifier": aom.name}).Debug("Closing AES obfuscation modifier")
@@ -224,9 +242,12 @@ func (aom *AESObfuscationModifier) Close() error {
 	return nil
 }
 
-// Clone creates a deep copy of the AESObfuscationModifier with independent state.
-// This implements handshake.ModifierCloner to support safe Config.Clone() operations.
-// The cloned modifier starts with a fresh state (no aesState carried over).
+// Clone creates a deep copy of the AESObfuscationModifier with
+// independent state.
+//
+// This implements handshake.ModifierCloner to support safe
+// Config.Clone() operations. The cloned modifier starts with a fresh
+// state (no aesState carried over).
 func (aom *AESObfuscationModifier) Clone() handshake.HandshakeModifier {
 	aom.mu.Lock()
 	defer aom.mu.Unlock()

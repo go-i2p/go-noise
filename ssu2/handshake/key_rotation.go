@@ -11,11 +11,16 @@ import (
 	"github.com/samber/oops"
 )
 
+// KeyRotationCallback is called when a key rotation occurs.
+// keyType is "static" or "intro"; oldKey is the key being retired and
+// newKey is the replacement.
 type KeyRotationCallback func(keyType string, oldKey, newKey *ManagedKey)
 
 // KeyRotationManager manages SSU2 key lifecycle and rotation.
 // It tracks static keys and introduction keys, ensuring they meet
 // the minimum age requirements before rotation per the SSU2 specification.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type KeyRotationManager struct {
 	mu sync.RWMutex
 
@@ -45,8 +50,7 @@ type KeyRotationManager struct {
 	clock func() time.Time
 
 	// onRotationPanics counts recovered panics from the onRotation callback,
-	// for operational monitoring (see AUDIT.md "Panic in rotation callback
-	// is recovered and only logged").
+	// for operational monitoring.
 	onRotationPanics atomic.Int64
 }
 
@@ -499,7 +503,9 @@ func (krm *KeyRotationManager) GetStatus() KeyRotationStatus {
 	}
 }
 
-// KeyRotationStatus contains a snapshot of the rotation manager state.
+// KeyRotationStatus contains a snapshot of the rotation manager state,
+// reporting the age, lifecycle state, and rotation eligibility of both
+// the static and introduction keys.
 type KeyRotationStatus struct {
 	StaticKeyAge          time.Duration
 	StaticKeyState        KeyState

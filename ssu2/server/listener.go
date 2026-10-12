@@ -17,18 +17,30 @@ import (
 	"github.com/samber/oops"
 )
 
-// SSU2Listener implements net.Listener for accepting SSU2 connections over UDP.
-// It manages incoming packets, routes them to existing sessions, and creates
-// new sessions for valid handshake packets.
+// SSU2Listener is the server side of SSU2: it accepts incoming SSU2
+// connections over UDP. It implements the standard net.Listener interface,
+// so it can be used anywhere a net.Listener is expected.
 //
-// Design rationale:
-// - Uses PacketRouter to dispatch packets to appropriate sessions
-// - Uses TokenCache to validate retry tokens and prevent spoofing
-// - Implements net.Listener interface for compatibility with standard library
-// - Single UDP socket shared across all sessions (multiplexing)
-// - Worker pool limits goroutine count under traffic floods
+// # How it works
 //
-// Thread Safety: All public methods are thread-safe.
+// All sessions share a single UDP socket (multiplexing). Incoming packets
+// are read by one goroutine, queued, and processed by a small pool of worker
+// goroutines. Each packet is routed to the session it belongs to, or — if it
+// is a valid new handshake — a new session is created and queued for
+// Accept().
+//
+// # What it does
+//
+//   - Routes packets to existing sessions via a PacketRouter.
+//   - Creates new sessions for valid SessionRequest packets.
+//   - Validates retry tokens (via a TokenCache) to prevent spoofing.
+//   - Rate-limits SessionRequests per source IP to blunt floods.
+//   - Deduplicates retransmitted SessionRequests so a lost reply does not
+//     create a duplicate session.
+//
+// Thread safety: all public methods are thread-safe.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type SSU2Listener struct {
 	// underlying is the UDP socket for receiving packets
 	underlying net.PacketConn
@@ -39,22 +51,23 @@ type SSU2Listener struct {
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
 
-	// AUDIT 5.4: Stable source connection ID for Retry messages.
-	// Per SSU2 spec, the responder's source ConnID in a Retry should be
-	// stable across multiple Retries for the same peer, so the initiator
-	// can use it as the destination ConnID in subsequent SessionRequests.
-	// This is generated once at listener creation and reused for all Retries.
+	// retrySourceConnID is the stable source connection ID used in Retry
+	// messages. Per the SSU2 spec, the responder's source ConnID in a Retry
+	// should be stable across multiple Retries for the same peer, so the
+	// initiator can use it as the destination ConnID in subsequent
+	// SessionRequests. Generated once at listener creation and reused for
+	// all Retries.
 	retrySourceConnID [8]byte
 
-	// AUDIT 8.3: Removed listener.sessions — router is now single session owner.
-	// All session queries go through router via GetSession/SessionCount/RemoveSession.
-	// pendingByInitiator is the only listener-local session tracking (pre-establishment dedup only).
+	// The router is the single owner of all sessions; all session queries go
+	// through it via GetSession/SessionCount/RemoveSession.
+	// pendingByInitiator is the only listener-local session tracking
+	// (pre-establishment dedup only).
 
-	// pendingByInitiator maps (initiatorConnID, remoteAddr) to SSU2Conn to dedup
-	// retransmitted SessionRequests. This prevents creating duplicate sessions for
-	// handshake retransmits. Key format: hex(initiatorConnID)|IP:port
+	// pendingByInitiator maps (initiatorConnID, remoteAddr) to SSU2Conn to
+	// dedup retransmitted SessionRequests. This prevents creating duplicate
+	// sessions for handshake retransmits. Key format: hex(initiatorConnID)|IP:port
 	// Protected by sessionMutex. Bound by MaxSessions.
-	// AUDIT 8.1: dedup index keyed on initiator's source connID + source address
 	pendingByInitiator map[string]*SSU2Conn
 	sessionMutex       sync.RWMutex
 
@@ -84,22 +97,23 @@ type SSU2Listener struct {
 	router *PacketRouter
 
 	// introHeaderProtector decrypts header protection on incoming new-session
-	// packets (SessionRequest, TokenRequest). Per SSU2 spec, both header
+	// packets (SessionRequest, TokenRequest). Per the SSU2 spec, both header
 	// protection keys for these packet types are the receiver's intro key.
 	// Nil when config.IntroKey is unset, in which case the listener assumes
-	// inbound packets are sent with plaintext headers (legacy / test mode).
-	// Addresses AUDIT C-1: the listener now attempts header-protection
-	// decryption for incoming packets that fail plaintext deserialization,
-	// enabling interop with spec-compliant SSU2 peers (i2pd / Java I2P).
+	// inbound packets are sent with plaintext headers (test mode).
+	// The listener attempts header-protection decryption for incoming packets
+	// that fail plaintext deserialization, enabling interop with
+	// spec-compliant SSU2 peers (i2pd / Java I2P).
 	introHeaderProtector *HeaderProtector
 
-	// pendingOutbound tracks outbound sessions awaiting their SessionCreated/Retry
-	// replies over the listener's socket. During handshake, the listener uses
-	// these sessions' header protectors to deobfuscate and route incoming replies.
-	// AUDIT 1.2: This preserves the single-reader invariant — no second read loop,
-	// only temporary header protectors for demultiplexing (see outbound_demux.go).
-	// On handshake completion, sessions move to the normal router and pendingOutbound
-	// is cleaned up.
+	// pendingOutbound tracks outbound sessions awaiting their
+	// SessionCreated/Retry replies over the listener's socket. During
+	// handshake, the listener uses these sessions' header protectors to
+	// deobfuscate and route incoming replies. This preserves the
+	// single-reader invariant — no second read loop, only temporary header
+	// protectors for demultiplexing (see outbound_demux.go). On handshake
+	// completion, sessions move to the normal router and pendingOutbound is
+	// cleaned up.
 	pendingOutbound *PendingOutboundRegistry
 
 	// acceptedSessions tracks all sessions (both accepted responder sessions and
@@ -113,27 +127,27 @@ type SSU2Listener struct {
 	// Sessions are added in registerAndQueueConn and removed on Close().
 	acceptedSessions *AcceptedSessionRegistry
 
-	// sessionRateLimiter limits SessionRequest processing per source IP (M-6)
+	// sessionRateLimiter limits SessionRequest processing per source IP.
 	sessionRateLimiter *ipRateLimiter
 
-	// droppedPackets counts packets silently discarded when packetQueue is full (M-7).
-	// Accessed atomically to avoid races between receiveLoop and stats readers.
+	// droppedPackets counts packets silently discarded when packetQueue is
+	// full. Accessed atomically to avoid races between receiveLoop and stats
+	// readers.
 	droppedPackets uint64
 
 	// routingErrors counts packets that failed to route to a session and were
-	// not handled as a TokenRequest (AUDIT 5.1). Previously these failures
-	// were swallowed with no signal. Accessed atomically.
+	// not handled as a TokenRequest. Accessed atomically.
 	routingErrors uint64
 
 	// readBufferFailed is set when the OS rejected the SetReadBuffer call in
-	// ListenSSU2. BUG-PB-2: making this observable via Stats() so monitoring
-	// can detect degraded-buffer conditions without polling debug logs.
+	// ListenSSU2. It is observable via Stats() so monitoring can detect
+	// degraded-buffer conditions without polling debug logs.
 	readBufferFailed atomic.Bool
 
 	// Lifecycle management
-	closed       bool
-	started      bool // RACE-1: guards against double-Start()
-	closeMutex   sync.Mutex
+	closed     bool
+	started    bool // guards against double-Start()
+	closeMutex sync.Mutex
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
 }
@@ -189,8 +203,8 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		shutdownChan:       make(chan struct{}),
 	}
 
-	// AUDIT 5.4: Initialize stable retry source connection ID
-	// This ensures that all Retry messages from this listener use the same source ConnID
+	// Initialize the stable retry source connection ID. This ensures that all
+	// Retry messages from this listener use the same source ConnID.
 	if _, err := rand.Read(l.retrySourceConnID[:]); err != nil {
 		return nil, oops.Wrapf(err, "failed to generate retry source connection ID")
 	}
@@ -222,8 +236,8 @@ func (l *SSU2Listener) Start() error {
 			Errorf("listener is closed")
 	}
 
-	// RACE-1: Prevent double-Start(). A second Start() would spawn a duplicate set
-	// of goroutines (8 packetWorkers + receiveLoop + tokenCleanupLoop) on the same
+	// Prevent double-Start(). A second Start() would spawn a duplicate set of
+	// goroutines (packetWorkers + receiveLoop + tokenCleanupLoop) on the same
 	// PacketConn, violating the single-reader invariant and doubling wg counts.
 	if l.started {
 		return oops.
@@ -243,7 +257,7 @@ func (l *SSU2Listener) Start() error {
 	l.wg.Add(1)
 	go l.receiveLoop()
 
-	// G-5: Start periodic token cache cleanup to prevent expired token
+	// Start periodic token cache cleanup to prevent expired token
 	// accumulation under sustained connection churn.
 	l.wg.Add(1)
 	go l.tokenCleanupLoop()
@@ -293,8 +307,8 @@ func (l *SSU2Listener) Close() error {
 	l.closed = true
 	close(l.shutdownChan)
 
-	// AUDIT 3.2: Cancel all pending DestroyTimeout waits in parallel by closing
-	// their forceDestroy channels. This prevents serial blocking when the listener
+	// Cancel all pending DestroyTimeout waits in parallel by closing their
+	// forceDestroy channels. This prevents serial blocking when the listener
 	// has multiple in-flight CloseWithReason calls waiting for the full timeout.
 	sessions := l.router.GetAllSessions()
 	for _, conn := range sessions {
@@ -306,16 +320,16 @@ func (l *SSU2Listener) Close() error {
 		}(conn)
 	}
 
-	// M-2: Close the underlying connection first to unblock ReadFrom
-	// in receiveLoop, rather than relying on deadline-based polling.
+	// Close the underlying connection first to unblock ReadFrom in
+	// receiveLoop, rather than relying on deadline-based polling.
 	closeErr := l.underlying.Close()
 
 	// Wait for goroutines to finish before closing channels.
 	// This prevents send-on-closed-channel panics in handleNewSession.
 	l.wg.Wait()
 
-	// LEAK-4: Drain any sessions already queued in acceptQueue that the caller
-	// will never dequeue now that the listener is closed. Without this, those
+	// Drain any sessions already queued in acceptQueue that the caller will
+	// never dequeue now that the listener is closed. Without this, those
 	// sessions remain fully established and their goroutines never stop — a
 	// resource leak proportional to how full the acceptQueue was at shutdown.
 	for {
@@ -359,8 +373,8 @@ func (l *SSU2Listener) GetAddr() string {
 }
 
 // makeDedupKey creates a dedup index key from initiatorConnID and remoteAddr.
-// Format: hex(initiatorConnID)|IP:port
-// AUDIT 8.1: used to detect and deduplicate retransmitted SessionRequests.
+// Format: hex(initiatorConnID)|IP:port. Used to detect and deduplicate
+// retransmitted SessionRequests.
 func makeDedupKey(initiatorConnID uint64, remoteAddr *net.UDPAddr) string {
 	if remoteAddr == nil {
 		return ""
@@ -378,7 +392,7 @@ func makeDedupKey(initiatorConnID uint64, remoteAddr *net.UDPAddr) string {
 func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Packet) (*SSU2Conn, error) {
 	flog("handleNewSession", logger.Fields{"remote_addr": remoteAddr.String()}).Debug("handleNewSession: creating new session for incoming handshake")
 
-	// AUDIT 7.2 — Validate source address (reject reserved ports, loopback unless allowed, etc.)
+	// Validate source address (reject reserved ports, loopback unless allowed, etc.)
 	if err := validateListenAddress(remoteAddr, l.config); err != nil {
 		return nil, oops.
 			Code("INVALID_SOURCE_ADDRESS").
@@ -392,8 +406,8 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 	}
 
 	if err := l.handleSessionRequestToken(packet, remoteAddr); err != nil {
-		// BUG-EH-3: RETRY_SENT means we sent a Retry successfully — this is the
-		// normal token-gate flow, not a failure. Return (nil, nil) so PacketRouter
+		// RETRY_SENT means we sent a Retry successfully — this is the normal
+		// token-gate flow, not a failure. Return (nil, nil) so PacketRouter
 		// drops the packet without incrementing routingErrors or emitting a WARN.
 		var oopsErr oops.OopsError
 		if errors.As(err, &oopsErr) && oopsErr.Code() == "RETRY_SENT" {
@@ -402,34 +416,34 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, err
 	}
 
-	// Extract and validate initiator connection ID from packet header (AUDIT 8.1 / ACCT-1)
+	// Extract and validate initiator connection ID from packet header.
 	initiatorConnID, err := l.extractSessionInitiatorID(packet)
 	if err != nil {
 		return nil, err
 	}
 
-	// Check dedup index for existing session (AUDIT 8.1)
+	// Check dedup index for existing session.
 	existingConn := l.findExistingSessionByInitiator(initiatorConnID, remoteAddr)
 	if existingConn != nil {
 		return existingConn, nil
 	}
 
-	// Create and configure new SSU2 connection (ACCT-2, AUDIT 1.2)
+	// Create and configure new SSU2 connection.
 	conn, connID, err := l.createSessionConnection(packet, remoteAddr, initiatorConnID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Register connection and add to accept queue (AUDIT 8.1)
+	// Register connection and add to accept queue.
 	return l.registerAndQueueConn(conn, connID, remoteAddr, initiatorConnID)
 }
 
-// extractSessionInitiatorID extracts and validates the initiator connection ID from
-// the SessionRequest packet header.
+// extractSessionInitiatorID extracts and validates the initiator connection ID
+// from the SessionRequest packet header.
 //
-// AUDIT 8.1 / ACCT-1: Validates that the header contains at least 24 bytes needed
-// to read the initiator's source connection ID. Without this check, a truncated
-// header would cause the dedup key to collapse to (0, remoteAddr), allowing a
+// It validates that the header contains at least 24 bytes needed to read the
+// initiator's source connection ID. Without this check, a truncated header
+// would cause the dedup key to collapse to (0, remoteAddr), allowing a
 // malicious peer to falsely "retransmit" to any existing zero-connID entry or
 // create multiple sessions under the same dedup key.
 func (l *SSU2Listener) extractSessionInitiatorID(packet *SSU2Packet) (uint64, error) {
@@ -454,7 +468,7 @@ func (l *SSU2Listener) extractSessionInitiatorID(packet *SSU2Packet) (uint64, er
 // findExistingSessionByInitiator checks the dedup index for an existing session
 // keyed on (initiatorConnID, remoteAddr).
 //
-// AUDIT 8.1: If a session already exists for this (initiator key, source address) pair,
+// If a session already exists for this (initiator key, source address) pair,
 // route the retransmit to it instead of creating a duplicate.
 func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, remoteAddr *net.UDPAddr) *SSU2Conn {
 	dedupKey := makeDedupKey(initiatorConnID, remoteAddr)
@@ -471,14 +485,14 @@ func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, re
 // createSessionConnection creates and configures a new SSU2Conn for an incoming
 // SessionRequest.
 //
-// ACCT-2: The racy advisory pre-check on SessionCount() is not performed here;
-// the authoritative capacity check inside AddSessionIfBelowCap (called from
+// The advisory pre-check on SessionCount() is not performed here; the
+// authoritative capacity check inside AddSessionIfBelowCap (called from
 // registerAndQueueConn, under the correct lock) is the sole capacity gate.
 //
-// AUDIT 1.2: Marks the connection as not responsible for reading the socket,
-// since the listener's receiveLoop is the sole socket reader and will feed packets
-// to this session via RoutePacket → processInboundPacket → recvQueue. This prevents
-// two goroutines (listener and recvLoop) from concurrently reading the same shared
+// It marks the connection as not responsible for reading the socket, since the
+// listener's receiveLoop is the sole socket reader and will feed packets to this
+// session via RoutePacket → processInboundPacket → recvQueue. This prevents two
+// goroutines (listener and recvLoop) from concurrently reading the same shared
 // socket, which violates the SSU2 multiplexing invariant.
 func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, uint64, error) {
 	connID, err := l.generateUniqueConnectionID()

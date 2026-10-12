@@ -71,8 +71,7 @@ func init() {
 // warnDumpEnabled emits an explicit, hard-to-miss warning that this binary
 // was built with the ntcp2_debug tag and has wire-dump instrumentation
 // active. This makes accidental production use of a debug-tagged binary
-// with the dump env vars set much harder to do silently (AUDIT.md Level 9
-// ntcp2 Finding 7).
+// with the dump env vars set much harder to do silently.
 func warnDumpEnabled(envVar string, count int32) {
 	log.WithFields(logger.Fields{
 		"pkg":     "ntcp2",

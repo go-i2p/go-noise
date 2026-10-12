@@ -1,40 +1,43 @@
 package handshake
 
-// HandshakePhase represents the phase of the handshake process.
-// Phases map to Noise handshake messages as follows:
-//   - PhaseInitial  (0): Noise handshake message 1 (initiator → responder)
-//   - PhaseExchange (1): Noise handshake message 2 (responder → initiator)
-//   - PhaseFinal    (2): Noise handshake message 3 (initiator → responder, if pattern requires it)
-//   - PhaseData     (3): Post-handshake data transport (after handshake completion)
+// HandshakePhase names the phase of a Noise connection that a message is in.
+// The first three phases are the Noise handshake messages; the last is the
+// data phase that follows once the handshake is done.
 //
-// Ordering invariant: The numeric values of these constants are part of the
-// stability contract. Downstream packages (e.g., ntcp2) rely on the ordering
-// PhaseInitial < PhaseExchange < PhaseFinal < PhaseData. In particular,
-// guards of the form "phase >= PhaseFinal" are used to match both PhaseFinal
-// and PhaseData. New phase constants MUST NOT be inserted between PhaseFinal
-// and PhaseData; they must be appended after PhaseData or inserted before
-// PhaseInitial.
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
+//
+// The numeric values of these constants are part of a stability contract.
+// Downstream packages (for example, ntcp2) rely on the ordering
+// PhaseInitial < PhaseExchange < PhaseFinal < PhaseData. In particular, guards
+// of the form "phase >= PhaseFinal" are used to match both PhaseFinal and
+// PhaseData. New phase constants MUST NOT be inserted between PhaseFinal and
+// PhaseData; add them after PhaseData or before PhaseInitial instead.
 type HandshakePhase int
 
 const (
-	// PhaseInitial represents the initial phase of the handshake (message 1).
+	// PhaseInitial is the first handshake message (message 1, sent by the
+	// initiator to the responder).
 	PhaseInitial HandshakePhase = iota
-	// PhaseExchange represents the message exchange phase (message 2).
+	// PhaseExchange is the second handshake message (message 2, sent by the
+	// responder to the initiator).
 	PhaseExchange
-	// PhaseFinal represents the final phase of the handshake (message 3).
+	// PhaseFinal is the third handshake message (message 3, sent by the
+	// initiator to the responder, when the Noise pattern requires it).
 	PhaseFinal
-	// PhaseData represents the post-handshake data transport phase.
-	// This distinguishes ongoing data exchange from the final handshake message,
-	// enabling protocol-specific modifiers to handle them differently (e.g., SSU2).
+	// PhaseData is the post-handshake data transport phase. It keeps ongoing
+	// data exchange distinct from the final handshake message, so
+	// protocol-specific modifiers can treat them differently (for example,
+	// SSU2).
 	//
-	// Stability: PhaseData MUST remain strictly greater than PhaseFinal.
-	// The ntcp2 package uses "phase >= PhaseFinal" guards that depend on this
+	// Stability: PhaseData MUST stay strictly greater than PhaseFinal. The
+	// ntcp2 package uses "phase >= PhaseFinal" guards that depend on this
 	// ordering. Inserting a new constant between PhaseFinal and PhaseData will
 	// silently break those modifiers.
 	PhaseData
 )
 
-// String returns the string representation of the handshake phase
+// String returns the phase as a short lowercase word, such as "initial" or
+// "data". Unknown phases return "unknown".
 func (p HandshakePhase) String() string {
 	switch p {
 	case PhaseInitial:

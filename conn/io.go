@@ -315,9 +315,11 @@ func (nc *Conn) copyDecryptedData(b, decrypted []byte, encryptedLen, decryptedLe
 }
 
 // Encrypt encrypts plaintext data using the connection's cipher state
-// without writing to the underlying connection. This allows callers to
-// separate encryption from wire-level framing (e.g., for NTCP2's
-// SipHash-obfuscated length prefix).
+// without writing to the underlying connection. This lets callers separate
+// encryption from wire-level framing, for example NTCP2's SipHash-obfuscated
+// length prefix.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 //
 // The connection must have completed the Noise handshake.
 // Thread Safety: Same guarantees as Write().
@@ -329,9 +331,11 @@ func (nc *Conn) Encrypt(data []byte) ([]byte, error) {
 }
 
 // Decrypt decrypts ciphertext data using the connection's cipher state
-// without reading from the underlying connection. This allows callers to
-// separate decryption from wire-level framing (e.g., for NTCP2's
-// SipHash-obfuscated length prefix).
+// without reading from the underlying connection. This lets callers separate
+// decryption from wire-level framing, for example NTCP2's SipHash-obfuscated
+// length prefix.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 //
 // The connection must have completed the Noise handshake.
 // Thread Safety: Same guarantees as Read().
@@ -343,12 +347,14 @@ func (nc *Conn) Decrypt(encrypted []byte) ([]byte, error) {
 }
 
 // Underlying returns the underlying net.Conn for direct wire access.
-// This is needed for protocols like NTCP2 that add framing (e.g.,
-// SipHash-obfuscated length prefixes) between the TCP connection and
-// the encrypted Noise frames.
+// This is needed for protocols like NTCP2 that add framing (for example,
+// SipHash-obfuscated length prefixes) between the TCP connection and the
+// encrypted Noise frames.
 //
-// Callers should use Encrypt/Decrypt for crypto and write/read the
-// resulting bytes to/from this connection with their own framing.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+//
+// Callers should use Encrypt and Decrypt for the crypto and write or read
+// the resulting bytes to and from this connection with their own framing.
 func (nc *Conn) Underlying() net.Conn {
 	return nc.underlying
 }
@@ -359,8 +365,11 @@ func (nc *Conn) Config() *ConnConfig {
 }
 
 // GetModifierChain returns the HandshakeModifier chain from the config.
-// Returns nil if no modifiers are configured. NTCP2 framed I/O uses this
-// to apply PhaseData transforms (padding, obfuscation) around Encrypt/Decrypt.
+// It returns nil if no modifiers are configured. NTCP2 framed I/O uses this
+// to apply PhaseData transforms (padding, obfuscation) around Encrypt and
+// Decrypt.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) GetModifierChain() *handshake.ModifierChain {
 	return nc.config.GetModifierChain()
 }

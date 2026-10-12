@@ -45,21 +45,24 @@ const (
 	routerInfoBlockType = 0x02
 )
 
-// Handshake performs the NTCP2 XK three-way handshake with correct wire framing.
+// Handshake performs the NTCP2 three-way handshake (SessionRequest,
+// SessionCreated, SessionConfirmed) over the TCP connection.
 //
-// The standard Noise framing adds a 2-byte length prefix to every handshake
-// message. The NTCP2 spec explicitly forbids length prefixes on messages 1, 2,
-// and 3.  This method writes and reads raw Noise bytes directly over the TCP
-// socket to produce the correct on-wire format:
+// Unlike standard Noise, NTCP2 handshake messages have no length prefix.
+// This method writes and reads raw Noise bytes directly over the socket to
+// produce the correct wire format:
 //
-//   - Message 1 (64 bytes): [AES-obfuscated e (32B)] [EncryptAndHash(options) (16B)] [tag (16B)]
-//   - Message 2 (64 bytes): [AES-obfuscated e (32B)] [EncryptAndHash(options) (16B)] [tag (16B)]
-//   - Message 3 (48 + m3p2Len bytes): [EncryptAndHash(s) (48B)] [EncryptAndHash(RI block) (m3p2Len B)]
+//   - Message 1 (64 bytes): [AES-obfuscated ephemeral key (32B)] [encrypted options (16B)] [tag (16B)]
+//   - Message 2 (64 bytes): [AES-obfuscated ephemeral key (32B)] [encrypted options (16B)] [tag (16B)]
+//   - Message 3 (48 + m3p2Len bytes): [encrypted static key (48B)] [encrypted RouterInfo block (m3p2Len B)]
 //
-// Cleartext padding: Alice sends none (padLen=0). Bob's padding is read,
-// MixHash'd, and discarded per the NTCP2 spec §4.4.
+// After the handshake succeeds, the connection is ready for data-phase I/O
+// (Read/Write). Call PropagateSipHash and PropagatePeerStaticKey as needed
+// by the router transport layer.
 //
 // Handshake must not be called concurrently on the same connection.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	hsStart := time.Now()
 	cfg := c.ntcp2Config.Load()
@@ -174,8 +177,8 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 			Wrapf(err, "failed to propagate SipHash modifier after handshake")
 	}
 
-	// STATE-1 / RACE-3: mark the connection as fully established only after the
-	// SipHash keys are installed. Read() and Write() gate on this flag.
+	// Mark the connection as fully established only after the SipHash keys
+	// are installed. Read() and Write() gate on this flag.
 	c.established.Store(true)
 
 	flog("Handshake", logger.Fields{
@@ -519,8 +522,8 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 // containing Alice's RouterInfo (and any optional padding/options blocks
 // per the NTCP2 spec). The caller is responsible for parsing and storing
 // it for the router transport layer.
-// missingReplayWarnOnce ensures the "no replay detector" warning (AUDIT 5.3)
-// is emitted at most once per process rather than on every inbound handshake.
+// missingReplayWarnOnce ensures the "no replay detector" warning is emitted
+// at most once per process rather than on every inbound handshake.
 var missingReplayWarnOnce sync.Once
 
 // warnMissingReplayDetector logs a one-time warning that the responder is
@@ -619,11 +622,10 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 				Errorf("replay detected: ephemeral key has been seen before within TTL window")
 		}
 	} else {
-		// AUDIT 5.3: replay protection is opt-in. A responder with no
-		// ReplayDetector silently accepts replayed message-1 ephemerals,
-		// contrary to the NTCP2 spec's requirement. Warn once so operators
-		// notice the missing protection rather than running unprotected
-		// without any signal.
+		// Replay protection is opt-in. A responder with no ReplayDetector
+		// silently accepts replayed message-1 ephemerals, contrary to the NTCP2
+		// spec's requirement. Warn once so operators notice the missing
+		// protection rather than running unprotected without any signal.
 		warnMissingReplayDetector()
 	}
 

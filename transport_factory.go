@@ -58,16 +58,17 @@ func openAndWrapTransport[R shutdownRegisterer](
 	return result, nil
 }
 
-// createNewConn establishes a new network connection to the specified address.
-// Returns an error with detailed context if the connection fails.
-// createNewConn establishes a new network connection using net.Dial.
+// createNewConn establishes a new network connection to the specified
+// address using net.Dial. It returns an error with detailed context if the
+// connection fails.
 //
-// NOTE: net.Dial has no timeout - a caller using the non-context Dial/DialWithPool/
-// DialNoise/DialNoiseWithPool variants that route through this function can block
-// indefinitely if the peer never responds to the TCP handshake (e.g. a firewall
-// silently drops SYN packets). Callers that need a bounded connect time should use
-// the *Context variants (DialContext, DialWithPoolContext, etc.), which use
-// createNewConnContext below and honor context cancellation/deadlines.
+// Note: net.Dial has no timeout. A caller using the non-context variants
+// (Dial, DialWithPool, DialNoise, DialNoiseWithPool) that route through this
+// function can block indefinitely if the peer never responds to the TCP
+// handshake (for example, a firewall silently drops SYN packets). Callers
+// that need a bounded connect time should use the *Context variants
+// (DialWithHandshakeContext, DialWithPoolAndHandshakeContext), which honor
+// context cancellation and deadlines.
 func createNewConn(network, addr string) (net.Conn, error) {
 	flog("createNewConn", logger.Fields{"network": network, "address": addr}).Debug("Dialing new connection")
 	conn, err := net.Dial(network, addr)
@@ -79,8 +80,9 @@ func createNewConn(network, addr string) (net.Conn, error) {
 	return conn, nil
 }
 
-// createNewConnContext establishes a new network connection with context support.
-// Returns an error with detailed context if the connection fails.
+// createNewConnContext establishes a new network connection with context
+// support, so the dial can be cancelled or stopped by a deadline. It returns
+// an error with detailed context if the connection fails.
 func createNewConnContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	flog("createNewConnContext", logger.Fields{"network": network, "address": addr}).Debug("Dialing new connection with context")
 	dialer := &net.Dialer{}
@@ -93,8 +95,8 @@ func createNewConnContext(ctx context.Context, network, addr string) (net.Conn, 
 	return conn, nil
 }
 
-// createNoiseConn wraps a network connection with NoiseConn configuration.
-// Returns an error with detailed context if NoiseConn creation fails.
+// createNoiseConn wraps a network connection in a NoiseConn using the given
+// config. It returns an error with detailed context if creation fails.
 func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {
 	flog("createNoiseConn", logger.Fields{"network": network, "address": addr}).Debug("Creating NoiseConn wrapper")
 	noiseConn, err := NewNoiseConn(conn, config)
@@ -106,8 +108,9 @@ func createNoiseConn(conn net.Conn, config *ConnConfig, network, addr string) (*
 	return noiseConn, nil
 }
 
-// createNewListener establishes a new network listener on the specified address.
-// Returns an error with detailed context if the listen call fails.
+// createNewListener establishes a new network listener on the specified
+// address. It returns an error with detailed context if the listen call
+// fails.
 func createNewListener(network, addr string) (net.Listener, error) {
 	flog("createNewListener", logger.Fields{"network": network, "address": addr}).Debug("Creating new listener")
 	listener, err := net.Listen(network, addr)
@@ -119,8 +122,8 @@ func createNewListener(network, addr string) (net.Listener, error) {
 	return listener, nil
 }
 
-// createNoiseListener wraps a network listener with NoiseListener configuration.
-// Returns an error with detailed context if NoiseListener creation fails.
+// createNoiseListener wraps a network listener in a NoiseListener using the
+// given config. It returns an error with detailed context if creation fails.
 func createNoiseListener(listener net.Listener, config *ListenerConfig, network, addr string) (*NoiseListener, error) {
 	noiseListener, err := NewNoiseListener(listener, config)
 	if err != nil {
@@ -130,8 +133,9 @@ func createNoiseListener(listener net.Listener, config *ListenerConfig, network,
 	return noiseListener, nil
 }
 
-// tryGetPooledConn attempts to retrieve a connection from the Default Transport's pool.
-// Returns the connection and a boolean indicating if it came from the pool.
+// tryGetPooledConn attempts to retrieve a connection to addr from the
+// Default Transport's pool. It returns the connection and a boolean
+// indicating whether it came from the pool.
 func tryGetPooledConn(addr string) (net.Conn, bool) {
 	dt := getDefault()
 	dt.mu.RLock()
@@ -146,12 +150,13 @@ func tryGetPooledConn(addr string) (net.Conn, bool) {
 	return nil, false
 }
 
-// createAndHandshakeConn creates a NoiseConn and performs handshake with retry logic.
-// On error, the function closes conn (directly or via noiseConn.Close) so the
-// caller must NOT close conn when an error is returned.
+// createAndHandshakeConn creates a NoiseConn and performs the handshake with
+// retry logic. On error, the function closes conn (directly or via
+// noiseConn.Close), so the caller must NOT close conn when an error is
+// returned.
 //
-// This function delegates to the Default Transport's createAndHandshakeConnTransport
-// to avoid duplicating the wrap-then-handshake logic.
+// It delegates to the Default Transport's createAndHandshakeConnTransport to
+// avoid duplicating the wrap-then-handshake logic.
 func createAndHandshakeConn(ctx context.Context, conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {
 	sm := GetGlobalShutdownManager()
 	return getDefault().createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)

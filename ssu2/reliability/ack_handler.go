@@ -55,6 +55,8 @@ const (
 //     Byte 1: acks minus 1  (run of received packets)
 //
 // Minimum size: 5 bytes (4-byte Through PN + 1-byte acnt)
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type ACKHandler struct {
 	mu sync.Mutex
 
@@ -281,8 +283,8 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 		delete(h.pendingACKs, pn)
 	}
 
-	// cursor tracks the next position below the last acked packet
-	// Use int64 to detect underflow from malformed ACK ranges (AUDIT H-7).
+	// cursor tracks the next position below the last acked packet.
+	// Use int64 to detect underflow from malformed ACK ranges.
 	base := throughPN - uint32(acnt)
 	if base == 0 {
 		return ackedPackets, nil

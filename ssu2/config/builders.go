@@ -8,8 +8,11 @@ import (
 	"github.com/go-i2p/go-noise/internal/baseconfig"
 )
 
-// WithPattern sets the Noise protocol pattern.
-// For SSU2, this should typically remain "XK".
+// WithPattern sets the Noise protocol pattern. For SSU2, this should
+// typically remain "XK".
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for
+// details.
 func (sc *SSU2Config) WithPattern(pattern string) *SSU2Config {
 	sc.Pattern = pattern
 	return sc
@@ -24,10 +27,11 @@ func (sc *SSU2Config) WithAllowLoopback(allow bool) *SSU2Config {
 	return sc
 }
 
-// WithStaticKey sets the static key for this connection.
-// key must be 32 bytes for Curve25519.
-// If key length is invalid, this setter is a no-op and validation will fail
-// later in Validate().
+// WithStaticKey sets the static key for this connection. The static key is
+// the long-term X25519 key pair that identifies this router to its peers.
+// key must be 32 bytes (the size of an X25519 public key). If the key length
+// is invalid, this setter does nothing and validation will fail later in
+// Validate().
 func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {
 	if len(key) == 32 {
 		sc.StaticKey = make([]byte, 32)
@@ -36,11 +40,17 @@ func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {
 	return sc
 }
 
-// WithLocalRouterInfo sets the local RouterInfo to transmit during handshake.
+// WithLocalRouterInfo sets the local RouterInfo to transmit during the
+// handshake. A RouterInfo is the I2P data structure that describes a router:
+// its addresses, identity, and capabilities.
+//
 // The RouterInfo MUST contain an SSU2 RouterAddress with the "s" parameter
-// matching the static public key derived from StaticKey, otherwise peers
+// matching the static public key derived from StaticKey; otherwise peers
 // with strict static key verification will reject the handshake.
+//
 // Required for initiator connections; optional for responders.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (sc *SSU2Config) WithLocalRouterInfo(routerInfo []byte) *SSU2Config {
 	if len(routerInfo) > 0 {
 		sc.LocalRouterInfo = make([]byte, len(routerInfo))
@@ -58,11 +68,11 @@ func (sc *SSU2Config) WithRemoteRouterHash(hash data.Hash) *SSU2Config {
 }
 
 // WithRemoteStaticKey sets the remote peer's X25519 static public key.
-// Required for initiator connections. The key must be 32 bytes (Curve25519).
+// Required for initiator connections. The key must be 32 bytes.
+//
 // This is the "s" parameter from the peer's RouterAddress options, NOT the
-// router hash.
-// If key length is invalid, this setter is a no-op and validation will fail
-// later in Validate().
+// router hash. If the key length is invalid, this setter does nothing and
+// validation will fail later in Validate().
 func (sc *SSU2Config) WithRemoteStaticKey(key []byte) *SSU2Config {
 	if len(key) == 32 {
 		sc.RemoteStaticKey = make([]byte, 32)
@@ -102,8 +112,13 @@ func (sc *SSU2Config) WithRetryBackoff(backoff time.Duration) *SSU2Config {
 	return sc
 }
 
-// WithChaChaObfuscation enables or disables ChaCha20-based ephemeral key obfuscation.
-// When enabled with a custom IV, the IV must be exactly 8 bytes.
+// WithChaChaObfuscation enables or disables ChaCha20-based ephemeral key
+// obfuscation. During the handshake, the ephemeral keys are sent in
+// cleartext; SSU2 hides them by encrypting them with ChaCha20 so that
+// passive observers cannot easily identify SSU2 traffic. When enabled with
+// a custom IV, the IV must be exactly 8 bytes.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (sc *SSU2Config) WithChaChaObfuscation(enabled bool, customIV []byte) *SSU2Config {
 	sc.EnableChaChaObfuscation = enabled
 	if len(customIV) == 8 {
@@ -113,8 +128,9 @@ func (sc *SSU2Config) WithChaChaObfuscation(enabled bool, customIV []byte) *SSU2
 	return sc
 }
 
-// WithMTU sets the Maximum Transmission Unit for UDP packets.
-// Valid range: 1280-1500 bytes. Default is 1280 (IPv6 minimum).
+// WithMTU sets the Maximum Transmission Unit for UDP packets. The MTU is
+// the largest packet size that can be sent without being split. Valid range:
+// 1280-1500 bytes. Default is 1280 (the IPv6 minimum).
 func (sc *SSU2Config) WithMTU(mtu int) *SSU2Config {
 	if mtu >= 1280 && mtu <= 1500 {
 		sc.MTU = mtu
@@ -133,10 +149,14 @@ func (sc *SSU2Config) WithPacketSettings(maxSize int, fragmentation bool) *SSU2C
 	return sc
 }
 
-// WithPaddingSettings configures SSU2 frame padding parameters.
-// enabled enables random padding (default: true).
-// minPad and maxPad set the padding size range (default: 0-64 bytes).
-// ratio sets the padding amount as ratio of data size (0.0-15.9375).
+// WithPaddingSettings configures SSU2 frame padding parameters. Padding is
+// random extra data added to packets so that packet sizes do not reveal how
+// much real data they carry.
+//
+//   - enabled enables random padding (default: true).
+//   - minPad and maxPad set the padding size range (default: 0-64 bytes).
+//   - ratio sets the padding amount as a ratio of the data size
+//     (0.0-15.9375).
 func (sc *SSU2Config) WithPaddingSettings(enabled bool, minPad, maxPad int, ratio float64) *SSU2Config {
 	sc.PaddingEnabled = enabled
 	if minPad >= 0 {
@@ -158,8 +178,9 @@ func (sc *SSU2Config) WithConnectionID(connID uint64) *SSU2Config {
 	return sc
 }
 
-// WithKeepalive sets the interval between keepalive packets.
-// UDP connections require active keepalive to maintain state.
+// WithKeepalive sets the interval between keepalive packets. UDP
+// connections require active keepalive to maintain state, because unlike TCP
+// there is no built-in mechanism to detect a dead peer.
 func (sc *SSU2Config) WithKeepalive(interval time.Duration) *SSU2Config {
 	sc.KeepaliveInterval = interval
 	return sc
@@ -191,14 +212,19 @@ func (sc *SSU2Config) WithMaxClockSkew(skew time.Duration) *SSU2Config {
 	return sc
 }
 
-// WithReceiveWindowSize sets the maximum number of out-of-order packets
-// the receive window will buffer. Use 0 for DefaultMaxWindowSize.
+// WithReceiveWindowSize sets the maximum number of out-of-order packets the
+// receive window will buffer. The receive window holds packets that arrive
+// out of order until the missing packets arrive. Use 0 for
+// DefaultMaxWindowSize.
 func (sc *SSU2Config) WithReceiveWindowSize(size uint) *SSU2Config {
 	sc.ReceiveWindowSize = size
 	return sc
 }
 
-// WithTokenCacheMaxSize sets the maximum number of retry tokens cached by the listener.
+// WithTokenCacheMaxSize sets the maximum number of retry tokens cached by
+// the listener. A retry token is a short-lived credential a listener issues
+// to a peer so that the peer can retry a handshake without being rate-limited
+// again.
 func (sc *SSU2Config) WithTokenCacheMaxSize(maxSize int) *SSU2Config {
 	if maxSize > 0 {
 		sc.TokenCacheMaxSize = maxSize
@@ -207,8 +233,8 @@ func (sc *SSU2Config) WithTokenCacheMaxSize(maxSize int) *SSU2Config {
 }
 
 // WithGlobalTokenIssuanceRate sets the global cap on retry-token issuance
-// across all source addresses (tokens/sec). Pass 0 to disable issuance
-// entirely. Negative values are clamped to 0.
+// across all source addresses (tokens per second). Pass 0 to disable
+// issuance entirely. Negative values are clamped to 0.
 func (sc *SSU2Config) WithGlobalTokenIssuanceRate(rate float64) *SSU2Config {
 	if rate < 0 {
 		rate = 0
@@ -262,8 +288,8 @@ func (sc *SSU2Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *S
 	return sc
 }
 
-// WithRouterInfoValidator sets the RouterInfo validation callback.
-// The validator is invoked on the responder after handshake completion to verify
+// WithRouterInfoValidator sets the RouterInfo validation callback. The
+// validator is invoked on the responder after handshake completion to verify
 // that the peer's RouterInfo contains the Noise-authenticated static key.
 func (sc *SSU2Config) WithRouterInfoValidator(validator func(routerInfo, authenticatedStaticKey []byte) error) *SSU2Config {
 	sc.RouterInfoValidator = validator

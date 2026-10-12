@@ -14,19 +14,20 @@ import (
 	"github.com/samber/oops"
 )
 
-// Handshake performs a single Noise Protocol handshake attempt.
-// This must be called before using Read/Write operations.
+// Handshake runs a single Noise Protocol handshake with the other side. It
+// must be called before Read and Write can be used.
 //
-// Handshake always performs exactly one attempt and does not use the
-// HandshakeRetries or RetryBackoff configuration fields. To perform a
-// handshake with automatic retries and exponential backoff, use
-// HandshakeWithRetry instead.
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
-// Thread Safety: This method is safe for concurrent use but handshake operations
-// are serialized. Only one handshake can be in progress at a time per connection.
-// If multiple goroutines call Handshake concurrently, they will be queued and
-// execute sequentially. If the handshake is already complete, subsequent calls
-// will return immediately without error.
+// Handshake always makes exactly one attempt and ignores the HandshakeRetries
+// and RetryBackoff settings. If you want automatic retries with exponential
+// backoff, use HandshakeWithRetry instead.
+//
+// Thread Safety: This method is safe for concurrent use, but handshake
+// operations are serialized. Only one handshake can be in progress at a time
+// per connection. If multiple goroutines call Handshake at once, they are
+// queued and run one after another. If the handshake is already complete,
+// later calls return immediately without error.
 func (nc *Conn) Handshake(ctx context.Context) error {
 	nc.handshakeMutex.Lock()
 	defer nc.handshakeMutex.Unlock()
@@ -322,8 +323,8 @@ func (nc *Conn) executeRoleBasedHandshake(ctx context.Context) error {
 	// deadline to now so a blocked Read/Write inside the handshake aborts
 	// promptly instead of waiting out the full HandshakeTimeout. Without
 	// this, ctx.Done() firing early has no effect on an in-progress
-	// blocking I/O call — this was empirically confirmed to block for the
-	// full timeout despite early cancellation (see AUDIT.md HIGH finding).
+	// blocking I/O call, which would block for the full timeout despite
+	// early cancellation.
 	//
 	// Torn down via the deferred close(watcherDone) below, which always
 	// runs before this function returns (registered after, so it fires
@@ -392,14 +393,16 @@ func (nc *Conn) resetHandshakeState() {
 	nc.stateMutex.Unlock()
 }
 
-// WriteHandshakeMsgToBytes executes one Noise handshake outbound step with the
-// given payload, runs it through the modifier chain, and returns the raw wire
-// bytes WITHOUT any length-prefix framing. This is used by protocol-specific
-// handshake implementations (e.g. NTCP2) that require exact control over wire
-// framing.
+// WriteHandshakeMsgToBytes performs one outbound step of the Noise handshake
+// with the given payload, runs the result through the modifier chain, and
+// returns the raw wire bytes without any length-prefix framing. Protocol
+// implementations that need exact control over how messages are framed (for
+// example, NTCP2) use this instead of the built-in Handshake.
 //
-// The caller is responsible for calling StartHandshake before the first call
-// and CompleteHandshake after the final message.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+//
+// The caller must call StartHandshake before the first call and
+// CompleteHandshake after the final message.
 func (nc *Conn) WriteHandshakeMsgToBytes(phase handshake.HandshakePhase, payload []byte) ([]byte, error) {
 	msg, cs1, cs2, err := nc.handshakeState.WriteMessage(nil, payload)
 	if err != nil {
@@ -419,10 +422,10 @@ func (nc *Conn) WriteHandshakeMsgToBytes(phase handshake.HandshakePhase, payload
 // ReadHandshakeMsgFromBytes processes raw inbound Noise handshake bytes,
 // applies the modifier chain, runs the Noise ReadMessage, and returns the
 // decrypted payload. The caller must supply exactly the bytes that form the
-// wire message (no length prefix).
+// wire message, with no length prefix.
 //
-// The caller is responsible for calling StartHandshake before the first call
-// and CompleteHandshake after the final message.
+// The caller must call StartHandshake before the first call and
+// CompleteHandshake after the final message.
 func (nc *Conn) ReadHandshakeMsgFromBytes(phase handshake.HandshakePhase, wireData []byte) ([]byte, error) {
 	data, err := nc.applyHandshakeInbound(phase, wireData)
 	if err != nil {
@@ -439,25 +442,27 @@ func (nc *Conn) ReadHandshakeMsgFromBytes(phase handshake.HandshakePhase, wireDa
 	return payload, nil
 }
 
-// StartHandshake transitions the connection to the handshaking state and
-// records the handshake start time. Call this once before the first
-// WriteHandshakeMsgToBytes or ReadHandshakeMsgFromBytes call.
+// StartHandshake moves the connection into the handshaking state and records
+// the start time. Call this once before the first WriteHandshakeMsgToBytes or
+// ReadHandshakeMsgFromBytes call.
 func (nc *Conn) StartHandshake() {
 	nc.setState(mod.StateHandshaking)
 	nc.metrics.SetHandshakeStart()
 }
 
 // CompleteHandshake marks the connection as fully established after the
-// final handshake message has been processed. Call this once after the
-// last WriteHandshakeMsgToBytes / ReadHandshakeMsgFromBytes call.
+// final handshake message has been processed. Call this once after the last
+// WriteHandshakeMsgToBytes or ReadHandshakeMsgFromBytes call.
 func (nc *Conn) CompleteHandshake() {
 	nc.markHandshakeComplete()
 }
 
-// RunPostHandshakeHook executes the PostHandshakeHook configured on this
-// connection, if one is set. Protocol-specific handshake implementations
-// (e.g. NTCP2Conn.Handshake) must call this before CompleteHandshake so
-// that post-handshake key derivation (e.g. SipHash keys) runs correctly.
+// RunPostHandshakeHook runs the PostHandshakeHook set on this connection, if
+// one is set. Protocol-specific handshake implementations (for example,
+// NTCP2Conn.Handshake) must call this before CompleteHandshake so that
+// post-handshake key derivation (for example, SipHash keys) runs correctly.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 //
 // Returns nil if no hook is configured.
 func (nc *Conn) RunPostHandshakeHook() error {
@@ -468,15 +473,18 @@ func (nc *Conn) RunPostHandshakeHook() error {
 }
 
 // FailHandshake resets the handshake state machine so that a fresh attempt
-// can be made (or so that close/cleanup code sees a consistent state).
+// can be made, or so that close and cleanup code sees a consistent state.
 func (nc *Conn) FailHandshake() {
 	nc.resetHandshakeState()
 	nc.setState(mod.StateInit)
 }
 
 // GetHandshakeHash returns the hash of the handshake transcript from the
-// underlying noise.HandshakeState. This can be used by protocol layers to
-// derive post-handshake key material (e.g. SipHash keys for NTCP2 data phase).
+// underlying noise.HandshakeState. Protocol layers can use this to derive
+// post-handshake key material, such as the SipHash keys for the NTCP2 data
+// phase.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) GetHandshakeHash() []byte {
 	if nc.handshakeState == nil {
 		return nil
@@ -491,10 +499,12 @@ func (nc *Conn) GetHandshakeHash() []byte {
 }
 
 // MixHashData mixes additional data into the Noise symmetric hash state.
-// This is required by the NTCP2 spec to authenticate cleartext padding bytes
-// that appear after AEAD frames in messages 1 and 2 (§4.4.1, §4.4.2).
-// Call this after reading and discarding cleartext padding, passing the raw
-// padding bytes so that the hash state stays in sync with the peer.
+// The NTCP2 spec requires this to authenticate cleartext padding bytes that
+// appear after AEAD frames in messages 1 and 2 (§4.4.1, §4.4.2). Call this
+// after reading and discarding cleartext padding, passing the raw padding
+// bytes so that the hash state stays in sync with the peer.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func (nc *Conn) MixHashData(data []byte) {
 	if nc.handshakeState != nil && len(data) > 0 {
 		nc.handshakeState.MixHash(data)

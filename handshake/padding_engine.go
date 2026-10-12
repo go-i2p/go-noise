@@ -8,23 +8,31 @@ import (
 	"github.com/samber/oops"
 )
 
-// Shared I2P padding constants used by both NTCP2 and SSU2 transports.
+// Shared I2P padding constants used by both the NTCP2 and SSU2 transports.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 const (
-	// I2PPaddingBlockType is the I2P block type identifier for padding (type 254).
+	// I2PPaddingBlockType is the I2P block type identifier for padding
+	// (type 254).
 	I2PPaddingBlockType byte = 254
 
-	// I2PBlockHeaderSize is the size of an I2P block header: [type:1][size:2].
+	// I2PBlockHeaderSize is the size of an I2P block header:
+	// [type:1][size:2].
 	I2PBlockHeaderSize = 3
 
-	// I2PMaxBlockDataSize is the maximum data size for a single I2P block (65516 bytes).
+	// I2PMaxBlockDataSize is the maximum data size for a single I2P block
+	// (65516 bytes).
 	I2PMaxBlockDataSize = 65516
 
-	// I2PMaxPaddingRatio is the maximum padding ratio per I2P spec (4.4 fixed-point format).
+	// I2PMaxPaddingRatio is the maximum padding ratio allowed by the I2P
+	// spec (4.4 fixed-point format).
 	I2PMaxPaddingRatio = 15.9375
 )
 
-// PaddingEngineConfig holds shared padding parameters for the engine.
-// The engine does not manage concurrency — callers must handle locking.
+// PaddingEngineConfig holds the shared padding parameters for a
+// [PaddingEngine]. The engine does not manage concurrency — callers must
+// handle locking.
 type PaddingEngineConfig struct {
 	MinPadding   int
 	MaxPadding   int
@@ -33,16 +41,17 @@ type PaddingEngineConfig struct {
 	Domain       string // Error domain for oops messages (e.g., "ntcp2", "ssu2")
 }
 
-// PaddingEngine provides shared padding computation and I2P block wire format
-// operations for transport protocols. Both NTCP2 and SSU2 padding modifiers
-// embed this engine and add protocol-specific constraints.
+// PaddingEngine provides the shared padding math and I2P block wire format
+// used by the transport protocols. Both the NTCP2 and SSU2 padding modifiers
+// embed this engine and add their own protocol-specific constraints.
 //
-// The engine is NOT thread-safe. The embedding modifier handles locking.
+// The engine is NOT thread-safe. The modifier that embeds it handles locking.
 type PaddingEngine struct {
 	Config PaddingEngineConfig
 }
 
-// NewPaddingEngine creates a validated padding engine.
+// NewPaddingEngine creates a padding engine after validating its config. It
+// returns an error if any parameter is out of the I2P-specified range.
 func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error) {
 	flog("NewPaddingEngine", logger.Fields{"domain": config.Domain, "min": config.MinPadding, "max": config.MaxPadding}).Debug("Creating padding engine")
 	if err := ValidatePaddingParams(config.Domain, config.MinPadding, config.MaxPadding, config.PaddingRatio); err != nil {
@@ -51,7 +60,11 @@ func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error) {
 	return &PaddingEngine{Config: config}, nil
 }
 
-// ValidatePaddingParams validates common I2P padding parameters.
+// ValidatePaddingParams checks that a set of I2P padding parameters is valid:
+// the minimum is not negative, the maximum is at least the minimum, the
+// maximum does not exceed [I2PMaxBlockDataSize], and the ratio is between 0.0
+// and [I2PMaxPaddingRatio]. It returns an error describing the first problem
+// found.
 func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRatio float64) error {
 	flog("ValidatePaddingParams", logger.Fields{"domain": domain, "min": minPadding, "max": maxPadding, "ratio": paddingRatio}).Debug("Validating padding params")
 	if minPadding < 0 {
@@ -90,13 +103,15 @@ func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRat
 	return nil
 }
 
-// ShouldSkipPadding returns true when no padding is configured.
+// ShouldSkipPadding reports whether no padding is configured (minimum,
+// maximum, and ratio are all zero).
 func (pe *PaddingEngine) ShouldSkipPadding() bool {
 	return pe.Config.MinPadding == 0 && pe.Config.MaxPadding == 0 && pe.Config.PaddingRatio == 0.0
 }
 
-// CalculatePaddingSize computes the padding size using ratio, random variation,
-// and min/max enforcement. The result is clamped to [MinPadding, MaxPadding].
+// CalculatePaddingSize computes how many bytes of padding to add for a
+// message of the given length. It starts from the padding ratio, applies
+// random variation, and clamps the result to [MinPadding, MaxPadding].
 func (pe *PaddingEngine) CalculatePaddingSize(dataLen int) int {
 	if pe.ShouldSkipPadding() {
 		return 0
@@ -110,7 +125,9 @@ func (pe *PaddingEngine) CalculatePaddingSize(dataLen int) int {
 	return result
 }
 
-// UpdateParams updates the engine's padding parameters after validation.
+// UpdateParams changes the engine's padding parameters. The new values are
+// validated first; if any is out of range, the parameters are left unchanged
+// and an error is returned.
 func (pe *PaddingEngine) UpdateParams(minPad, maxPad int, ratio float64) error {
 	flog("PaddingEngine.UpdateParams", logger.Fields{"domain": pe.Config.Domain, "min": minPad, "max": maxPad, "ratio": ratio}).Debug("Updating padding params")
 	if err := ValidatePaddingParams(pe.Config.Domain, minPad, maxPad, ratio); err != nil {
@@ -122,7 +139,10 @@ func (pe *PaddingEngine) UpdateParams(minPad, maxPad int, ratio float64) error {
 	return nil
 }
 
-// EstimatePaddingSize estimates padding for bandwidth calculations.
+// EstimatePaddingSize estimates how much padding a message of the given
+// length will get, for bandwidth calculations. With a ratio configured it
+// uses the ratio (clamped to [MinPadding, MaxPadding]); otherwise it uses the
+// midpoint of the min/max range.
 func (pe *PaddingEngine) EstimatePaddingSize(dataLen int) int {
 	if pe.Config.PaddingRatio > 0.0 {
 		ratioPadding := int(float64(dataLen) * pe.Config.PaddingRatio)
@@ -137,12 +157,11 @@ func (pe *PaddingEngine) EstimatePaddingSize(dataLen int) int {
 	return (pe.Config.MinPadding + pe.Config.MaxPadding) / 2
 }
 
-// AddCleartextPadding appends cryptographically random bytes after the data.
 // addPaddingCore is the shared core logic for adding padding to data.
-// header is an optional byte slice prepended to the padding data.
-// If header is nil, padding is appended directly. If header is provided,
-// it is included before the padding data, and the header must be pre-filled
-// by the caller.
+// header is an optional byte slice placed between the data and the padding.
+// If header is nil, padding is appended directly after the data. If header is
+// provided, it is included before the padding data, and the caller must
+// pre-fill it.
 func (pe *PaddingEngine) addPaddingCore(data, header []byte, paddingSize int) ([]byte, error) {
 	totalSize := len(data) + len(header) + paddingSize
 	result := make([]byte, totalSize)
@@ -167,12 +186,15 @@ func (pe *PaddingEngine) addPaddingCore(data, header []byte, paddingSize int) ([
 	return result, nil
 }
 
-// AddCleartextPadding appends random padding directly to the data.
+// AddCleartextPadding appends cryptographically random padding bytes directly
+// after the data, with no block header.
 func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]byte, error) {
 	return pe.addPaddingCore(data, nil, paddingSize)
 }
 
-// AddAEADPadding appends a padding block in I2P format: [type:1][size:2][random padding].
+// AddAEADPadding appends a padding block in I2P block format:
+// [type:1][size:2][random padding], where type is [I2PPaddingBlockType] and
+// size is the padding size as a 2-byte big-endian number.
 func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, error) {
 	// Build I2P block header: [type:1][size:2]
 	header := make([]byte, I2PBlockHeaderSize)
@@ -182,20 +204,21 @@ func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, e
 	return pe.addPaddingCore(data, header, paddingSize)
 }
 
-// RemoveTrailingAEADPadding removes a trailing I2P padding block (type 254)
-// by scanning candidate paddingSize values in [MinPadding, maxScanPadding].
-// maxScanPadding further limits the search range (e.g. to the sender's
-// configured maximum); a value <= 0 means "no additional limit".
+// RemoveTrailingAEADPadding removes a trailing I2P padding block
+// ([I2PPaddingBlockType]) by scanning candidate padding sizes in
+// [MinPadding, maxScanPadding]. maxScanPadding further limits the search
+// range (for example, to the sender's configured maximum); a value <= 0
+// means "no additional limit".
 //
 // Because the preceding application payload is opaque (not itself I2P-block
-// formatted — see AUDIT.md), a candidate header can in principle appear more
-// than once by coincidence. Rather than silently accepting the first match
-// found (which could silently strip the wrong boundary and corrupt data),
-// this function scans the *entire* bounded window and only succeeds when
-// exactly one candidate matches. Zero candidates is treated as "no padding
-// present" (the legitimate outcome when the sender's configured padding size
-// was 0, so no block was ever appended). More than one candidate is treated
-// as an unresolvable ambiguity and fails closed with an error, rather than
+// formatted), a candidate header can in principle appear more than once by
+// coincidence. Rather than silently accepting the first match found (which
+// could strip the wrong boundary and corrupt data), this function scans the
+// entire bounded window and only succeeds when exactly one candidate
+// matches. Zero candidates is treated as "no padding present" (the
+// legitimate outcome when the sender's configured padding size was 0, so no
+// block was ever appended). More than one candidate is treated as an
+// unresolvable ambiguity and fails closed with an error, rather than
 // guessing — the caller should abort the connection.
 func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding int) ([]byte, error) {
 	flog("PaddingEngine.RemoveTrailingAEADPadding", logger.Fields{"data_len": len(data), "max_scan": maxScanPadding}).Debug("Removing trailing AEAD padding")

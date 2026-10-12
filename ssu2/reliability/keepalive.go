@@ -1,4 +1,31 @@
-// Package reliability provides SSU2 connection reliability components.
+// Package reliability provides the components that make SSU2's UDP
+// transport dependable: acknowledgments, retransmission tracking,
+// round-trip time estimation, congestion control, out-of-order buffering,
+// and keepalives.
+//
+// # Why SSU2 needs these
+//
+// SSU2 runs over UDP, which delivers packets fast but with no guarantees:
+// packets can be lost, arrive out of order, or be duplicated. This package
+// adds the missing guarantees on top of UDP.
+//
+// # What this package provides
+//
+//   - ACKHandler: generates and processes ACK blocks (block type 12),
+//     which tell the peer which packets arrived and which are missing.
+//   - RTTEstimator: measures round-trip time using the algorithm from
+//     RFC 6298, and derives the retransmission timeout (RTO).
+//   - CongestionController: implements Westwood+ congestion control,
+//     which adapts the send rate to the available bandwidth.
+//   - ReceiveWindow: buffers out-of-order packets and releases them in
+//     sequence, and detects duplicates.
+//   - KeepaliveManager: sends periodic keepalive packets so the UDP
+//     connection (and any NAT mapping) stays alive.
+//
+// ACKs and nacks are adapted from QUIC; packet numbering is adapted from
+// WireGuard and QUIC.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 package reliability
 
 import (
@@ -24,8 +51,11 @@ type SendReceiver interface {
 //  2. Detects dead connections through lack of peer response
 //  3. Maintains minimal overhead by piggybacking on data packets when possible
 //
-// Per ssu2.rst specification, the default keepalive interval is 15 seconds.
-// Dead connection detection occurs after 3x the keepalive interval with no response.
+// Per the SSU2 specification, the default keepalive interval is 15 seconds.
+// Dead connection detection occurs after 3x the keepalive interval with no
+// response.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 type KeepaliveManager struct {
 	// conn is the SSU2 connection this manager belongs to
 	conn SendReceiver
@@ -58,9 +88,8 @@ type KeepaliveManager struct {
 	// started indicates if the manager is currently running
 	started bool
 
-	// keepaliveFailures counts consecutive/total SendKeepalive errors for
-	// operational observability (see AUDIT.md "Keepalive send failure is
-	// silently dropped").
+	// keepaliveFailures counts SendKeepalive errors for operational
+	// observability.
 	keepaliveFailures atomic.Int64
 }
 

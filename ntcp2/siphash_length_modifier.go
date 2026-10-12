@@ -5,18 +5,25 @@ import (
 )
 
 // SipHashLengthModifier implements NTCP2's SipHash-2-4 length obfuscation
-// for data phase frame lengths. The canonical implementation lives in
-// handshake/siphash; this alias makes the type directly accessible from
-// the ntcp2 package without an extra import.
+// for data phase frame lengths.
+//
+// The canonical implementation lives in handshake/siphash; this alias makes
+// the type directly accessible from the ntcp2 package without an extra
+// import.
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 type SipHashLengthModifier = pkgsiphash.LengthModifier
 
 // NewSipHashLengthModifier creates a new SipHash length obfuscation modifier
-// with shared keys for both directions. The canonical implementation lives
-// in handshake/siphash; this re-exports it for convenience.
+// with shared keys for both directions.
+//
+// The canonical implementation lives in handshake/siphash; this re-exports
+// it for convenience.
 var NewSipHashLengthModifier = pkgsiphash.NewLengthModifier
 
 // NewSipHashLengthModifierDirectional creates a SipHash length obfuscation
-// modifier with per-direction keys as required by the NTCP2 spec.
+// modifier with per-direction keys, as required by the NTCP2 spec.
+//
 // The canonical implementation lives in handshake/siphash; this re-exports
 // it for convenience.
 var NewSipHashLengthModifierDirectional = pkgsiphash.NewLengthModifierDirectional

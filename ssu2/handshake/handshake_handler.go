@@ -15,10 +15,13 @@ import (
 // SSU2ProtocolName is the Noise protocol name for SSU2, as defined in the
 // I2P SSU2 specification. It indicates the XK pattern with ChaCha20
 // obfuscation and three modified handshake messages.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 const SSU2ProtocolName = "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256"
 
-// HandshakeHandler manages SSU2 handshake message processing using the XK pattern.
-// The XK pattern provides forward secrecy and responder authentication:
+// HandshakeHandler manages SSU2 handshake message processing using the XK
+// pattern. The XK pattern provides forward secrecy and responder
+// authentication:
 //
 // Pre-message: ← s (responder's static key known to initiator)
 //
@@ -35,9 +38,12 @@ const SSU2ProtocolName = "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256"
 //	(transport phase begins)
 //
 // The handshake establishes a secure channel with:
-// - Forward secrecy via ephemeral keys
-// - Responder authentication via Bob's static key
-// - DPI resistance via header encryption
+//   - Forward secrecy via ephemeral keys
+//   - Responder authentication via Bob's static key
+//   - DPI resistance via header encryption
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for
+// details on the XK pattern.
 type HandshakeHandler struct {
 	// initiator determines if we initiate (true) or respond (false)
 	initiator bool
@@ -77,11 +83,11 @@ type HandshakeHandler struct {
 
 	// peerRouterInfo stores the raw RouterInfo block received during
 	// SessionConfirmed processing. Used for post-handshake validation
-	// against the Noise-authenticated static key (C-2).
+	// against the Noise-authenticated static key.
 	peerRouterInfo []byte
 
 	// maxClockSkew is the maximum allowed difference between local and
-	// remote timestamps (G-1). If > 0, validateHandshakeBlocks rejects
+	// remote timestamps. If > 0, validateHandshakeBlocks rejects
 	// DateTime blocks whose timestamp differs from local time by more
 	// than this value. Set from SSU2Config.MaxClockSkew.
 	maxClockSkew time.Duration
@@ -115,9 +121,13 @@ func buildSSU2Prologue() []byte {
 }
 
 // NewHandshakeHandler creates a new SSU2 handshake handler.
-// For initiators, remoteStaticKey must be provided (responder's public key).
-// For responders, remoteStaticKey is nil and will be learned during handshake.
-// The prologue binds the Noise handshake to SSU2 session context; pass nil to omit.
+//
+//   - For initiators, remoteStaticKey must be provided (the responder's
+//     public key).
+//   - For responders, remoteStaticKey is nil and will be learned during
+//     the handshake.
+//   - The prologue binds the Noise handshake to SSU2 session context;
+//     pass nil to omit.
 func NewHandshakeHandler(initiator bool, staticKey, remoteStaticKey, prologue []byte) (*HandshakeHandler, error) {
 	flog("NewHandshakeHandler", logger.Fields{"initiator": initiator}).Debug("Creating new HandshakeHandler")
 	if len(staticKey) != 32 {
@@ -182,11 +192,16 @@ func NewHandshakeHandler(initiator bool, staticKey, remoteStaticKey, prologue []
 	return handler, nil
 }
 
-// NewHandshakeHandlerWithKeys creates a new SSU2 handshake handler with a full DHKey.
-// This is useful when you already have a generated keypair from noise.DH25519.GenerateKeypair().
-// For initiators, remoteStaticKey must be provided (responder's public key).
-// For responders, remoteStaticKey is nil and will be learned during handshake.
-// The prologue binds the Noise handshake to SSU2 session context; pass nil to omit.
+// NewHandshakeHandlerWithKeys creates a new SSU2 handshake handler with a
+// full DHKey. This is useful when you already have a generated keypair
+// from noise.DH25519.GenerateKeypair().
+//
+//   - For initiators, remoteStaticKey must be provided (the responder's
+//     public key).
+//   - For responders, remoteStaticKey is nil and will be learned during
+//     the handshake.
+//   - The prologue binds the Noise handshake to SSU2 session context;
+//     pass nil to omit.
 func NewHandshakeHandlerWithKeys(initiator bool, staticKeypair noise.DHKey, remoteStaticKey, prologue []byte) (*HandshakeHandler, error) {
 	flog("NewHandshakeHandlerWithKeys", logger.Fields{"initiator": initiator}).Debug("Creating new HandshakeHandler with keys")
 	if len(staticKeypair.Private) != 32 {
@@ -295,7 +310,7 @@ func (h *HandshakeHandler) PeerOptions() *OptionsParams {
 }
 
 // LocalOptions returns the locally configured Options parameters, or nil
-// if none were set via SetLocalOptions (G-6).
+// if none were set via SetLocalOptions.
 func (h *HandshakeHandler) LocalOptions() *OptionsParams {
 	return h.localOptions
 }
@@ -392,7 +407,7 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 	if h.localOptions != nil {
 		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, h.localOptions.Serialize()))
 	} else {
-		// Default 12-byte Options block per spec §Options Block (M-2).
+		// Default 12-byte Options block per spec §Options Block.
 		optData := make([]byte, 12)
 		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, optData))
 	}
@@ -417,7 +432,7 @@ func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageT
 		}
 	}
 
-	// Per spec §Session Request/Created, DateTime is required (M-1).
+	// Per spec §Session Request/Created, DateTime is required.
 	if !hasDateTime {
 		return oops.Errorf("DateTime block required in message type %d per SSU2 spec", messageType)
 	}
@@ -427,7 +442,7 @@ func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageT
 
 // validateTimestampSkew checks that the remote timestamp is within
 // maxClockSkew of local time. If maxClockSkew is 0, skew validation
-// is disabled (G-1).
+// is disabled.
 func (h *HandshakeHandler) validateTimestampSkew(dateTimeData []byte) error {
 	if h.maxClockSkew <= 0 {
 		return nil
@@ -449,7 +464,7 @@ func (h *HandshakeHandler) validateTimestampSkew(dateTimeData []byte) error {
 // token may be nil for initial requests, or an 8-byte slice for Retry sessions.
 func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uint8, sourceConnID, destConnID uint64, token []byte) (*SSU2Packet, error) {
 	// Per SSU2 spec §Session Request: destConnID=0 is only valid for
-	// the initial SessionRequest. Reject zero for all other message types (C-1).
+	// the initial SessionRequest. Reject zero for all other message types.
 	if destConnID == 0 && msgType != MessageTypeSessionRequest {
 		return nil, oops.Errorf("destConnID=0 is only allowed for SessionRequest (type %d), got type %d", MessageTypeSessionRequest, msgType)
 	}
@@ -554,13 +569,15 @@ func (h *HandshakeHandler) updateCipherStates(cs1, cs2 *noise.CipherState) {
 // the SSU2 specification:
 //
 //	keydata = HKDF(key, ZEROLEN, "HKDFSSU2DataKeys", 64)
-//	k_data       = keydata[0:31]
-//	k_header_2   = keydata[32:63]
+//	k_data       = keydata[0:32]
+//	k_header_2   = keydata[32:64]
 //
 // where "key" is the split cipher key for each direction (k_ab or k_ba).
 // This method installs k_data into each cipher state (replacing the raw
 // split key) so that data-phase AEAD uses the spec-mandated derived key.
 // Returns the send-direction k_header_2 and recv-direction k_header_2.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) DeriveHeaderKeys() (sendKHeader2, recvKHeader2 []byte, err error) {
 	return DeriveHeaderKeys(h.sendCipher, h.recvCipher)
 }
@@ -600,7 +617,7 @@ func (h *HandshakeHandler) Close() {
 
 // ReconfigureReplayCache replaces the replay cache with one using the
 // given TTL. This allows callers to override the default 4-minute TTL
-// from SSU2Config (M-2).
+// from SSU2Config.
 func (h *HandshakeHandler) ReconfigureReplayCache(ttl time.Duration) {
 	if h.replayCache != nil {
 		h.replayCache.Close()
@@ -617,7 +634,7 @@ func (h *HandshakeHandler) ReconfigureReplayCache(ttl time.Duration) {
 // This is required when constructing a noise.DHKey for use in handshake states
 // that need to send or hash the local static public key (e.g. XK message 3).
 // Returns an error rather than panicking on invalid input, so that an internal
-// programmer error cannot crash the host process (AUDIT M-1, defense in depth).
+// programmer error cannot crash the host process.
 func derivePublicKey(priv []byte) ([]byte, error) {
 	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
 	if err != nil {

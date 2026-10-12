@@ -21,14 +21,19 @@ var (
 
 // Constants moved to session_freshness.go and session_table.go
 
-// SessionManager manages ECIES-X25519-AEAD-Ratchet sessions for garlic encryption.
-// It maintains session state for ongoing encrypted communication with remote
-// destinations, using [32]byte keys throughout (no I2P-specific types).
+// SessionManager manages ECIES-X25519-AEAD-Ratchet sessions for garlic
+// encryption. It maintains session state for ongoing encrypted
+// communication with remote destinations, using [32]byte keys throughout
+// (no I2P-specific types).
 //
 // Session lifecycle:
-//  1. New Session: First message uses ephemeral-static DH (ECIES)
-//  2. Existing Session: Subsequent messages use ratchet for forward secrecy
-//  3. Session Expiry: Sessions expire after inactivity timeout
+//  1. New Session: the first message uses an ephemeral-static key exchange
+//     (ECIES) to establish the session.
+//  2. Existing Session: subsequent messages use the ratchet for forward
+//     secrecy.
+//  3. Session Expiry: sessions expire after an inactivity timeout.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[[32]byte]*Session
@@ -70,7 +75,14 @@ type SessionManager struct {
 // This order is required to avoid deadlocks across tag lookup, replenishment,
 // and session cleanup paths.
 
-// NewSessionManager creates a new session manager with the given private key.
+// NewSessionManager creates a new session manager with the given X25519
+// private key. The public key is derived from the private key
+// automatically.
+//
+// Parameters:
+//   - privateKey: the 32-byte X25519 private key to use for this manager.
+//   - opts: optional [SessionManagerOption] values to customize behavior
+//     (for example, [WithNSMaxPastAge]).
 func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*SessionManager, error) {
 	flog("NewSessionManager").Debug("Creating new garlic session manager")
 
@@ -116,7 +128,9 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 	return sm, nil
 }
 
-// GenerateSessionManager creates a session manager with a freshly generated key pair.
+// GenerateSessionManager creates a session manager with a freshly
+// generated X25519 key pair. Use this when you do not already have a key
+// pair to use.
 func GenerateSessionManager() (*SessionManager, error) {
 	flog("GenerateSessionManager").Debug("Generating new session manager with fresh key pair")
 	_, privBytes, err := ecies.GenerateKeyPair()
@@ -139,13 +153,17 @@ func GenerateSessionManager() (*SessionManager, error) {
 // processDecryptedESBlocks, processAckRequest, and processAck
 // are defined in session_decrypt.go.
 
-// RegisterOneTimeKey registers a one-time symmetric garlic key derived from a
-// STBM Noise transcript hash via HKDF("AttachLayerEncryption"). The OBEP will
-// use the corresponding key to wrap its ShortTunnelBuildReply in a garlic
-// message; this key is looked up by tag and deleted after a single use.
+// RegisterOneTimeKey registers a one-time symmetric garlic key derived
+// from a STBM Noise transcript hash via HKDF("AttachLayerEncryption"). The
+// OBEP will use the corresponding key to wrap its ShortTunnelBuildReply in
+// a garlic message; this key is looked up by tag and deleted after a
+// single use.
 //
-// tag is garlicKeyMaterial[24:32] (last 8 bytes of the 32-byte HKDF output).
-// key is garlicKeyMaterial[0:32] (the full 32-byte output used as the ChaCha20 key).
+// Parameters:
+//   - tag: garlicKeyMaterial[24:32] (last 8 bytes of the 32-byte HKDF
+//     output).
+//   - key: garlicKeyMaterial[0:32] (the full 32-byte output used as the
+//     ChaCha20 key).
 func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -153,8 +171,14 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	flog("RegisterOneTimeKey", logger.Fields{"tag": fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
 }
 
-// ProcessIncomingDHRatchet processes a DH ratchet key received from a peer.
+// ProcessIncomingDHRatchet processes a DH ratchet key received from a
+// peer. When a peer rotates its DH ratchet key, it sends the new public
+// key in a NextKey block; this method applies that rotation so both sides
+// keep deriving fresh message keys (forward secrecy).
+//
 // The session is found by tag lookup using the sessionTag parameter.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func (sm *SessionManager) ProcessIncomingDHRatchet(sessionTag [8]byte, newRemotePubKey [32]byte) error {
 	session, err := sm.lookupLockedSession(sessionTag)
 	if err != nil {

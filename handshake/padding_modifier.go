@@ -10,21 +10,25 @@ import (
 	"github.com/samber/oops"
 )
 
-// GenericPaddingModifier implements padding-based obfuscation by adding random
-// padding to handshake messages and removing it during processing.
+// GenericPaddingModifier adds random padding to handshake messages on the way
+// out and removes it on the way in. Padding makes messages harder to size,
+// which resists traffic analysis.
 //
-// WARNING: GenericPaddingModifier uses a custom wire format ([4-byte big-endian length][data][padding])
-// that is NOT part of any I2P specification. It MUST NOT be used in NTCP2 modifier chains
-// or any context that expects fixed-size protocol fields (e.g., NTCP2 Message 1 is exactly
-// 64 bytes per spec §3.2). Using GenericPaddingModifier in place of ntcp2.NTCP2PaddingModifier will
-// produce non-interoperable messages with no error at the modifier layer.
+// WARNING: this modifier uses a custom wire format —
+// [4-byte big-endian length][data][padding] — that is NOT part of any I2P
+// specification. Do not use it in NTCP2 modifier chains or anywhere that
+// expects fixed-size protocol fields (for example, NTCP2 Message 1 is exactly
+// 64 bytes per spec §3.2). Substituting it for ntcp2.NTCP2PaddingModifier
+// produces messages that other I2P peers cannot read, and the modifier layer
+// will not report an error.
 //
 // For I2P NTCP2 transport contexts, use ntcp2.NTCP2PaddingModifier instead.
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 //
-// GenericPaddingModifier is phase-aware: it only applies padding during handshake phases
-// (PhaseInitial, PhaseExchange, PhaseFinal). For PhaseData and any unknown phase,
-// data is passed through unmodified to prevent silent corruption of post-handshake
-// transport messages.
+// The modifier is phase-aware: it only pads during the handshake phases
+// ([PhaseInitial], [PhaseExchange], [PhaseFinal]). For [PhaseData] and any
+// unknown phase, data passes through unchanged so post-handshake transport
+// messages are not corrupted.
 type GenericPaddingModifier struct {
 	name       string
 	minPadding int
@@ -34,12 +38,13 @@ type GenericPaddingModifier struct {
 // Deprecated: Use GenericPaddingModifier instead.
 type PaddingModifier = GenericPaddingModifier
 
-// NewGenericPaddingModifier creates a new generic padding modifier with the specified
-// minimum and maximum padding sizes.
+// NewGenericPaddingModifier creates a new generic padding modifier that adds
+// between minPadding and maxPadding bytes of random padding. The values are
+// validated against I2P limits before the modifier is returned.
 func NewGenericPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error) {
 	flog("NewGenericPaddingModifier", logger.Fields{"name": name, "min": minPadding, "max": maxPadding}).Debug("Creating generic padding modifier")
 
-	// Validate padding parameters against I2P spec limits (paddingRatio = 0.0 for modifier only).
+	// Validate the padding parameters (paddingRatio = 0.0 for this modifier).
 	if err := ValidatePaddingParams("handshake", minPadding, maxPadding, 0.0); err != nil {
 		return nil, err
 	}
@@ -56,13 +61,16 @@ func NewPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddin
 	return NewGenericPaddingModifier(name, minPadding, maxPadding)
 }
 
-// ModifyOutbound adds padding to outbound handshake data.
-// Padding format: [original_length:4][original_data][padding_data]
-// Returns an error if data exceeds the 4-byte length prefix capacity (math.MaxUint32).
+// ModifyOutbound adds random padding to outbound handshake data. The result
+// has the form [original_length:4][original_data][padding_data], where the
+// length prefix is the original data length as a 4-byte big-endian number.
+// It returns an error if the data is too large for the 4-byte length prefix
+// (math.MaxUint32).
 //
-// For PhaseData (and any future phases beyond PhaseFinal), data is returned
-// unmodified. This prevents silent corruption of post-handshake transport
-// messages that use their own framing (e.g., Noise transport, NTCP2 SipHash).
+// For [PhaseData] (and any future phase beyond [PhaseFinal]), data is
+// returned unmodified. This prevents silent corruption of post-handshake
+// transport messages that use their own framing (for example, Noise
+// transport or NTCP2 SipHash).
 func (pm *GenericPaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	if phase > PhaseFinal {
 		return data, nil // Post-handshake: pass through unmodified
@@ -127,11 +135,13 @@ func (pm *GenericPaddingModifier) ModifyOutbound(phase HandshakePhase, data []by
 	return result, nil
 }
 
-// ModifyInbound removes padding from inbound handshake data.
+// ModifyInbound removes the padding that ModifyOutbound added, recovering the
+// original data from the [original_length:4][original_data][padding_data]
+// format.
 //
-// For PhaseData (and any future phases beyond PhaseFinal), data is returned
-// unmodified. This mirrors ModifyOutbound's phase guard and prevents
-// misinterpretation of post-handshake transport frames as padded messages.
+// For [PhaseData] (and any future phase beyond [PhaseFinal]), data is
+// returned unmodified. This mirrors ModifyOutbound's phase guard and prevents
+// post-handshake transport frames from being misread as padded messages.
 func (pm *GenericPaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error) {
 	if phase > PhaseFinal {
 		return data, nil // Post-handshake: pass through unmodified

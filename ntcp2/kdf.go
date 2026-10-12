@@ -9,8 +9,9 @@ import (
 	"github.com/samber/oops"
 )
 
-// DeriveSipHashKeys derives per-direction SipHash-2-4 keys and initial IVs
-// from the Noise handshake hash and ask_master secret per the I2P NTCP2 spec.
+// DeriveSipHashKeys derives the per-direction SipHash-2-4 keys and initial
+// IVs used to obfuscate NTCP2 frame lengths, from the Noise handshake hash
+// and the ask_master secret, as defined by the I2P NTCP2 specification.
 //
 // The derivation follows the spec's 5-step HMAC-SHA256 chain:
 //
@@ -20,11 +21,13 @@ import (
 //	Step 4: sipkeys_ab = HMAC-SHA256(key=temp_key,   data=byte(0x01))[0:24]
 //	Step 5: sipkeys_ba = HMAC-SHA256(key=temp_key,   data=sipkeys_ab[0:32] || byte(0x02))[0:24]
 //
-// NOTE: Step 5 uses the full 32-byte HMAC output from step 4 as its input prefix,
-// not just the 24 bytes extracted for sipkeys_ab. This matches the i2pd reference
-// implementation (m_Sipkeysab is 32 bytes; m_Sipkeysab[32]=2 before HMAC call).
+// NOTE: Step 5 uses the full 32-byte HMAC output from step 4 as its input
+// prefix, not just the 24 bytes extracted for sipkeys_ab. This matches the
+// i2pd reference implementation (m_Sipkeysab is 32 bytes; m_Sipkeysab[32]=2
+// before the HMAC call).
 //
-// Each 24-byte output is split into (sipk1, sipk2, sipiv) as little-endian uint64s.
+// Each 24-byte output is split into (sipk1, sipk2, sipiv) as little-endian
+// uint64s.
 //
 // Parameters:
 //   - askMaster: the ask_master secret from the Noise handshake (32 bytes).
@@ -32,14 +35,17 @@ import (
 //     before the function returns (per spec: "overwrite ask_master in memory,
 //     no longer needed"); the caller's own askMaster slice is left untouched
 //     and remains the caller's responsibility to zero once no longer needed.
-//   - handshakeHash: the handshake hash (h) from the completed Noise session (32 bytes)
+//   - handshakeHash: the handshake hash (h) from the completed Noise session
+//     (32 bytes).
 //
 // Returns:
 //   - sipKeysAB: [2]uint64{sipk1, sipk2} for direction A→B (initiator→responder)
-//   - sipIVAB: initial IV for A→B SipHash length obfuscation chain
+//   - sipIVAB: initial IV for the A→B SipHash length obfuscation chain
 //   - sipKeysBA: [2]uint64{sipk1, sipk2} for direction B→A (responder→initiator)
-//   - sipIVBA: initial IV for B→A SipHash length obfuscation chain
+//   - sipIVBA: initial IV for the B→A SipHash length obfuscation chain
 //   - err: non-nil if derivation fails
+//
+// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
 func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	sipKeysAB [2]uint64, sipIVAB uint64,
 	sipKeysBA [2]uint64, sipIVBA uint64,

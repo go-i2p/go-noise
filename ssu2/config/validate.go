@@ -23,7 +23,9 @@ type boundsValidator struct {
 	context string      // Additional context (e.g., "ssu2", "padding")
 }
 
-// Validate checks if the configuration is valid for SSU2.
+// Validate checks whether the configuration is valid for SSU2. It verifies
+// the pattern, cryptographic parameters, timeouts, UDP settings, padding
+// ranges, and token issuance settings.
 func (sc *SSU2Config) Validate() error {
 	flog("Validate").Debug("Validating SSU2Config")
 	return validation.RunValidators(
@@ -74,7 +76,7 @@ func (sc *SSU2Config) validateCryptographicParameters() error {
 	}
 
 	// For initiator connections, the remote static key is required for the
-	// Noise XK handshake (C-1). The router hash is used separately for
+	// Noise XK handshake. The router hash is used separately for
 	// identity verification.
 	if sc.Initiator && len(sc.RemoteStaticKey) == 0 {
 		return oops.
@@ -100,7 +102,7 @@ func (sc *SSU2Config) validateCryptographicParameters() error {
 			Errorf("obfuscation IV must be 8 bytes")
 	}
 
-	// Per SSU2 spec §Session Confirmed (C-2): responders must validate
+	// Per SSU2 spec §Session Confirmed: responders must validate
 	// that the Noise-authenticated static key matches the RouterInfo.
 	if !sc.Initiator && sc.RouterInfoValidator == nil {
 		return oops.
@@ -180,13 +182,13 @@ func (sc *SSU2Config) validateUDPConfiguration() error {
 
 // validatePaddingConfiguration checks padding ranges and ratios.
 //
-// Delegates to the stricter handshake.ValidatePaddingParams (the same gate
-// used by createPaddingModifierIfEnabled/ToConnConfig via
+// It delegates to the stricter handshake.ValidatePaddingParams (the same
+// gate used by createPaddingModifierIfEnabled/ToConnConfig via
 // wire.NewSSU2PaddingModifierWithMTU) instead of the weaker
 // ValidatePaddingRange, so an invalid padding config (e.g. MaxPaddingSize
 // exceeding the I2P spec's I2PMaxBlockDataSize limit) is rejected here
 // rather than passing Validate() and only failing later at ToConnConfig()
-// with a different error code (AUDIT.md Level 9 ssu2/config Finding 2).
+// with a different error code.
 func (sc *SSU2Config) validatePaddingConfiguration() error {
 	flog("validatePaddingConfiguration", logger.Fields{"enabled": sc.PaddingEnabled, "min": sc.MinPaddingSize, "max": sc.MaxPaddingSize, "ratio": sc.PaddingRatio}).Debug("Checking padding ranges and ratios")
 	if err := handshake.ValidatePaddingParams("ssu2", sc.MinPaddingSize, sc.MaxPaddingSize, sc.PaddingRatio); err != nil {
@@ -213,8 +215,9 @@ func (sc *SSU2Config) validateTokenConfiguration() error {
 	return nil
 }
 
-// ToConnConfig converts SSU2Config to a standard ConnConfig for use with NoiseConn.
-// This includes setting up SSU2-specific modifiers based on the configuration.
+// ToConnConfig converts SSU2Config to a standard ConnConfig for use with
+// NoiseConn. This includes setting up the SSU2-specific modifiers (ChaCha20
+// obfuscation and padding) based on the configuration.
 func (sc *SSU2Config) ToConnConfig() (*noise.ConnConfig, error) {
 	flog("ToConnConfig").Debug("Converting SSU2Config to ConnConfig")
 	if err := sc.Validate(); err != nil {

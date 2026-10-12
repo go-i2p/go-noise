@@ -15,11 +15,14 @@ type sessionKeys struct {
 }
 
 const (
-	// DHRatchetInterval is the number of messages between DH ratchet rotations.
+	// DHRatchetInterval is the number of messages sent before the DH ratchet
+	// rotates. A DH ratchet rotation uses X25519 to derive a fresh set of
+	// keys, which is what gives the scheme forward secrecy.
 	DHRatchetInterval = 50
 
-	// MaxConsecutiveDHFailures is the maximum consecutive DH ratchet failures
-	// before the session is considered degraded and should be reset.
+	// MaxConsecutiveDHFailures is the maximum number of consecutive DH
+	// ratchet failures before the session is considered degraded and should
+	// be reset.
 	MaxConsecutiveDHFailures = 3
 
 	// hkdfInfoDHRatchetStep is the HKDF info string for the DH initialization KDF.
@@ -37,8 +40,8 @@ const (
 	tagWindowSize = 24
 
 	// MaxMessageNumber is the maximum AEAD message number per the spec.
-	// When reached, the session must be ratcheted. Spec ref: ratchet.md
-	// §"AEAD (ChaChaPoly)" — "Maximum value is 65535."
+	// Each message in a session carries a counter; when the counter reaches
+	// this value, the session must be ratcheted to derive fresh keys.
 	MaxMessageNumber = 65535
 
 	// recvWindowSize is the number of ES message counters we pre-derive keys for

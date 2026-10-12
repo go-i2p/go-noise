@@ -1,31 +1,45 @@
-// Package ssu2: peer-test and relay (introducer) coordinator.
+// This file implements the Coordinator, which wires SSU2 peer tests and
+// relays into live sessions.
 //
-// The Coordinator is the production wiring layer that connects the SSU2
-// peer-test and relay state machines (re-exported from go-i2p/path) to a live
-// session's DataHandlerCallbacks. Without it, the managers store state but no
-// inbound PeerTest / Relay block ever drives a response, and no signature is
-// ever verified (GAP 1).
+// # What the Coordinator does
 //
-// Layering: this file MUST NOT resolve sessions or import the router
-// (go-i2p/go-i2p). Delivery of outbound blocks is delegated to an injected
-// Dispatcher that the router implements. The Coordinator only decides *what*
-// to send and *to which peer hash / address*.
+// SSU2 has two extra features beyond carrying I2NP messages: peer testing
+// (checking whether a peer can be reached from outside its network) and
+// relaying (having a third router forward messages between two peers that
+// cannot reach each other directly). The state machines for these features
+// live in the go-i2p/path package (re-exported by this package). The
+// Coordinator connects those state machines to a live session: it turns
+// inbound PeerTest and Relay blocks into responses, and it verifies the
+// signatures on those blocks.
 //
-// Threading model: a single Coordinator instance is shared by the local
-// router across all of its SSU2 sessions. BuildCallbacks is called once per
-// established session with that peer's router hash and Ed25519 signing key,
-// returning closures that read/write the Coordinator's shared, mutex-guarded
-// state. Peer-test and relay flows legitimately span three peers and three
-// distinct sessions (Alice<->Bob, Bob<->Charlie), so cross-session state such
-// as the per-nonce hash context lives on the shared Coordinator, not on a
-// per-connection object.
+// # Layering
 //
-// SSU2 peer-test signature semantics (I2P SSU2 spec, §Peer Test): Bob never
-// signs; he forwards Alice's signature (msg 1 -> msg 2) and Charlie's
-// signature (msg 3 -> msg 4), only changing the message code and the included
-// router hash. Only Alice (msgs 1/2 signed data) and Charlie (msgs 3/4 signed
-// data) produce signatures. The same is true of relay: Bob forwards Alice's
-// request signature into the RelayIntro; only Alice and Charlie sign.
+// The Coordinator never resolves sessions or imports the router
+// (go-i2p/go-i2p). It only decides *what* to send and *to which peer*.
+// Actual delivery is delegated to an injected Dispatcher, which the router
+// implements.
+//
+// # Threading model
+//
+// A single Coordinator is shared by the local router across all of its SSU2
+// sessions. BuildCallbacks is called once per established session with that
+// peer's router hash and Ed25519 signing key. It returns closures that read
+// and write the Coordinator's shared, mutex-guarded state. Peer-test and
+// relay flows span three peers and three distinct sessions (Alice<->Bob,
+// Bob<->Charlie), so cross-session state such as the per-nonce context lives
+// on the shared Coordinator, not on a per-connection object.
+//
+// # Peer-test signature semantics
+//
+// In a peer test, three routers take the roles of Alice (initiator), Bob
+// (relay), and Charlie (responder). Bob never signs; he forwards Alice's
+// signature (message 1 -> message 2) and Charlie's signature (message 3 ->
+// message 4), only changing the message code and the included router hash.
+// Only Alice (messages 1/2) and Charlie (messages 3/4) produce signatures.
+// The same is true of relaying: Bob forwards Alice's request signature into
+// the RelayIntro; only Alice and Charlie sign.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 package ssu2
 
 import (
@@ -49,15 +63,18 @@ const ssu2ProtocolVersion uint8 = 2
 // an accepted RelayResponse.
 const relayTokenLen = 8
 
-// PeerKeyResolver resolves a peer's router hash to its Ed25519 signing public
-// key for signature verification. It returns ok=false when the key is unknown,
-// in which case verification fails closed. The router backs this with its
-// netDB; go-noise never resolves identities itself.
+// PeerKeyResolver looks up a peer's Ed25519 signing public key from its
+// router hash (the 32-byte identity that identifies a router on the I2P
+// network). It is used to verify signatures. It returns ok=false when the key
+// is unknown; in that case verification fails closed (the signature is
+// rejected). The router backs this with its network database; go-noise never
+// resolves identities itself.
 type PeerKeyResolver func(routerHash data.Hash) (ed25519.PublicKey, bool)
 
 // SendTarget describes a set of outbound SSU2 blocks and where they must be
 // delivered. RouterHash identifies a known peer (the common case); Addr is set
-// for out-of-session delivery such as a hole-punch probe to a raw endpoint.
+// for out-of-session delivery, such as a hole-punch probe sent to a raw
+// endpoint that has no session yet.
 type SendTarget struct {
 	// RouterHash is the destination peer's router identity hash. Zero when the
 	// destination is identified only by Addr.
@@ -73,8 +90,8 @@ type SendTarget struct {
 
 // Dispatcher delivers Coordinator-produced blocks to a peer. The router
 // implements this interface; it owns session resolution and the actual UDP
-// write. Keeping delivery behind an interface preserves the layering rule that
-// go-noise must not depend on the router.
+// write. Keeping delivery behind an interface preserves the layering rule
+// that go-noise must not depend on the router.
 type Dispatcher interface {
 	Dispatch(target SendTarget) error
 }
@@ -95,21 +112,21 @@ type CharlieSelector func() (hash data.Hash, addr *net.UDPAddr, ok bool)
 // are required; the remaining fields enable specific roles and default to safe
 // no-ops or fail-closed behavior when omitted.
 type CoordinatorConfig struct {
-	// LocalRouterHash is the local router's identity hash (used as bhash when
-	// the local router acts as Bob, and as ahash/charlie hash when it is the
-	// initiator/responder).
+	// LocalRouterHash is the local router's identity hash. It is used as the
+	// Bob hash when the local router acts as Bob, and as the Alice or Charlie
+	// hash when it is the initiator or responder.
 	LocalRouterHash data.Hash
 
-	// SigningKey is the local router's Ed25519 signing private key, used when
-	// the local router is Alice (signs peer-test/relay requests) or Charlie
-	// (signs peer-test responses and relay responses). It is never used when
-	// acting purely as Bob.
+	// SigningKey is the local router's Ed25519 signing private key. It is used
+	// when the local router is Alice (signs peer-test and relay requests) or
+	// Charlie (signs peer-test and relay responses). It is never used when
+	// acting purely as Bob, because Bob never signs.
 	SigningKey ed25519.PrivateKey
 
-	// KeyResolver resolves a remote router hash to its signing public key for
-	// verifying forwarded signatures whose signer is not the directly-connected
-	// peer (e.g. Charlie verifying Alice's signature in a RelayIntro). If nil,
-	// such verifications fail closed.
+	// KeyResolver resolves a remote router hash to its signing public key. It
+	// is used to verify forwarded signatures whose signer is not the
+	// directly-connected peer (for example, Charlie verifying Alice's
+	// signature in a RelayIntro). If nil, such verifications fail closed.
 	KeyResolver PeerKeyResolver
 
 	// Dispatcher delivers outbound blocks. Required.
@@ -126,7 +143,7 @@ type CoordinatorConfig struct {
 	Introducers *IntroducerRegistry
 
 	// SelectCharlie picks a responder when relaying a peer test as Bob. If nil,
-	// inbound peer-test requests (msg 1) are acknowledged-as-dropped.
+	// inbound peer-test requests (message 1) are acknowledged-as-dropped.
 	SelectCharlie CharlieSelector
 
 	// LocalExternal is the local router's believed external endpoint, embedded
@@ -173,8 +190,9 @@ type relayClient struct {
 	addr *net.UDPAddr
 }
 
-// Coordinator wires peer-test and relay state machines into session callbacks.
-// A single instance is shared across all of the local router's SSU2 sessions.
+// Coordinator wires the peer-test and relay state machines into session
+// callbacks. A single instance is shared across all of the local router's
+// SSU2 sessions.
 type Coordinator struct {
 	cfg CoordinatorConfig
 
@@ -183,8 +201,8 @@ type Coordinator struct {
 	clients map[uint32]relayClient // relay tag -> introduced peer
 }
 
-// NewCoordinator constructs a Coordinator. Dispatcher, PeerTest and Relay are
-// required.
+// NewCoordinator creates a Coordinator. Dispatcher, PeerTest and Relay are
+// required; it returns an error if any of them is missing.
 func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error) {
 	if cfg.Dispatcher == nil {
 		return nil, oops.Code("ssu2_coordinator_config").Errorf("Dispatcher is required")
@@ -205,11 +223,12 @@ func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error) {
 	}, nil
 }
 
-// RegisterRelayClient records that the local router (as Bob) has agreed to act
-// as an introducer for a peer identified by routerHash/addr, reachable via the
-// given relay tag. It both records the tag->hash mapping the Coordinator needs
-// to verify inbound RelayRequests and registers the peer with the shared relay
-// manager.
+// RegisterRelayClient records that the local router (acting as Bob) has agreed
+// to act as an introducer for the peer identified by routerHash/addr,
+// reachable via the given relay tag. A relay tag is a small number that
+// identifies an introducer relationship. It both records the tag-to-hash
+// mapping the Coordinator needs to verify inbound RelayRequests and registers
+// the peer with the shared relay manager.
 func (c *Coordinator) RegisterRelayClient(relayTag uint32, routerHash data.Hash, addr *net.UDPAddr) error {
 	if relayTag == 0 {
 		return oops.Code("ssu2_relay_client").Errorf("relay tag must be non-zero")
@@ -226,11 +245,11 @@ func (c *Coordinator) RegisterRelayClient(relayTag uint32, routerHash data.Hash,
 	return nil
 }
 
-// IntroducerOptions builds the SSU2 RouterAddress option map advertising the
-// local router's current introducers, so introduced peers can be contacted.
-// It bridges the shared relay manager's live introducer set to the wire
-// encoding (itag/ih/iexp keys). Expired or invalid entries are skipped by the
-// wire encoder.
+// IntroducerOptions builds the SSU2 RouterAddress option map that advertises
+// the local router's current introducers, so that introduced peers can be
+// contacted through them. It bridges the shared relay manager's live
+// introducer set to the wire encoding (the itag/ih/iexp option keys). Expired
+// or invalid entries are skipped by the wire encoder.
 func (c *Coordinator) IntroducerOptions() (map[string]string, error) {
 	infos := c.cfg.Relay.GetIntroducers()
 	published := make([]wire.PublishedIntroducer, 0, len(infos))

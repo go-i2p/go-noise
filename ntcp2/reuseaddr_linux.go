@@ -11,8 +11,6 @@ import (
 // reuseAddrControl is the platform-specific implementation of SO_REUSEADDR
 // for Linux. On Linux, SO_REUSEADDR (value 2) allows a socket in TIME_WAIT
 // state to be reused, enabling fast restart of servers.
-//
-// AUDIT 7.1: Linux-specific implementation allows fast socket reuse.
 var reuseAddrControl = func(network, address string, c syscall.RawConn) error {
 	var setErr error
 	err := c.Control(func(fd uintptr) {

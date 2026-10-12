@@ -47,9 +47,10 @@ type ReceiveWindow struct {
 
 const (
 	// DefaultMaxWindowSize is the default maximum number of buffered packets.
-	// This prevents memory exhaustion while allowing reasonable out-of-order tolerance.
-	// The SSU2 spec allows up to 512 ACK ranges, so the window must be at
-	// least that deep to avoid premature packet rejection under burst traffic (G-4).
+	// This prevents memory exhaustion while allowing reasonable out-of-order
+	// tolerance. The SSU2 spec allows up to 512 ACK ranges, so the window
+	// must be at least that deep to avoid premature packet rejection under
+	// burst traffic.
 	DefaultMaxWindowSize = 512
 
 	// MaxPacketNumber is the maximum packet number (2^32 - 1 per ssu2.rst)

@@ -13,10 +13,12 @@ import (
 	"github.com/samber/oops"
 )
 
-// Listener implements net.Listener for accepting NTCP2 transport connections.
-// It accepts raw TCP connections from the underlying listener, wraps each in a
-// NoiseConn created via NTCP2Config.ToConnConfig() (which sets the correct
-// CipherSuite, ProtocolName, and Modifiers), and then wraps that in an NTCP2Conn.
+// Listener accepts incoming NTCP2 connections. It works like a
+// net.Listener: call Accept to wait for the next connection.
+//
+// Each accepted TCP connection is wrapped in a Noise connection configured
+// with the NTCP2 cipher suite and modifiers, and then in a Conn. Accepted
+// connections act as the responder side of the handshake.
 type Listener struct {
 	// underlying is the raw TCP listener
 	underlying net.Listener
@@ -34,9 +36,9 @@ type Listener struct {
 	closed atomic.Bool
 }
 
-// NewNTCP2Listener creates a new NTCP2Listener that wraps the underlying TCP listener.
-// The listener will accept connections and wrap them in NTCP2Conn instances
-// configured as responders with NTCP2-specific addressing and protocol handling.
+// NewNTCP2Listener wraps an existing TCP listener so that accepted
+// connections are NTCP2 connections. Each accepted connection is configured
+// as a responder with the NTCP2 cipher suite and modifiers from config.
 func NewNTCP2Listener(underlying net.Listener, config *Config) (*Listener, error) {
 	if err := validateListenerInput(underlying, config); err != nil {
 		return nil, err
@@ -126,22 +128,25 @@ func (nl *Listener) createResponderConnConfig() (*noise.ConnConfig, *Config, err
 	return connConfig, responderCfg, nil
 }
 
-// createRemoteNTCP2Addr creates the remote NTCP2 address for the accepted connection.
-// Note: PeerStatic() returns the remote peer's Noise static public key (32 bytes).
-// The NTCP2 spec defines the router hash as SHA-256(RouterIdentity), where the
-// static key is only part of the full RouterIdentity.  As a placeholder we use
-// SHA-256(static_key), which is a deterministic 32-byte value derived from the
-// peer's long-term identity material rather than the raw key bytes (AUDIT 5.3).
-// The router transport layer should call PropagatePeerStaticKey() after handshake
-// completion and ultimately replace this placeholder with the proper
-// SHA-256(RouterIdentity) once the full RouterIdentity is available from msg3.
+// createRemoteNTCP2Addr creates the remote NTCP2 address for the accepted
+// connection.
+//
+// Note: PeerStatic() returns the remote peer's Noise static public key
+// (32 bytes). The NTCP2 spec defines the router hash as
+// SHA-256(RouterIdentity), where the static key is only part of the full
+// RouterIdentity. As a placeholder we use SHA-256(static_key), which is a
+// deterministic 32-byte value derived from the peer's long-term identity
+// material rather than the raw key bytes. The router transport layer should
+// call PropagatePeerStaticKey() after handshake completion and ultimately
+// replace this placeholder with the proper SHA-256(RouterIdentity) once the
+// full RouterIdentity is available from msg3.
 func (nl *Listener) createRemoteNTCP2Addr(noiseConn *noise.NoiseConn) (*Addr, error) {
 	var remoteHash data.Hash
 	remoteRouterHash := noiseConn.PeerStatic()
 	if len(remoteRouterHash) >= 32 {
-		// AUDIT 5.3: Hash the static key with SHA-256 rather than copying the
-		// raw bytes directly into the Hash field.  data.NewHashFromSlice stores
-		// the 32-byte key verbatim which is not SHA-256(RouterIdentity).
+		// Hash the static key with SHA-256 rather than copying the raw bytes
+		// directly into the Hash field. data.NewHashFromSlice stores the
+		// 32-byte key verbatim which is not SHA-256(RouterIdentity).
 		remoteHash = data.HashData(remoteRouterHash[:32])
 	} else if nl.config.RemoteRouterHash != nil {
 		remoteHash = *nl.config.RemoteRouterHash
@@ -181,14 +186,14 @@ func (nl *Listener) wrapInNTCP2Conn(noiseConn *noise.NoiseConn, remoteAddr *Addr
 	return ntcp2Conn, nil
 }
 
-// Accept waits for and returns the next connection to the listener.
-// The returned connection is wrapped in an NTCP2Conn configured as a responder
-// with the full NTCP2 cipher suite, protocol name, and modifiers.
+// Accept waits for and returns the next connection. The returned connection
+// is a Conn configured as a responder with the full NTCP2 cipher suite and
+// modifiers.
 //
-// The returned connection has NOT yet performed the Noise handshake.
+// The returned connection has NOT yet performed the handshake. Its
 // RemoteAddr().(*Addr).RouterHash is a zero value until Handshake(ctx) and
 // PropagatePeerStaticKey() complete. Most callers should use
-// AcceptWithHandshake (if available) or call Handshake explicitly after Accept.
+// AcceptWithHandshake, or call Handshake explicitly after Accept.
 func (nl *Listener) Accept() (net.Conn, error) {
 	if err := nl.validateAcceptState(); err != nil {
 		return nil, err
@@ -225,9 +230,9 @@ func (nl *Listener) Accept() (net.Conn, error) {
 			Wrapf(err, "failed to create noise connection")
 	}
 
-	// BUG-RC-2 / BUG-SM-2: Compute the single authoritative handshake deadline
-	// from the moment Accept() returns. Store it on the conn so Handshake() can
-	// use min(derived, acceptDeadline) rather than resetting to time.Now()+timeout
+	// Compute the single authoritative handshake deadline from the moment
+	// Accept() returns. Store it on the conn so Handshake() can use
+	// min(derived, acceptDeadline) rather than resetting to time.Now()+timeout
 	// (which would grant the peer an extra window if the caller delays).
 	//
 	// IMPORTANT — caller configuration note:
@@ -247,7 +252,7 @@ func (nl *Listener) Accept() (net.Conn, error) {
 	}
 	acceptDeadline := time.Now().Add(handshakeTimeout)
 	// Set the deadline immediately so the TCP stack enforces it even before
-	// Handshake() is called (BUG-EH-2 fix: check and log the error).
+	// Handshake() is called.
 	if tcpConn, ok := underlying.(*net.TCPConn); ok {
 		if err := tcpConn.SetDeadline(acceptDeadline); err != nil {
 			flog("Accept", logger.Fields{"error": err}).Warn("failed to set initial handshake deadline on accepted TCP conn")
@@ -291,14 +296,14 @@ func (nl *Listener) logAcceptedConnection(ntcp2Conn *Conn) {
 		"remote_addr", ntcp2Conn.RemoteAddr().String())
 }
 
-// Close closes the listener and prevents new connections from being accepted.
-// Any blocked Accept operations will be unblocked and return errors.
+// Close closes the listener and prevents new connections from being
+// accepted. Any blocked Accept calls are unblocked and return errors.
 func (nl *Listener) Close() error {
 	if !nl.closed.CompareAndSwap(false, true) {
 		return nil // Already closed
 	}
 
-	// AUDIT 2.4: Close the replay detector to stop any background cleanup goroutines
+	// Close the replay detector to stop any background cleanup goroutines.
 	if nl.config != nil && nl.config.ReplayDetector != nil {
 		nl.config.ReplayDetector.Close()
 	}
@@ -322,8 +327,8 @@ func (nl *Listener) Close() error {
 	return nil
 }
 
-// Addr returns the listener's network address.
-// This is an NTCP2Addr that wraps the underlying listener's address.
+// Addr returns the listener's NTCP2 address, which wraps the underlying
+// TCP listener's address.
 func (nl *Listener) Addr() net.Addr {
 	return nl.addr
 }
@@ -339,9 +344,12 @@ func formatRouterHash(hash data.Hash) string {
 	return fmt.Sprintf("%x...", hash[:8])
 }
 
-// AcceptWithHandshake waits for the next connection and automatically
-// performs the NTCP2 handshake. This mirrors DialNTCP2WithHandshakeContext
-// for the responder side.
+// AcceptWithHandshake waits for the next connection and performs the NTCP2
+// handshake on it automatically. It is the responder-side equivalent of
+// DialNTCP2WithHandshakeContext.
+//
+// If the handshake fails, or the peer's static key cannot be recorded on the
+// remote address, the connection is closed and an error is returned.
 func (nl *Listener) AcceptWithHandshake(ctx context.Context) (ConnIface, error) {
 	conn, err := nl.Accept()
 	if err != nil {
@@ -361,12 +369,10 @@ func (nl *Listener) AcceptWithHandshake(ctx context.Context) (ConnIface, error) 
 	}
 	// Propagate the peer's static key to the remote address so the router
 	// hash is available for session deduplication on inbound connections.
-	// REACH-3: Previously this failure was only logged as a warning and the
-	// connection was returned to the caller with an incomplete remote address.
 	// Without the peer's static key the router transport layer cannot perform
 	// session deduplication, which is a correctness (and potentially security)
-	// requirement. Fail the accept so the caller is not handed a half-initialised
-	// connection.
+	// requirement. Fail the accept so the caller is not handed a
+	// half-initialised connection.
 	if err := ntcp2Conn.PropagatePeerStaticKey(); err != nil {
 		ntcp2Conn.Close()
 		return nil, oops.

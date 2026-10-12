@@ -7,15 +7,26 @@ import (
 	"github.com/samber/oops"
 )
 
-// EncryptGarlicMessage encrypts a plaintext garlic message for the given destination.
-// The plaintext must be non-empty; the I2P spec requires at least one payload block.
-// Returns an error if plaintext is nil or zero-length.
+// EncryptGarlicMessage encrypts a plaintext garlic message for the given
+// destination.
 //
-// Thread safety: when an existing session is found, sm.mu.RLock is held through the
-// entire encryptExistingSession call. This prevents concurrent CleanupExpiredSessions
-// or evictLRUSessionLocked (which require sm.mu.Lock) from removing the session and
-// its tags between lookup and encryption, which would produce ES messages with
-// unregistered tags that the receiver cannot match.
+// A garlic message is the unit of data sent over I2P: it is a sequence of
+// encrypted "cloves" that can be routed through multiple tunnels. This
+// method picks the right encryption path automatically: if a session with
+// the destination already exists, it uses the fast Existing Session format;
+// otherwise it starts a new session with the Noise IK handshake.
+//
+// The plaintext must be non-empty; the I2P spec requires at least one
+// payload block. Returns an error if plaintext is nil or zero-length.
+//
+// Thread safety: when an existing session is found, sm.mu.RLock is held
+// through the entire encryptExistingSession call. This prevents concurrent
+// CleanupExpiredSessions or evictLRUSessionLocked (which require sm.mu.Lock)
+// from removing the session and its tags between lookup and encryption,
+// which would produce ES messages with unregistered tags that the receiver
+// cannot match.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func (sm *SessionManager) EncryptGarlicMessage(
 	destinationHash, destinationPubKey [32]byte,
 	plaintextGarlic []byte,
@@ -174,13 +185,21 @@ func (sm *SessionManager) encryptExistingSession(
 }
 
 // EncryptUnboundGarlicMessage encrypts a plaintext garlic message as an
-// unbound (N-pattern, §1c) New Session without advertising the sender's static
-// key. Use this for raw-datagram or one-time-send traffic where sender anonymity
-// is required.
+// unbound New Session without advertising the sender's static key. Use this
+// for raw-datagram or one-time-send traffic where sender anonymity is
+// required.
 //
-// Unlike EncryptGarlicMessage, no session state is created: the message is
-// always a fresh one-shot IK/N-pattern frame and no reply is possible. The
-// caller must supply the recipient's raw X25519 public key.
+// "Unbound" means the message does not tie the sender to a persistent
+// identity: the Noise handshake uses an ephemeral key instead of the
+// sender's static key, so the recipient cannot link the message to the
+// sender's long-term identity.
+//
+// Unlike [SessionManager.EncryptGarlicMessage], no session state is
+// created: the message is always a fresh one-shot frame and no reply is
+// possible. The caller must supply the recipient's raw X25519 public key.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for
+// details.
 func (sm *SessionManager) EncryptUnboundGarlicMessage(
 	destinationPubKey [32]byte,
 	plaintextGarlic []byte,
@@ -203,17 +222,24 @@ func (sm *SessionManager) EncryptUnboundGarlicMessage(
 }
 
 // EncryptNewSessionReply constructs a New Session Reply (NSR) for a session
-// that was created by receiving a New Session message. The responder calls this
-// to send a reply back to the initiator, completing the Noise IK handshake.
+// that was created by receiving a New Session message. The responder calls
+// this to send a reply back to the initiator, completing the Noise IK
+// handshake.
 //
-// sessionHash identifies the session. Pass the *[32]byte returned by
-// DecryptGarlicMessage when it processed the peer's New Session message
-// (dereference to obtain the [32]byte value: `*sessionHash`).
-// payload is the reply plaintext.
+// Parameters:
+//   - sessionHash: identifies the session. Pass the *[32]byte returned by
+//     [SessionManager.DecryptGarlicMessage] when it processed the peer's New
+//     Session message (dereference to obtain the [32]byte value:
+//     `*sessionHash`).
+//   - payload: the reply plaintext.
 //
 // After sending the NSR, the session's ratchet state is updated with the
-// post-handshake keys (kAB/kBA from the NSR split), replacing the NS-derived
-// roots and providing the ephemeral-ephemeral forward secrecy required by the spec.
+// post-handshake keys, replacing the keys derived from the New Session
+// message and providing the ephemeral-ephemeral forward secrecy required by
+// the spec.
+//
+// See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for
+// details.
 func (sm *SessionManager) EncryptNewSessionReply(
 	sessionHash [32]byte,
 	payload []byte,

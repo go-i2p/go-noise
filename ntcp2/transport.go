@@ -11,14 +11,19 @@ import (
 	"github.com/samber/oops"
 )
 
-// DialNTCP2 creates a connection to the given address and wraps it with NTCP2Conn.
-// This is a convenience function that combines net.Dial, NoiseConn creation, and NTCP2 wrapping.
-// For more control over the underlying connection, use net.Dial followed by NewNoiseConn and NewNTCP2Conn.
+// DialNTCP2 opens a TCP connection to addr and wraps it as an NTCP2
+// connection. It combines dialing, Noise setup, and NTCP2 wrapping in one
+// call. The returned connection has not performed the handshake yet; call
+// Handshake (or use DialNTCP2WithHandshake) before sending data.
+//
+// For more control over the underlying connection, dial with net.Dial and
+// wrap it with WrapNTCP2Conn instead.
 func DialNTCP2(network, addr string, config *Config) (*Conn, error) {
 	return DialNTCP2Context(context.Background(), network, addr, config)
 }
 
-// DialNTCP2Context creates a connection with context support.
+// DialNTCP2Context is like DialNTCP2 but takes a context that can cancel
+// or time-bound the dial.
 func DialNTCP2Context(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
 	flog("DialNTCP2Context", logger.Fields{"address": addr}).Debug("Dialing NTCP2 connection with context")
 	if err := validateNTCP2DialParams(network, addr, config); err != nil {
@@ -39,14 +44,15 @@ func DialNTCP2Context(ctx context.Context, network, addr string, config *Config)
 	return buildNTCP2Connection(noiseConn, conn, config, network, addr)
 }
 
-// DialNTCP2WithHandshake creates a connection and performs the NTCP2 handshake automatically.
-// This is a convenience function that combines DialNTCP2 and handshake execution.
+// DialNTCP2WithHandshake opens a connection to addr and performs the NTCP2
+// handshake automatically. The returned connection is ready for data-phase
+// I/O.
 func DialNTCP2WithHandshake(network, addr string, config *Config) (*Conn, error) {
 	return DialNTCP2WithHandshakeContext(context.Background(), network, addr, config)
 }
 
-// DialNTCP2WithHandshakeContext creates a connection and performs the NTCP2 handshake with context.
-// The context can be used to cancel the dial or handshake operations.
+// DialNTCP2WithHandshakeContext is like DialNTCP2WithHandshake but takes a
+// context that can cancel or time-bound the dial and handshake.
 func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, config *Config) (*Conn, error) {
 	flog("DialNTCP2WithHandshakeContext", logger.Fields{"address": addr}).Debug("Dialing NTCP2 with handshake")
 	ntcp2Conn, err := DialNTCP2Context(ctx, network, addr, config)
@@ -79,26 +85,24 @@ func DialNTCP2WithHandshakeContext(ctx context.Context, network, addr string, co
 	return ntcp2Conn, nil
 }
 
-// ListenNTCP2 creates a listener on the given address and wraps it with NTCP2Listener.
-// This is a convenience function that combines net.Listen and NewNTCP2Listener.
-// For more control over the underlying listener, use net.Listen followed by NewNTCP2Listener.
+// ListenNTCP2 starts listening on addr and returns a Listener that accepts
+// NTCP2 connections. It combines net.Listen and NewNTCP2Listener in one
+// call. For more control over the underlying listener, use net.Listen
+// followed by NewNTCP2Listener.
 //
-// RESTART-RACE BEHAVIOR (AUDIT 7.3):
-// By default, after shutdown the listener port enters TIME_WAIT state for ~30-60 seconds
-// (system-dependent), during which rebinding fails with "address already in use".
-// Enable config.AllowReuseAddress via WithReuseAddress(true) to reduce this delay by
-// setting SO_REUSEADDR, allowing quick rebinding after shutdown. Use with caution in
-// production: stale packets from the previous listener instance may be delivered to the
-// new listener during the overlap window.
+// Restart behavior: by default, after shutdown the port stays in
+// TIME_WAIT state for about 30-60 seconds (system-dependent), during which
+// rebinding fails with "address already in use". Enable
+// config.AllowReuseAddress via WithReuseAddress(true) to reduce this delay
+// by setting SO_REUSEADDR, allowing quick rebinding after shutdown. Use
+// with caution in production: stale packets from the previous listener
+// instance may be delivered to the new listener during the overlap window.
 func ListenNTCP2(network, addr string, config *Config) (*Listener, error) {
 	return ListenNTCP2WithContext(context.Background(), network, addr, config)
 }
 
-// ListenNTCP2WithContext is like ListenNTCP2 but accepts a context that is
-// forwarded to net.ListenConfig.Listen when SO_REUSEADDR is requested. This
-// allows callers to cancel or time-bound the socket creation step.
-// TIMEOUT-2: ListenNTCP2 previously hardcoded context.Background() for the
-// SO_REUSEADDR path, ignoring any deadline the caller may have set.
+// ListenNTCP2WithContext is like ListenNTCP2 but accepts a context that can
+// cancel or time-bound the socket creation step.
 func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *Config) (*Listener, error) {
 	flog("ListenNTCP2", logger.Fields{"address": addr}).Debug("Creating NTCP2 listener")
 	if err := validateNTCP2ListenParams(network, addr, config); err != nil {
@@ -109,14 +113,17 @@ func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *C
 	var listener net.Listener
 	var err error
 
-	// AUDIT 5.2: Capture SO_REUSEADDR errors instead of silently discarding them.
-	// If the caller set AllowReuseAddress: true, they expect fast restart semantics.
-	// If SO_REUSEADDR fails (e.g., permission error, unsupported platform), fail fast.
+	// Capture SO_REUSEADDR errors instead of silently discarding them.
+	// If the caller set AllowReuseAddress: true, they expect fast restart
+	// semantics. If SO_REUSEADDR fails (e.g., permission error, unsupported
+	// platform), fail fast.
 	if config.AllowReuseAddress && (network == "tcp" || network == "tcp4" || network == "tcp6") {
-		// AUDIT 7.1: SO_REUSEADDR is applied only on supported platforms.
-		// The semantics and availability of SO_REUSEADDR varies between operating systems.
+		// SO_REUSEADDR is applied only on supported platforms.
+		// The semantics and availability of SO_REUSEADDR varies between
+		// operating systems.
 		// On Linux, it allows immediate reuse after Close() (TIME_WAIT bypass).
-		// On macOS and Windows, it has different semantics and may not be advisable for all use cases.
+		// On macOS and Windows, it has different semantics and may not be
+		// advisable for all use cases.
 		// This code path is guarded to ensure correct behavior on all platforms.
 		lc := &net.ListenConfig{
 			Control: reuseAddrControl,
@@ -150,8 +157,9 @@ func ListenNTCP2WithContext(ctx context.Context, network, addr string, config *C
 	return ntcp2Listener, nil
 }
 
-// WrapNTCP2Conn wraps an existing net.Conn with NTCP2Conn.
-// This function creates the necessary Noise wrapper and NTCP2 addressing.
+// WrapNTCP2Conn wraps an existing connection as an NTCP2 connection. It
+// creates the Noise wrapper and NTCP2 addresses. The returned connection
+// has not performed the handshake yet.
 func WrapNTCP2Conn(conn net.Conn, config *Config) (*Conn, error) {
 	flog("WrapNTCP2Conn").Debug("Wrapping connection with NTCP2")
 	if err := validateWrapConnParams(conn, config); err != nil {
@@ -224,8 +232,8 @@ func createWrappedNoiseConnection(conn net.Conn, config *Config) (*noise.NoiseCo
 	return noiseConn, nil
 }
 
-// WrapNTCP2Listener wraps an existing net.Listener with NTCP2Listener.
-// This is an alias for NewNTCP2Listener for consistency with the transport API.
+// WrapNTCP2Listener wraps an existing listener so that accepted
+// connections are NTCP2 connections. It is an alias for NewNTCP2Listener.
 func WrapNTCP2Listener(listener net.Listener, config *Config) (*Listener, error) {
 	return NewNTCP2Listener(listener, config)
 }

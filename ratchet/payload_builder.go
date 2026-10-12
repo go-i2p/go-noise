@@ -11,14 +11,23 @@ import (
 // nowFunc returns the current time. It is a variable so tests can override it.
 var nowFunc = time.Now
 
-// PayloadBuilder constructs a spec-compliant payload from a sequence of blocks.
-// It enforces ordering rules from ratchet.md §"Block Ordering Rules":
+// PayloadBuilder constructs a spec-compliant payload from a sequence of
+// [PayloadBlock]s.
+//
+// A payload is the data that gets encrypted inside a garlic message. It is
+// made up of small typed pieces called blocks (a timestamp, a message
+// counter, a garlic clove, and so on).
+//
+// The builder enforces the spec's block ordering rules:
+//
 //   - Padding, if present, must be the last block.
 //   - Termination, if present, must be last except for padding.
 //   - Multiple padding blocks are not allowed.
 //
-// Use the message-type-specific constructors (NewSessionPayloadBuilder,
-// ExistingSessionPayloadBuilder) for full validation.
+// Use the message-type-specific constructors ([NewSessionPayloadBuilder],
+// [ExistingSessionPayloadBuilder]) for full validation.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 type PayloadBuilder struct {
 	blocks []PayloadBlock
 }
@@ -31,20 +40,21 @@ func newSessionPayloadBuilder(includeDateTime bool) *PayloadBuilder {
 	return pb
 }
 
-// NewPayloadBuilder creates an empty PayloadBuilder.
+// NewPayloadBuilder creates an empty [PayloadBuilder].
 func NewPayloadBuilder() *PayloadBuilder {
 	return &PayloadBuilder{}
 }
 
-// AddBlock appends a block to the payload.
+// AddBlock appends a block to the payload. It returns the builder so
+// calls can be chained.
 func (pb *PayloadBuilder) AddBlock(block PayloadBlock) *PayloadBuilder {
 	pb.blocks = append(pb.blocks, block)
 	return pb
 }
 
 // Build serializes all blocks into a single byte slice.
-// Returns an error if the payload exceeds maxPayloadSize or block ordering
-// rules are violated.
+// Returns an error if the payload exceeds the maximum size or block
+// ordering rules are violated.
 func (pb *PayloadBuilder) Build() ([]byte, error) {
 	flog("PayloadBuilder.Build", logger.Fields{"block_count": len(pb.blocks)}).Debug("Building payload from blocks")
 	if err := pb.validate(); err != nil {
@@ -153,16 +163,19 @@ func (pb *PayloadBuilder) checkTerminationPosition(terminationIdx, paddingIdx in
 	return nil
 }
 
-// NewSessionPayloadBuilder creates a PayloadBuilder pre-populated with a DateTime block
-// as required by the New Session format. Additional allowed blocks: GarlicClove, Options, Padding.
-// Spec ref: ratchet.md §"Block Ordering Rules" — "In the New Session message,
-// the DateTime block is required, and must be the first block."
+// NewSessionPayloadBuilder creates a [PayloadBuilder] pre-populated with a
+// DateTime block, as required by the New Session format. The DateTime block
+// must be the first block in a New Session payload. Additional allowed
+// blocks: GarlicClove and Padding.
+//
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func NewSessionPayloadBuilder() *PayloadBuilder {
 	return newSessionPayloadBuilder(true)
 }
 
-// ExistingSessionPayloadBuilder creates an empty PayloadBuilder for Existing Session
-// messages, which have no required blocks and allow all block types.
+// ExistingSessionPayloadBuilder creates an empty [PayloadBuilder] for
+// Existing Session messages, which have no required blocks and allow all
+// block types.
 func ExistingSessionPayloadBuilder() *PayloadBuilder {
 	return newSessionPayloadBuilder(false)
 }
@@ -171,12 +184,13 @@ func ExistingSessionPayloadBuilder() *PayloadBuilder {
 // it must be non-empty, parse as a sequence of valid blocks, and have a
 // DateTime block as the very first block.
 //
-// Spec ref: ratchet.md §1b — "Payload must contain a DateTime block and will
-// usually contain one or more Garlic Clove blocks."
+// A New Session payload must contain a DateTime block and will usually
+// contain one or more Garlic Clove blocks. A caller that omits the DateTime
+// block produces a non-compliant message that will fail interoperability
+// checks with any conformant I2P router. Use [NewSessionPayloadBuilder] to
+// construct a compliant payload automatically.
 //
-// A caller that omits the DateTime block produces a non-compliant NS message
-// that will fail interoperability checks with any conformant I2P router.
-// Use NewSessionPayloadBuilder to construct a compliant payload automatically.
+// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
 func ValidateNewSessionPayload(payload []byte) error {
 	flog("ValidateNewSessionPayload", logger.Fields{"payload_len": len(payload)}).Debug("Validating New Session payload")
 	if len(payload) == 0 {
@@ -198,12 +212,13 @@ func ValidateNewSessionPayload(payload []byte) error {
 	return nil
 }
 
-// BuildNSPayload is a convenience wrapper that constructs a spec-compliant New
-// Session payload containing a fresh DateTime block followed by a single
+// BuildNSPayload is a convenience wrapper that constructs a spec-compliant
+// New Session payload containing a fresh DateTime block followed by a single
 // GarlicClove block that carries the provided garlic data.
 //
 // Use this when you have a raw garlic byte slice and need to wrap it in the
-// structured NS payload format required by EncryptGarlicMessage.
+// structured New Session payload format required by
+// [Session.EncryptGarlicMessage].
 func BuildNSPayload(garlicData []byte) ([]byte, error) {
 	flog("BuildNSPayload", logger.Fields{"garlic_data_len": len(garlicData)}).Debug("Building New Session payload")
 	return NewSessionPayloadBuilder().
@@ -211,14 +226,17 @@ func BuildNSPayload(garlicData []byte) ([]byte, error) {
 		Build()
 }
 
-// ParsePayload deserializes a byte slice into a sequence of PayloadBlocks.
-// Unknown block types are preserved (the spec requires receivers to ignore them).
-// Returns an error for malformed data (truncated headers, length overflows,
-// or more than maxPayloadBlocks blocks).
+// ParsePayload deserializes a byte slice into a sequence of
+// [PayloadBlock]s.
+//
+// Unknown block types are preserved (the spec requires receivers to ignore
+// them). Returns an error for malformed data (truncated headers, length
+// overflows, or too many blocks).
 //
 // A BlockOptions (type 5) block is preserved in the output for completeness
 // (so the caller can inspect it), but a warning is logged because the block
-// type is unimplemented in the I2P ECIES spec and indicates a non-conformant peer.
+// type is unimplemented in the I2P ECIES spec and indicates a non-conformant
+// peer.
 func ParsePayload(data []byte) ([]PayloadBlock, error) {
 	var blocks []PayloadBlock
 	offset := 0

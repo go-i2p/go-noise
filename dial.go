@@ -4,35 +4,41 @@ import (
 	"context"
 )
 
-// # Dial function selection matrix
+// DialNoise opens a new TCP connection to addr and wraps it in a NoiseConn.
+// It does not perform the Noise handshake. This is a convenience function
+// that delegates to the Default Transport.
 //
-// The package exposes six DialNoise variants that differ along two axes:
+// # Choosing a Dial function
 //
-//   - Pool: reuse idle TCP connections from the Default Transport pool?
-//   - Handshake: perform the Noise handshake (with retry) as part of the call?
+// The package exposes six DialNoise variants. They differ along two axes:
 //
-// Use this matrix to pick the right entry-point:
+//   - Pool: does the call reuse an idle TCP connection from the Default
+//     Transport's pool?
+//   - Handshake: does the call perform the Noise handshake (with retry) for
+//     you?
 //
-//	                        │ No handshake │ Handshake (retry) │
-//	────────────────────────┼──────────────┼───────────────────┤
-//	No pool (fresh TCP)     │ DialNoise    │ DialNoiseWithHandshake
-//	                        │              │ DialNoiseWithHandshakeContext
-//	────────────────────────┼──────────────┼───────────────────┤
-//	Pool (reuse TCP)        │ DialNoiseWithPool │ DialNoiseWithPoolAndHandshake
-//	                        │              │ DialNoiseWithPoolAndHandshakeContext
+// Use this table to pick the right entry point:
+//
+//	                          │ No handshake │ Handshake (with retry) │
+//	──────────────────────────┼──────────────┼────────────────────────┤
+//	No pool (fresh TCP)       │ DialNoise    │ DialNoiseWithHandshake
+//	                          │              │ DialNoiseWithHandshakeContext
+//	──────────────────────────┼──────────────┼────────────────────────┤
+//	Pool (reuse TCP)          │ DialNoiseWithPool │ DialNoiseWithPoolAndHandshake
+//	                          │              │ DialNoiseWithPoolAndHandshakeContext
 //
 // Guidance:
+//
 //   - For most applications, use [DialNoiseWithHandshakeContext] (fresh TCP +
-//     handshake + context) — it provides cancellation and retry support.
-//   - Use the *WithPool* variants only if you share long-lived TCP connections
-//     and have already configured the Default Transport pool.
-//   - Use the bare [DialNoise] only when you will perform the handshake yourself
-//     on the returned *NoiseConn.
-//   - Prefer constructing a [Transport] directly for production workloads to
-//     avoid coupling to the package-level Default singleton.
-
-// DialNoise creates a connection to the given address and wraps it with NoiseConn.
-// This is a convenience function that delegates to the Default Transport.
+//     handshake + context). It supports cancellation and retry.
+//   - Use the *WithPool* variants only if you share long-lived TCP
+//     connections and have already configured the Default Transport's pool.
+//   - Use the bare [DialNoise] only when you will perform the handshake
+//     yourself on the returned *NoiseConn.
+//   - For production workloads, prefer building your own [Transport] instead
+//     of relying on the package-level Default singleton.
+//
+// See examples/transport/main.go for a complete example.
 //
 // Deprecated: Use Transport.Dial on a dedicated Transport instance instead of
 // depending on package-level global state. For example:
@@ -41,59 +47,66 @@ import (
 //	transport := noise.NewTransport(pool, noise.NewShutdownManager(30*time.Second))
 //	defer transport.GracefulShutdown()
 //	conn, err := transport.Dial("tcp", "example.com:8080", config)
-//
-// See examples/transport/main.go for a complete example.
 func DialNoise(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().Dial(network, addr, config)
 }
 
-// DialNoiseWithPool creates a connection to the given address, checking the pool first.
-// If a suitable connection is available in the pool, it will be reused.
-// Otherwise, a new connection is created. The connection will be automatically
-// returned to the pool when the NoiseConn is closed.
+// DialNoiseWithPool creates a connection to addr, checking the Default
+// Transport's pool first. If the pool has an idle connection to addr, it is
+// reused; otherwise a new one is created. When the NoiseConn is closed, the
+// underlying TCP connection goes back to the pool for reuse.
 //
-// Deprecated: Use Transport.DialWithPool on a dedicated Transport instance instead of
-// depending on package-level global state. See DialNoise for a migration example.
+// Deprecated: Use Transport.DialWithPool on a dedicated Transport instance
+// instead of depending on package-level global state. See DialNoise for a
+// migration example.
 func DialNoiseWithPool(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPool(network, addr, config)
 }
 
-// DialNoiseWithHandshake creates a connection to the given address, wraps it with NoiseConn,
-// and performs the handshake with retry logic. This is the recommended high-level function
-// for establishing Noise connections with automatic retry capabilities.
+// DialNoiseWithHandshake creates a connection to addr, wraps it in a
+// NoiseConn, and performs the Noise handshake, retrying if it fails. This is
+// the recommended high-level function for establishing Noise connections
+// with automatic retry.
 //
-// Deprecated: Use Transport.DialWithHandshake on a dedicated Transport instance instead of
-// depending on package-level global state. See DialNoise for a migration example.
+// Deprecated: Use Transport.DialWithHandshake on a dedicated Transport
+// instance instead of depending on package-level global state. See DialNoise
+// for a migration example.
 func DialNoiseWithHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithHandshake(network, addr, config)
 }
 
-// DialNoiseWithHandshakeContext creates a connection with context support for cancellation.
-// It combines dialing, NoiseConn creation, and handshake with retry in a single operation.
+// DialNoiseWithHandshakeContext is like DialNoiseWithHandshake but takes a
+// context. Cancelling the context (or letting its deadline pass) stops the
+// dial and handshake.
 //
-// Deprecated: Use Transport.DialWithHandshakeContext on a dedicated Transport instance instead of
-// depending on package-level global state. See DialNoise for a migration example.
+// Deprecated: Use Transport.DialWithHandshakeContext on a dedicated Transport
+// instance instead of depending on package-level global state. See DialNoise
+// for a migration example.
 func DialNoiseWithHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithHandshakeContext(ctx, network, addr, config)
 }
 
-// DialNoiseWithPoolAndHandshake creates a connection with pool support and handshake retry.
-// It checks the pool first, creates new if needed, and performs handshake with retry logic.
+// DialNoiseWithPoolAndHandshake combines connection pooling with the Noise
+// handshake: it checks the Default Transport's pool first, creates a new
+// connection if needed, and performs the handshake with retry.
 //
-// Deprecated: Use Transport.DialWithPoolAndHandshake on a dedicated Transport instance instead of
-// depending on package-level global state. See DialNoise for a migration example.
+// Deprecated: Use Transport.DialWithPoolAndHandshake on a dedicated Transport
+// instance instead of depending on package-level global state. See DialNoise
+// for a migration example.
 func DialNoiseWithPoolAndHandshake(network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPoolAndHandshake(network, addr, config)
 }
 
-// DialNoiseWithPoolAndHandshakeContext combines pool checking, dialing, and handshake with context.
-// It reuses a pooled raw TCP connection when available (the pool keys by
-// conn.RemoteAddr().String(), which equals addr), wraps it in a new NoiseConn,
-// and performs the Noise handshake. Falls back to a fresh dial if the pool is
-// empty or the pooled connection fails the handshake.
+// DialNoiseWithPoolAndHandshakeContext is like DialNoiseWithPoolAndHandshake
+// but takes a context for cancellation. It reuses a pooled TCP connection
+// when one is available (the pool keys connections by their remote address,
+// which equals addr), wraps it in a new NoiseConn, and performs the Noise
+// handshake. If the pool is empty, or a pooled connection fails the
+// handshake, it falls back to a fresh dial.
 //
-// Deprecated: Use Transport.DialWithPoolAndHandshakeContext on a dedicated Transport instance instead of
-// depending on package-level global state. See DialNoise for a migration example.
+// Deprecated: Use Transport.DialWithPoolAndHandshakeContext on a dedicated
+// Transport instance instead of depending on package-level global state. See
+// DialNoise for a migration example.
 func DialNoiseWithPoolAndHandshakeContext(ctx context.Context, network, addr string, config *ConnConfig) (*NoiseConn, error) {
 	return getDefault().DialWithPoolAndHandshakeContext(ctx, network, addr, config)
 }

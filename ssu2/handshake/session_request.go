@@ -11,7 +11,7 @@ import (
 )
 
 // SessionRequestCreateOption configures optional behavior for
-// CreateSessionRequest.
+// CreateSessionRequest, such as injecting a Retry token.
 type SessionRequestCreateOption func(*sessionRequestCreateConfig) error
 
 type sessionRequestCreateConfig struct {
@@ -65,17 +65,19 @@ func computeSessionRequestReplayToken(ephemeralKey, payload []byte) [32]byte {
 	return token
 }
 
-// CreateSessionRequest creates a SessionRequest message (Message 0, XK pattern message 1).
-// This is the first handshake message sent by the initiator.
+// CreateSessionRequest creates a SessionRequest message (XK pattern
+// message 1). This is the first handshake message, sent by the initiator.
 //
 // SessionRequest contains:
-// - Ephemeral key (32 bytes)
-// - Encrypted static key (32 + 16 bytes MAC)
-// - Encrypted blocks (DateTime, Options)
+//   - Ephemeral key (32 bytes)
+//   - Encrypted static key (32 + 16 bytes MAC)
+//   - Encrypted blocks (DateTime, Options)
 //
 // XK pattern message 1: → e, es
 //
 // Optional behavior can be supplied via opts, e.g. Retry tokens.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64, opts ...SessionRequestCreateOption) (*SSU2Packet, error) {
 	flog("CreateSessionRequest", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionRequest")
 	if !h.initiator {
@@ -102,13 +104,15 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64,
 }
 
 // CreateSessionRequestWithToken creates a SessionRequest with a Retry token
-// inserted into header bytes 24-31. This is used when resending SessionRequest
-// after receiving a Retry message from the responder.
+// inserted into header bytes 24-31. This is used when resending
+// SessionRequest after receiving a Retry message from the responder.
 //
 // Per SSU2 spec §Retry, the handshake state must be reset before resending
 // because the first SessionRequest already advanced the Noise state machine.
-// This method calls ResetForRetry internally to create a fresh handshake state
-// with a new ephemeral key and clean chaining key (C-3).
+// This method calls ResetForRetry internally to create a fresh handshake
+// state with a new ephemeral key and clean chaining key.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnID uint64, token []byte) (*SSU2Packet, error) {
 	flog("CreateSessionRequestWithToken", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID, "tokenLen": len(token)}).Debug("Creating SessionRequest with retry token")
 	return h.CreateSessionRequest(sourceConnID, destConnID, WithSessionRequestRetryToken(token))
@@ -119,7 +123,9 @@ func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnI
 // required after receiving a Retry message because the original
 // CreateSessionRequest already advanced the handshake state machine past
 // message 1. Per SSU2 spec, the retried SessionRequest must use a fresh
-// ephemeral key and start from a clean chaining key (C-3).
+// ephemeral key and start from a clean chaining key.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) ResetForRetry() error {
 	flog("ResetForRetry").Debug("Resetting handshake state for retry")
 	cs := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
@@ -172,6 +178,8 @@ func (h *HandshakeHandler) ResetForRetry() error {
 // The initiator's static key becomes available after a successful
 // ProcessSessionConfirmed call via GetRemoteStaticKey(). Do NOT use the
 // first return value of this function for authorization decisions.
+//
+// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
 func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, error) {
 	flog("ProcessSessionRequest").Debug("Processing received SessionRequest")
 	if h.initiator {
@@ -231,7 +239,7 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 		return nil, err
 	}
 
-	// Extract peer's Options block for padding negotiation (G-3).
+	// Extract peer's Options block for padding negotiation.
 	h.extractPeerOptions(blocks)
 
 	// Expose only the minimum replay material needed by callers.

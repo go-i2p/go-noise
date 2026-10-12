@@ -1,9 +1,9 @@
-// Package ssu2 consumer-facing interfaces.
+// This file declares the top-level interfaces that external callers should
+// use when working with SSU2.
 //
-// This file declares the top-level behavioral contracts that external callers
-// should use when working with SSU2. Depending on interfaces rather than
-// concrete types (*SSU2Listener, *PacketRouter, *SSU2Conn) makes it possible
-// to unit-test components in isolation without an active network.
+// Depending on interfaces rather than concrete types (*SSU2Listener,
+// *PacketRouter, *SSU2Conn) makes it possible to unit-test components in
+// isolation without an active network.
 //
 // Acceptor and Router are re-exported from their sub-packages; Dialer is
 // defined here because the dialing functionality is implemented as free
@@ -25,19 +25,19 @@ import (
 //	conn.(*session.SSU2Conn).CloseWithReason(...)
 type ConnIface interface {
 	net.Conn
-	// Handshake performs the SSU2 XK handshake.
-	// Must be called before Read/Write.
+	// Handshake performs the SSU2 XK handshake. It must be called before
+	// Read/Write.
 	Handshake(ctx context.Context) error
 
 	// WriteBlocksWithNumbers sends blocks as individual Data packets and
-	// returns the packet number assigned to each block in order.  Callers
-	// can use these numbers to correlate explicit ACK blocks from the peer
-	// to the exact outbound packets, enabling spec-correct delivery
-	// confirmation without heuristic retirement.
+	// returns the packet number assigned to each block, in order. Callers can
+	// use these numbers to match explicit ACK blocks from the peer to the
+	// exact outbound packets, giving spec-correct delivery confirmation
+	// without guessing which packet an ACK refers to.
 	WriteBlocksWithNumbers(blocks []*session.SSU2Block) ([]uint32, error)
 }
 
-// Dialer establishes outbound SSU2 connections with handshake.
+// Dialer establishes outbound SSU2 connections, including the handshake.
 // Use NewDialer to obtain the default implementation.
 type Dialer interface {
 	// DialContext establishes a new SSU2 session from localAddr to remoteAddr.

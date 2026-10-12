@@ -44,12 +44,14 @@ func (nc *Conn) retryAttemptFields(attempt int) i2plogger.Fields {
 	}
 }
 
-// HandshakeWithRetry performs a handshake with retry logic based on configuration.
-// It uses the HandshakeRetries and RetryBackoff fields from ConnConfig to control
-// the number of attempts and exponential backoff delay between retries.
+// HandshakeWithRetry performs a handshake with retry logic based on
+// configuration. It uses the HandshakeRetries and RetryBackoff fields from
+// ConnConfig to control the number of attempts and the exponential backoff
+// delay between retries.
+//
 // If HandshakeRetries is 0 (the default), this method behaves identically to
-// Handshake() — a single attempt with no retries.
-// It respects context cancellation between retry attempts.
+// Handshake: a single attempt with no retries. A value of -1 retries
+// indefinitely. It respects context cancellation between retry attempts.
 func (nc *Conn) HandshakeWithRetry(ctx context.Context) error {
 	if nc.shouldUseSingleAttempt() {
 		return nc.Handshake(ctx)
