@@ -113,7 +113,7 @@ func (s CongestionState) String() string {
 //
 // The controller is thread-safe and can be used concurrently.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type CongestionController struct {
 	// cwnd is the congestion window in bytes
 	cwnd int
@@ -168,7 +168,7 @@ func NewCongestionController(rttEstimator *RTTEstimator) *CongestionController {
 // This correctly handles IPv6 sessions where the MTU (1452) differs from
 // the IPv4 default (1472).
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func NewCongestionControllerWithMTU(rttEstimator *RTTEstimator, mtu int) *CongestionController {
 	flog("NewCongestionControllerWithMTU", logger.Fields{"mtu": mtu}).Debug("Creating new CongestionController")
 	if mtu <= 0 {

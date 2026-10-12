@@ -10,7 +10,7 @@ import (
 
 // BlockType identifies the type of a payload block.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type BlockType byte
 
 const (
@@ -77,7 +77,7 @@ const maxPayloadBlocks = maxPayloadSize / blockHeaderSize
 
 // NextKeyFlag bit definitions for the NextKey block's flag byte.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 const (
 	// NextKeyFlagKeyPresent indicates the 32-byte public key is included.
 	NextKeyFlagKeyPresent byte = 1 << 0
@@ -103,7 +103,7 @@ const (
 // payload. Each block has a 1-byte type, a 2-byte big-endian length, and
 // variable-length data.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type PayloadBlock struct {
 	Type BlockType
 	Data []byte

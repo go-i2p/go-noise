@@ -9,7 +9,7 @@ package ratchet
 // NextKey block containing its own new DH key. Both sides then perform a DH
 // ratchet to derive a new tag set.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 
 import (
 	"fmt"
@@ -67,7 +67,7 @@ func (s *Session) HasPendingNextKeys() bool {
 //   - sessionTag: the 8-byte tag that identifies the session.
 //   - info: the parsed NextKey block.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func (sm *SessionManager) ProcessReceivedNextKey(sessionTag [8]byte, info NextKeyInfo) error {
 	flog("ProcessReceivedNextKey", logger.Fields{"key_present": info.KeyPresent, "reverse": info.Reverse, "key_id": info.KeyID}).Debug("Processing received NextKey block")
 	session, err := sm.lookupLockedSession(sessionTag)

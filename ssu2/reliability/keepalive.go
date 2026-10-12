@@ -25,7 +25,7 @@
 // ACKs and nacks are adapted from QUIC; packet numbering is adapted from
 // WireGuard and QUIC.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 package reliability
 
 import (
@@ -55,7 +55,7 @@ type SendReceiver interface {
 // Dead connection detection occurs after 3x the keepalive interval with no
 // response.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type KeepaliveManager struct {
 	// conn is the SSU2 connection this manager belongs to
 	conn SendReceiver

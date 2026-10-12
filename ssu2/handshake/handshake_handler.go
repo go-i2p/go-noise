@@ -16,7 +16,7 @@ import (
 // I2P SSU2 specification. It indicates the XK pattern with ChaCha20
 // obfuscation and three modified handshake messages.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 const SSU2ProtocolName = "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256"
 
 // HandshakeHandler manages SSU2 handshake message processing using the XK
@@ -577,7 +577,7 @@ func (h *HandshakeHandler) updateCipherStates(cs1, cs2 *noise.CipherState) {
 // split key) so that data-phase AEAD uses the spec-mandated derived key.
 // Returns the send-direction k_header_2 and recv-direction k_header_2.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) DeriveHeaderKeys() (sendKHeader2, recvKHeader2 []byte, err error) {
 	return DeriveHeaderKeys(h.sendCipher, h.recvCipher)
 }

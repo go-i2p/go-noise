@@ -25,7 +25,7 @@ import (
 //     Session Reply must pass this value to
 //     [SessionManager.EncryptNewSessionReply].
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func (sm *SessionManager) DecryptGarlicMessage(encryptedGarlic []byte) ([]byte, [8]byte, *[32]byte, error) {
 	flog("DecryptGarlicMessage", logger.Fields{"message_len": len(encryptedGarlic)}).Debug("Decrypting garlic message")
 	if len(encryptedGarlic) < 8 {

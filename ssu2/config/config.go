@@ -12,7 +12,7 @@ import (
 // transport protocol. It follows the builder pattern for optional
 // configuration and validation.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type SSU2Config struct {
 	// BaseHandshakeConfig embeds the shared timeout, retry, and modifier fields
 	// common to all Noise config types in this module.

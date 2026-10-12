@@ -33,7 +33,7 @@ var (
 //     secrecy.
 //  3. Session Expiry: sessions expire after an inactivity timeout.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[[32]byte]*Session
@@ -178,7 +178,7 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 //
 // The session is found by tag lookup using the sessionTag parameter.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func (sm *SessionManager) ProcessIncomingDHRatchet(sessionTag [8]byte, newRemotePubKey [32]byte) error {
 	session, err := sm.lookupLockedSession(sessionTag)
 	if err != nil {

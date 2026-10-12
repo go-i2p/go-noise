@@ -23,7 +23,7 @@ import (
 // will not report an error.
 //
 // For I2P NTCP2 transport contexts, use ntcp2.NTCP2PaddingModifier instead.
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // The modifier is phase-aware: it only pads during the handshake phases
 // ([PhaseInitial], [PhaseExchange], [PhaseFinal]). For [PhaseData] and any

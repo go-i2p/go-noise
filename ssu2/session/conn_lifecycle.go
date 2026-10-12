@@ -20,7 +20,7 @@ func (h *SSU2Conn) Close() error {
 // Termination period. It is intended for sessions that are being abandoned
 // before they were ever established (e.g. when the accept queue is full or a
 // duplicate connection ID is detected), where waiting to drain a Termination
-// handshake is pointless and would block the caller (AUDIT 2.1).
+// handshake is pointless and would block the caller.
 func (h *SSU2Conn) CloseImmediate() error {
 	h.destroySkip.Store(true)
 	return h.CloseWithReason(TerminationNormalClose, nil)
@@ -300,7 +300,8 @@ func (h *SSU2Conn) SetOwnsUnderlying(v bool) {
 // starts recvLoop during Handshake() to read packets. When false (listener-accepted
 // connections), recvLoop is not started and packets are fed via RoutePacket from
 // the listener's receiveLoop into recvQueue.
-// AUDIT 1.2: Gate recvLoop startup to prevent multiple readers on the same socket.
+// This flag gates recvLoop startup so that only one goroutine ever reads from
+// a given socket, preventing multiple readers on the same socket.
 func (h *SSU2Conn) SetReadsOwnSocket(v bool) {
 	h.readsOwnSocket = v
 }
@@ -308,10 +309,10 @@ func (h *SSU2Conn) SetReadsOwnSocket(v bool) {
 // SetCloseHook registers a callback invoked once during CloseWithReason,
 // after the connection's goroutines are torn down. The listener uses this
 // to deregister the session from its routing maps when the connection
-// closes, preventing unbounded session accumulation (AUDIT 2.2). The hook
+// closes, preventing unbounded session accumulation. The hook
 // must not call CloseWithReason on this connection.
 //
-// BUG-SA-3: This method chains hooks rather than replacing them, so multiple
+// This method chains hooks rather than replacing them, so multiple
 // callers (e.g. the listener and an external router layer) can each register
 // their own hook without overwriting each other.
 func (h *SSU2Conn) SetCloseHook(hook func()) {
@@ -378,7 +379,7 @@ func (h *SSU2Conn) setInboundReplayMaterial(ephemeralKey, replayToken []byte) {
 
 // isSocketDeadError checks whether an error indicates the underlying socket
 // is dead or unreachable (e.g., broken pipe, connection refused, no such host).
-// AUDIT 5.4: Used to short-circuit the destroy wait when sending Termination
+// It is used to short-circuit the destroy wait when sending Termination
 // fails because the socket is already dead.
 // Covered cases include common platform variants such as EPIPE, ECONNREFUSED,
 // ECONNRESET, and closed-network-connection errors.

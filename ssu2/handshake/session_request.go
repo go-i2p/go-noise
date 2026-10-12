@@ -77,7 +77,7 @@ func computeSessionRequestReplayToken(ephemeralKey, payload []byte) [32]byte {
 //
 // Optional behavior can be supplied via opts, e.g. Retry tokens.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64, opts ...SessionRequestCreateOption) (*SSU2Packet, error) {
 	flog("CreateSessionRequest", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionRequest")
 	if !h.initiator {
@@ -112,7 +112,7 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64,
 // This method calls ResetForRetry internally to create a fresh handshake
 // state with a new ephemeral key and clean chaining key.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnID uint64, token []byte) (*SSU2Packet, error) {
 	flog("CreateSessionRequestWithToken", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID, "tokenLen": len(token)}).Debug("Creating SessionRequest with retry token")
 	return h.CreateSessionRequest(sourceConnID, destConnID, WithSessionRequestRetryToken(token))
@@ -125,7 +125,7 @@ func (h *HandshakeHandler) CreateSessionRequestWithToken(sourceConnID, destConnI
 // message 1. Per SSU2 spec, the retried SessionRequest must use a fresh
 // ephemeral key and start from a clean chaining key.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) ResetForRetry() error {
 	flog("ResetForRetry").Debug("Resetting handshake state for retry")
 	cs := noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
@@ -179,7 +179,7 @@ func (h *HandshakeHandler) ResetForRetry() error {
 // ProcessSessionConfirmed call via GetRemoteStaticKey(). Do NOT use the
 // first return value of this function for authorization decisions.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, error) {
 	flog("ProcessSessionRequest").Debug("Processing received SessionRequest")
 	if h.initiator {

@@ -45,7 +45,7 @@ import (
 //   - sipIVBA: initial IV for the B→A SipHash length obfuscation chain
 //   - err: non-nil if derivation fails
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func DeriveSipHashKeys(askMaster, handshakeHash []byte) (
 	sipKeysAB [2]uint64, sipIVAB uint64,
 	sipKeysBA [2]uint64, sipIVBA uint64,

@@ -17,7 +17,7 @@ import (
 // that prefixes every NTCP2 data frame. The length is hidden by XORing it
 // with a SipHash mask, so an observer cannot tell how big each frame is.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 const FrameLengthFieldSize = 2
 
 // Read reads data from the NTCP2 connection, implementing the net.Conn
@@ -38,7 +38,7 @@ const FrameLengthFieldSize = 2
 // When no length obfuscator is set, Read delegates directly to the
 // underlying Noise connection.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) Read(b []byte) (int, error) {
 	if nc.broken.Load() {
 		flog("NTCP2Conn.Read").Warn("Read attempted on broken NTCP2 connection")
@@ -292,7 +292,7 @@ func (nc *Conn) validateFrameLength(frameLen uint16) error {
 // Large writes are transparently split into multiple frames of at most
 // MaxFrameSize minus Poly1305Overhead bytes of plaintext each.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) Write(b []byte) (int, error) {
 	if nc.broken.Load() {
 		flog("NTCP2Conn.Write").Warn("Write attempted on broken NTCP2 connection")

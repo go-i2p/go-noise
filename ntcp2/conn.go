@@ -459,7 +459,7 @@ func (nc *Conn) NonceExhaustionImminent() bool {
 // the RouterInfo so replies can be routed back to the peer.
 //
 // The returned slice is a copy; you may modify it freely.
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) PeerMessage3Payload() []byte {
 	p := nc.peerMsg3Payload.Load()
 	if p == nil {
@@ -481,7 +481,7 @@ func (nc *Conn) PeerMessage3Payload() []byte {
 //	bytes 1-2 : block size (two bytes, big-endian) — number of bytes that follow
 //	bytes 3+  : block data (size bytes)
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) PeerRouterInfoBytes() []byte {
 	payload := nc.PeerMessage3Payload()
 	if payload == nil {

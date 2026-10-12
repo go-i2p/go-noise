@@ -27,7 +27,7 @@ var nowFunc = time.Now
 // Use the message-type-specific constructors ([NewSessionPayloadBuilder],
 // [ExistingSessionPayloadBuilder]) for full validation.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type PayloadBuilder struct {
 	blocks []PayloadBlock
 }
@@ -168,7 +168,7 @@ func (pb *PayloadBuilder) checkTerminationPosition(terminationIdx, paddingIdx in
 // must be the first block in a New Session payload. Additional allowed
 // blocks: GarlicClove and Padding.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func NewSessionPayloadBuilder() *PayloadBuilder {
 	return newSessionPayloadBuilder(true)
 }
@@ -190,7 +190,7 @@ func ExistingSessionPayloadBuilder() *PayloadBuilder {
 // checks with any conformant I2P router. Use [NewSessionPayloadBuilder] to
 // construct a compliant payload automatically.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func ValidateNewSessionPayload(payload []byte) error {
 	flog("ValidateNewSessionPayload", logger.Fields{"payload_len": len(payload)}).Debug("Validating New Session payload")
 	if len(payload) == 0 {

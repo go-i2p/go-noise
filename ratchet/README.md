@@ -134,4 +134,4 @@ The test suite includes 46+ tests covering:
 ## Specification
 
 For the full I2P ECIES-X25519-AEAD-Ratchet specification, see
-[`ratchet.md`](ratchet.md) or the [official spec](https://geti2p.net/spec/ecies).
+[`ratchet.md`](ratchet.md) or the [official spec](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst).

@@ -319,7 +319,7 @@ func (nc *Conn) copyDecryptedData(b, decrypted []byte, encryptedLen, decryptedLe
 // encryption from wire-level framing, for example NTCP2's SipHash-obfuscated
 // length prefix.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // The connection must have completed the Noise handshake.
 // Thread Safety: Same guarantees as Write().
@@ -335,7 +335,7 @@ func (nc *Conn) Encrypt(data []byte) ([]byte, error) {
 // decryption from wire-level framing, for example NTCP2's SipHash-obfuscated
 // length prefix.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // The connection must have completed the Noise handshake.
 // Thread Safety: Same guarantees as Read().
@@ -351,7 +351,7 @@ func (nc *Conn) Decrypt(encrypted []byte) ([]byte, error) {
 // SipHash-obfuscated length prefixes) between the TCP connection and the
 // encrypted Noise frames.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // Callers should use Encrypt and Decrypt for the crypto and write or read
 // the resulting bytes to and from this connection with their own framing.
@@ -369,7 +369,7 @@ func (nc *Conn) Config() *ConnConfig {
 // to apply PhaseData transforms (padding, obfuscation) around Encrypt and
 // Decrypt.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) GetModifierChain() *handshake.ModifierChain {
 	return nc.config.GetModifierChain()
 }

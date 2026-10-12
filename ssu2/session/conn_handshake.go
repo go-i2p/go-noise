@@ -725,8 +725,8 @@ func (h *SSU2Conn) extractRetryToken(retry *SSU2Packet) ([]byte, error) {
 }
 
 // receivePacketWithTimeout waits for a packet with timeout.
-// AUDIT 4.4: Check context cancellation immediately before waiting on timer,
-// so context cancellation is detected promptly even if the timeout is large.
+// It checks for context cancellation immediately before waiting on the timer,
+// so cancellation is detected promptly even when the timeout is large.
 func (h *SSU2Conn) receivePacketWithTimeout(ctx context.Context, timeout time.Duration) (*SSU2Packet, error) {
 	// Check if context is already canceled before entering the wait
 	select {

@@ -30,7 +30,7 @@ const DefaultHandshakeRetries = 3
 // the fields you care about with the With* methods. Call Validate before
 // using the config to catch mistakes early.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 type Config struct {
 	// BaseHandshakeConfig holds the shared timeout, retry, and modifier
 	// settings used by all Noise config types in this module.
@@ -155,7 +155,7 @@ type Config struct {
 //
 // initiator is true when this connection will start the handshake.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
 	flog("NewNTCP2Config", logger.Fields{"initiator": initiator}).Debug("Creating new NTCP2Config")
 	return &Config{
@@ -274,7 +274,7 @@ func (nc *Config) WithRetryBackoff(backoff time.Duration) *Config {
 // Note: options negotiation (padding limits, dummy traffic, delay
 // parameters) is handled by the higher-level router transport, not here.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Config) WithAESObfuscation(enabled bool, customIV []byte) *Config {
 	nc.EnableAESObfuscation = enabled
 	if len(customIV) == IVSize {
@@ -291,7 +291,7 @@ func (nc *Config) WithAESObfuscation(enabled bool, customIV []byte) *Config {
 // are zero, the keys are derived from the session keys during the
 // handshake.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Config) WithSipHashLength(enabled bool, k1, k2 uint64) *Config {
 	nc.EnableSipHashLength = enabled
 	if enabled && (k1 != 0 || k2 != 0) {
@@ -314,7 +314,7 @@ func (nc *Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *Confi
 // outbound connections. The length is written into the m3p2Len field of
 // message 1, and the bytes are encrypted and sent as message 3 part 2.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Config) WithLocalRouterInfo(ri []byte) *Config {
 	if len(ri) > 0 {
 		nc.LocalRouterInfo = make([]byte, len(ri))
@@ -530,7 +530,7 @@ func (nc *Config) validateModifiers() error {
 // derives the per-direction SipHash keys from the session keys and
 // stores them for the data phase.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Config) ToConnConfig() (*noise.ConnConfig, error) {
 	flog("NTCP2Config.ToConnConfig").Debug("Converting NTCP2Config to ConnConfig")
 	if err := nc.Validate(); err != nil {

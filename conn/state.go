@@ -87,7 +87,7 @@ func (nc *Conn) PeerStatic() []byte {
 //     SipHash keys)
 //
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // Returns nil if the handshake has not been initiated.
 func (nc *Conn) ChannelBinding() []byte {
@@ -106,7 +106,7 @@ func (nc *Conn) ChannelBinding() []byte {
 // protocol layers (for example, NTCP2 SipHash key derivation). It returns nil
 // before the handshake produces cipher states.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) SendCipherState() *noise.CipherState {
 	nc.stateMutex.RLock()
 	defer nc.stateMutex.RUnlock()

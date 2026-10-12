@@ -10,8 +10,8 @@
 // transports use the identical algorithm, with per-direction keys derived
 // from their respective key derivation functions (KDFs).
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 //
 // # Where it lives
 //
@@ -66,8 +66,8 @@ var (
 // SSU2 reuses the identical NTCP2 SipHash length-obfuscation construction, so
 // the same endianness rules apply there too.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	var input [8]byte
 	binary.LittleEndian.PutUint64(input[:], *iv)

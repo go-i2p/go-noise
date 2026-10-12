@@ -14,7 +14,7 @@ import (
 //
 // XK pattern: ← e, ee
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) CreateSessionCreated(sourceConnID, destConnID uint64) (*SSU2Packet, error) {
 	flog("CreateSessionCreated", logger.Fields{"sourceConnID": sourceConnID, "destConnID": destConnID}).Debug("Creating SessionCreated")
 	if h.initiator {
@@ -33,7 +33,7 @@ func (h *HandshakeHandler) CreateSessionCreated(sourceConnID, destConnID uint64)
 // After this, the handshake is complete and transport cipher states are
 // available.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 	flog("ProcessSessionCreated").Debug("Processing received SessionCreated")
 	if !h.initiator {

@@ -27,7 +27,7 @@
 // the session. The receiver looks up the tag, finds the matching session,
 // and decrypts.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
 // # What this package provides
@@ -53,5 +53,5 @@
 //   - session_tag.ECIESSessionTag → [8]byte
 //   - router_info.RouterInfo → extracted [32]byte keys via adapter functions
 //
-// Reference: https://geti2p.net/spec/ecies
+// Reference: https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst
 package ratchet

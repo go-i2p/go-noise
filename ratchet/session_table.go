@@ -209,7 +209,7 @@ func (sm *SessionManager) evictLRUSessionLocked() {
 // remote public key. If a peer is already at or above the cap, the oldest
 // session belonging to that peer is evicted first. This protects sessions
 // from other honest peers from being evicted via LRU churn when a single
-// hostile identity floods the manager with NS messages (AUDIT L-4).
+// hostile identity floods the manager with NS messages.
 //
 // Eviction bias: Prefer evicting established sessions (handshakeState == nil)
 // over initiator sessions awaiting NSR (nsrTag != nil). This prevents self-DoS

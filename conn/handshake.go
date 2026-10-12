@@ -399,7 +399,7 @@ func (nc *Conn) resetHandshakeState() {
 // implementations that need exact control over how messages are framed (for
 // example, NTCP2) use this instead of the built-in Handshake.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // The caller must call StartHandshake before the first call and
 // CompleteHandshake after the final message.
@@ -462,7 +462,7 @@ func (nc *Conn) CompleteHandshake() {
 // NTCP2Conn.Handshake) must call this before CompleteHandshake so that
 // post-handshake key derivation (for example, SipHash keys) runs correctly.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
 // Returns nil if no hook is configured.
 func (nc *Conn) RunPostHandshakeHook() error {
@@ -484,7 +484,7 @@ func (nc *Conn) FailHandshake() {
 // post-handshake key material, such as the SipHash keys for the NTCP2 data
 // phase.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) GetHandshakeHash() []byte {
 	if nc.handshakeState == nil {
 		return nil
@@ -504,7 +504,7 @@ func (nc *Conn) GetHandshakeHash() []byte {
 // after reading and discarding cleartext padding, passing the raw padding
 // bytes so that the hash state stays in sync with the peer.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) MixHashData(data []byte) {
 	if nc.handshakeState != nil && len(data) > 0 {
 		nc.handshakeState.MixHash(data)

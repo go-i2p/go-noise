@@ -12,7 +12,7 @@ import (
 // Per the I2P spec, connections with clock skew exceeding this value
 // should be rejected.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 const ClockSkewTolerance = 60 * time.Second
 
 // Replay cache constants.
@@ -20,7 +20,7 @@ const ClockSkewTolerance = 60 * time.Second
 // Bob must maintain a local cache of previously-used ephemeral keys (X
 // values from message 1) and reject duplicates to prevent replay attacks.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 const (
 	// replayCacheTTL is the time-to-live for replay cache entries.
 	// Entries older than this are evicted. Set to 2× the clock skew tolerance
@@ -50,7 +50,7 @@ const (
 //
 // ReplayCache implements the ReplayDetector interface.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 type ReplayCache struct {
 	cache *replaycache.TTLCache
 }

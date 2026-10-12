@@ -50,7 +50,7 @@ func (sc *SSU2Config) WithStaticKey(key []byte) *SSU2Config {
 //
 // Required for initiator connections; optional for responders.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (sc *SSU2Config) WithLocalRouterInfo(routerInfo []byte) *SSU2Config {
 	if len(routerInfo) > 0 {
 		sc.LocalRouterInfo = make([]byte, len(routerInfo))
@@ -118,7 +118,7 @@ func (sc *SSU2Config) WithRetryBackoff(backoff time.Duration) *SSU2Config {
 // passive observers cannot easily identify SSU2 traffic. When enabled with
 // a custom IV, the IV must be exactly 8 bytes.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (sc *SSU2Config) WithChaChaObfuscation(enabled bool, customIV []byte) *SSU2Config {
 	sc.EnableChaChaObfuscation = enabled
 	if len(customIV) == 8 {

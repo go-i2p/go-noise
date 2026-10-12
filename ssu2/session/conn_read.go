@@ -381,8 +381,8 @@ func (h *SSU2Conn) keepaliveLoop() {
 // through the receive window for reordering and duplicate detection.
 //
 // This method is exported to support cross-package delivery of packets from
-// the listener to pending outbound sessions during handshake demultiplexing
-// (AUDIT 1.2: single-reader invariant, pending outbound registry).
+// the listener to pending outbound sessions during handshake demultiplexing,
+// preserving the single-reader invariant and the pending outbound registry.
 //
 // Parameters:
 //   - packet: The parsed SSU2Packet to process
@@ -524,7 +524,7 @@ func (h *SSU2Conn) handlePeerNextNonce(newNonce uint64) error {
 // getReadDeadlineTimer returns a *time.Timer that fires at the read deadline,
 // or nil if no deadline is set. Callers MUST Stop() the returned timer when
 // done to release it promptly; a previous implementation used time.After,
-// which leaks an unstoppable timer on every Read until it fires (AUDIT 4.4).
+// which leaks an unstoppable timer on every Read until it fires.
 func (h *SSU2Conn) getReadDeadlineTimer() *time.Timer {
 	h.deadlineMutex.RLock()
 	defer h.deadlineMutex.RUnlock()

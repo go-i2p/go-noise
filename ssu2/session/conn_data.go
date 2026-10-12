@@ -11,9 +11,10 @@ import (
 )
 
 // startDataLoops starts background goroutines for data transport.
-// Called after handshake completes to avoid wasting resources on failed connections.
-// AUDIT 2.1: Start the fragment reaper here, not in NewSSU2Conn, to avoid leaking
-// goroutines if the handshake is never completed or Close is never called.
+// It is called after the handshake completes, so resources are not wasted on
+// failed connections. The fragment reaper is started here rather than in
+// NewSSU2Conn to avoid leaking goroutines if the handshake is never completed
+// or Close is never called.
 func (h *SSU2Conn) startDataLoops() {
 	flog("startDataLoops").Debug("Starting send, keepalive, retransmit, and reaper loops")
 	h.dataHandler.StartReaper()

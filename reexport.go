@@ -20,10 +20,10 @@
 //
 //   - NTCP2: Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256, used for
 //     TCP-based connections.
-//     See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+//     See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //   - SSU2: Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256, used for
 //     UDP-based connections.
-//     See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+//     See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 //
 // Both protocols use the XK base pattern, X25519 key exchange,
 // ChaCha20-Poly1305 encryption, and SHA-256 hashing. They carry I2NP

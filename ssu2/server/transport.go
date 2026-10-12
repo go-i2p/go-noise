@@ -32,7 +32,6 @@ import (
 // IMPORTANT: Do NOT co-locate DialSSU2 on the same port as a ListenSSU2 in the
 // same process. Both trying to bind the same port will fail (kernel won't allow).
 // Use DialSSU2WithConn to multiplex outbound connections over the listener socket.
-// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
 //
 // Parameters:
 //   - localAddr: Local UDP address to bind to (use nil for automatic, or specify port 0 for OS-selected ephemeral)
@@ -103,8 +102,6 @@ func DialSSU2(localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (*SSU2Conn
 //
 // The caller is responsible for demultiplexing responses by ConnectionID.
 // The provided PacketConn is NOT closed when the returned SSU2Conn is closed.
-//
-// AUDIT 7.1 — Ephemeral source-port dial vs. multiplexed socket.
 //
 // Parameters:
 //   - packetConn: Existing UDP PacketConn to send/receive through (e.g., from ListenSSU2)
@@ -453,8 +450,7 @@ func validateWrapListenerParams(underlying net.PacketConn, config *SSU2Config) e
 }
 
 // validateSourceAddress validates a UDP address for dial operations.
-// AUDIT 7.2 — Address validation.
-// Rejects:
+// It rejects:
 //   - nil address
 //   - port 0 (requires explicit source port for dial)
 //   - reserved ports (1-1023)
@@ -497,8 +493,7 @@ func validateSourceAddress(addr *net.UDPAddr, config *SSU2Config) error {
 }
 
 // validateDialLocalAddress validates a UDP address for dial's local address.
-// AUDIT 7.2 — Address validation for dial local binding.
-// Rejects:
+// It rejects:
 //   - reserved ports (1-1023) when explicitly bound (port > 0 and < 1024)
 //   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true
 //
@@ -534,8 +529,8 @@ func validateDialLocalAddress(addr *net.UDPAddr, config *SSU2Config) error {
 	return nil
 }
 
-// AUDIT 7.2 — Address validation for listen.
-// Rejects:
+// validateListenAddress validates a UDP address for listen operations.
+// It rejects:
 //   - nil address
 //   - reserved ports (1-1023) when explicitly bound (port > 0)
 //   - loopback addresses (127.0.0.0/8, ::1) unless config.AllowLoopback is true

@@ -30,7 +30,7 @@ var _ BuildRecordEncryptor = (*BuildRequestCrypto)(nil)
 // For backward compatibility a combined type is available as
 // [BuildRecordCrypto].
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type BuildRequestCrypto struct{}
 
 // NewBuildRequestCrypto creates a new [BuildRequestCrypto] handler.
@@ -60,7 +60,7 @@ func NewBuildRequestCrypto() *BuildRequestCrypto {
 //   - recipientIdentityHash: recipient's 32-byte identity hash (extracted
 //     from RouterInfo by caller).
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func (c *BuildRequestCrypto) EncryptBuildRequest(
 	cleartext []byte,
 	recipientPubKey, recipientIdentityHash [32]byte,

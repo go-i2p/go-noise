@@ -12,7 +12,7 @@ package ntcp2
 // TTL (typically derived from ClockSkewTolerance). Implementations must be
 // safe for concurrent use.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 type ReplayDetector interface {
 	// CheckAndAdd returns true if the ephemeral key has been seen before
 	// (a replay). If the key is new, it is added to the cache and false is

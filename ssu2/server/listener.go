@@ -40,7 +40,7 @@ import (
 //
 // Thread safety: all public methods are thread-safe.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type SSU2Listener struct {
 	// underlying is the UDP socket for receiving packets
 	underlying net.PacketConn
@@ -168,7 +168,7 @@ type SSU2Listener struct {
 // Returns a new SSU2Listener ready to start, or an error if configuration is
 // invalid.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listener, error) {
 	flog("NewSSU2Listener").Debug("Creating new SSU2 listener")
 	if err := validateParam(underlying, "underlying packet connection", "INVALID_PACKET_CONN", "ssu2_listener"); err != nil {

@@ -89,8 +89,8 @@ func (pr *PacketRouter) AddSession(conn *SSU2Conn) error {
 	return nil
 }
 
-// AUDIT 8.3: AddSessionIfBelowCap atomically checks MaxSessions capacity and adds
-// the session under a single write lock. This prevents the race window between
+// AddSessionIfBelowCap atomically checks MaxSessions capacity and adds the
+// session under a single write lock. This prevents the race window between
 // the non-atomic check-and-act of SessionCount() vs AddSession() that allows
 // multiple workers to exceed MaxSessions simultaneously.
 func (pr *PacketRouter) AddSessionIfBelowCap(conn *SSU2Conn, maxSessions int) error {
@@ -321,7 +321,7 @@ func (pr *PacketRouter) SessionCount() int {
 
 // GetAllSessions returns a snapshot of all registered sessions.
 // The returned slice is a copy of the session list at the time of the call.
-// Used by listener.Close() to trigger parallel teardown of all sessions (AUDIT 3.2).
+// It is used by listener.Close() to trigger parallel teardown of all sessions.
 func (pr *PacketRouter) GetAllSessions() []*SSU2Conn {
 	pr.sessionMutex.RLock()
 	defer pr.sessionMutex.RUnlock()

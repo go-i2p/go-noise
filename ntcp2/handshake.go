@@ -61,7 +61,7 @@ const (
 // by the router transport layer.
 //
 // Handshake must not be called concurrently on the same connection.
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	hsStart := time.Now()

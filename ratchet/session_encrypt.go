@@ -26,7 +26,7 @@ import (
 // which would produce ES messages with unregistered tags that the receiver
 // cannot match.
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func (sm *SessionManager) EncryptGarlicMessage(
 	destinationHash, destinationPubKey [32]byte,
 	plaintextGarlic []byte,

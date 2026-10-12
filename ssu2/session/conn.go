@@ -536,8 +536,8 @@ func NewMockSSU2Conn(connID uint64) *SSU2Conn {
 }
 
 // TriggerForceDestroy closes the forceDestroy channel to signal cancellation
-// of the DestroyTimeout wait in CloseWithReason. Used by listener.Close()
-// during parallel teardown to avoid serial blocking (AUDIT 3.2).
+// of the DestroyTimeout wait in CloseWithReason. It is used by listener.Close()
+// during parallel teardown to avoid serial blocking.
 // Safe to call multiple times (idempotent via sync.Once, not a TOCTOU-prone
 // select/default check).
 func (h *SSU2Conn) TriggerForceDestroy() {

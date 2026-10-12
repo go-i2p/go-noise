@@ -44,7 +44,7 @@ const (
 // For backward compatibility a combined type is available as
 // [BuildRecordCrypto].
 //
-// See [I2P Spec: ECIES](https://geti2p.net/spec/ecies) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type BuildReplyCrypto struct{}
 
 // NewBuildReplyCrypto creates a new [BuildReplyCrypto] handler.

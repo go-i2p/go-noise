@@ -469,7 +469,7 @@ func (nl *Listener) handleTransientError(err error) (bool, time.Duration, error)
 // rather than a decayed remaining budget. Callers that need a hard bound on
 // end-to-end accept-to-established latency should invoke Handshake()
 // immediately after Accept() returns and/or enforce their own bound via a
-// context passed to Handshake(ctx). See AUDIT.md Level 7 Medium finding.
+// context passed to Handshake(ctx).
 func (nl *Listener) setHandshakeDeadline(underlying net.Conn) error {
 	if nl.config.HandshakeTimeout <= 0 {
 		return nil

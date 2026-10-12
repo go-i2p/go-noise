@@ -11,7 +11,7 @@ import (
 // the type directly accessible from the ntcp2 package without an extra
 // import.
 //
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 type SipHashLengthModifier = pkgsiphash.LengthModifier
 
 // NewSipHashLengthModifier creates a new SipHash length obfuscation modifier

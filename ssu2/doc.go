@@ -46,7 +46,7 @@
 // Because all three handshake messages use the header as associated data,
 // the SSU2 protocol identifier differs from NTCP2's.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 //
 // # What SSU2 does and does not do
 //

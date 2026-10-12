@@ -7,7 +7,7 @@ import (
 )
 
 // NTCP2 protocol constants, as defined by the I2P NTCP2 specification.
-// See [I2P Spec: NTCP2](https://i2p.net/en/docs/specs/ntcp2/) for details.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 
 const (
 	// RouterHashSize is the size of an I2P router identity hash, in bytes.

@@ -56,7 +56,7 @@ const (
 //
 // Minimum size: 5 bytes (4-byte Through PN + 1-byte acnt)
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type ACKHandler struct {
 	mu sync.Mutex
 

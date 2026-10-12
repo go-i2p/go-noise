@@ -32,7 +32,7 @@ const (
 // This message completes the XK handshake (→ s, se) and produces the
 // transport cipher states.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber uint32, routerInfo []byte) (*SSU2Packet, error) {
 	flog("CreateSessionConfirmed", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed")
 	if !h.initiator {
@@ -119,7 +119,7 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 // After this, both sides have completed the handshake and can send Data
 // messages.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) ProcessSessionConfirmed(packet *SSU2Packet) error {
 	flog("ProcessSessionConfirmed").Debug("Processing received SessionConfirmed")
 	if h.initiator {
@@ -191,7 +191,7 @@ func (h *HandshakeHandler) finalizeSessionConfirmed(noiseMessage []byte) error {
 // Subsequent fragment headers carry the same connection ID with incrementing
 // packet numbers.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packetNumber uint32, routerInfo []byte) ([]*SSU2Packet, error) {
 	flog("CreateSessionConfirmedFragments", logger.Fields{"connID": connID, "packetNumber": packetNumber}).Debug("Creating SessionConfirmed with fragmentation")
 	if !h.initiator {
@@ -306,7 +306,7 @@ func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32,
 // For a single-fragment message, this behaves identically to
 // ProcessSessionConfirmed.
 //
-// See [I2P Spec: SSU2](https://i2p.net/en/docs/specs/ssu2/) for details.
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) ProcessSessionConfirmedFragments(packets []*SSU2Packet) error {
 	flog("ProcessSessionConfirmedFragments", logger.Fields{"fragmentCount": len(packets)}).Debug("Processing SessionConfirmed fragments")
 	if h.initiator {
