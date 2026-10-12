@@ -246,7 +246,7 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		}
 	}
 
-	// H-1 fix: SSU2 has no data-phase length-obfuscation field. Header bytes
+	// SSU2 has no data-phase length-obfuscation field. Header bytes
 	// 14-15 are the spec's "moreflags" (unused, set to 0), already covered by
 	// ChaCha20 header protection above. The datagram length is the message
 	// length (parsed by Deserialize from the UDP payload size), so there is
@@ -363,7 +363,7 @@ func (h *SSU2Conn) keepaliveLoop() {
 				h.closeMutex.Lock()
 				h.closeErr = oops.Errorf("idle timeout")
 				h.closeMutex.Unlock()
-				// H-3: Run close in a separate goroutine to avoid deadlock.
+				// Run close in a separate goroutine to avoid deadlock.
 				// keepaliveLoop is counted in h.wg, so if we call h.Close() directly,
 				// it will call h.wg.Wait() and deadlock waiting for this goroutine to finish.
 				go h.Close()
@@ -428,9 +428,9 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	if readyPacket.PacketNumber > 0 {
 		h.ackHandler.RecordReceived(readyPacket.PacketNumber)
 
-		// H-2: Check if a delayed ACK should be sent immediately.
+		// Check if a delayed ACK should be sent immediately.
 		// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
-		// Otherwise, rely on timer or next batch of packets (see H-2 TODO).
+		// Otherwise, rely on the timer or the next batch of packets.
 		rtt := h.rttEstimator.GetSmoothedRTT()
 		if rtt == 0 {
 			rtt = 50 * time.Millisecond // Default if not yet measured

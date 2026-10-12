@@ -223,7 +223,7 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 				return oops.Wrapf(err, "failed to create new session")
 			}
 
-			// BUG-EH-3: nil conn with nil error means the handler handled the
+			// nil conn with nil error means the handler handled the
 			// packet without creating a session (e.g. Retry sent). Don't feed
 			// the triggering packet — there is no session to receive it.
 			if newConn == nil {

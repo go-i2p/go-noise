@@ -238,7 +238,7 @@ func (sm *ShutdownManager) Shutdown() error {
 }
 
 // logShutdownInitiation logs the start of the shutdown process with current state.
-// L-3: Acquire RLock before reading map lengths to prevent data race
+// Acquires the RLock before reading map lengths to prevent a data race.
 func (sm *ShutdownManager) logShutdownInitiation() {
 	connCount := sm.connectedCount()
 	listCount := sm.listenerCount()

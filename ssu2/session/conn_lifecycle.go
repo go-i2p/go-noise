@@ -268,7 +268,7 @@ func (h *SSU2Conn) RecvStats() map[string]uint64 {
 
 // SendStats returns error counters from the send loop for observability.
 // Keys: "write_errors".
-// BUG-RL-1 / BUG-EH-1: exposes the previously-invisible sendLoop write failure counter.
+// Exposes the sendLoop write failure counter.
 func (h *SSU2Conn) SendStats() map[string]uint64 {
 	return map[string]uint64{
 		"write_errors": h.writeErrors.Load(),

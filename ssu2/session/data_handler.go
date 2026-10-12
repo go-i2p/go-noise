@@ -181,7 +181,7 @@ func NewDataHandler(queueSize int) *DataHandler {
 }
 
 // newDataHandlerFromConfig creates a DataHandler using SSU2Config values.
-// L-6: Uses config.MessageQueueSize if specified, defaults to 100.
+// Uses config.MessageQueueSize if specified, defaults to 100.
 func newDataHandlerFromConfig(config *SSU2Config) *DataHandler {
 	flog("newDataHandlerFromConfig").Debug("creating data handler from config")
 	queueSize := 100 // Default

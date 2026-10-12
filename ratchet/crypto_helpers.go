@@ -38,11 +38,11 @@ func deriveDirectionalKeys(baseKey [32]byte, isInitiator bool) (sendKey, recvKey
 }
 
 // deriveSessionKeysFromSecret derives root, symmetric, and tag keys from a shared secret.
-// L-4: Zero intermediate arr copy before returning to prevent key material lingering on stack
+// The intermediate arr copy is zeroed before returning to prevent key material lingering on the stack.
 func deriveSessionKeysFromSecret(sharedSecret []byte) (*sessionKeys, error) {
 	flog("deriveSessionKeysFromSecret", logger.Fields{"secret_len": len(sharedSecret)}).Debug("deriving root/sym/tag keys from shared secret")
 	var arr [32]byte
-	defer func() { zero32(&arr) }() // L-4: Zero intermediate key material
+	defer func() { zero32(&arr) }() // Zero intermediate key material
 	copy(arr[:], sharedSecret)
 	kd := kdf.NewKeyDerivation(arr)
 	rootKey, symKey, tagKey, err := kd.DeriveSessionKeys()

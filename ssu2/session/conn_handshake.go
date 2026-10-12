@@ -614,7 +614,7 @@ func (h *SSU2Conn) finalizeHandshake() error {
 	}
 
 	// deriveDataPhaseKeys installs the ChaCha20 header-protection key schedule.
-	// H-1: SSU2 has no data-phase length obfuscation, so the returned kHeader2
+	// SSU2 has no data-phase length obfuscation, so the returned kHeader2
 	// values are not fed into any SipHash chain.
 	if _, _, err := h.deriveDataPhaseKeys(); err != nil {
 		return err
