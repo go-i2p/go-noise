@@ -184,19 +184,19 @@ func TestSSU2Listener_SessionCount(t *testing.T) {
 	conn1 := NewMockSSU2Conn(connID1)
 	conn2 := NewMockSSU2Conn(connID2)
 
-	// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+	// Use listener.AddSession (delegates to router) instead of direct map access.
 	listener.AddSession(connID1, conn1)
 	listener.AddSession(connID2, conn2)
 
 	assert.Equal(t, 2, listener.SessionCount())
 
 	// Remove one
-	// AUDIT 8.3: Use listener.RemoveSession (delegates to router) instead of internal method
+	// Use listener.RemoveSession (delegates to router) instead of internal method
 	listener.RemoveSession(connID1)
 	assert.Equal(t, 1, listener.SessionCount())
 
 	// Remove the other
-	// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+	// Use listener.RemoveSession (delegates to router)
 	listener.RemoveSession(connID2)
 	assert.Equal(t, 0, listener.SessionCount())
 }
@@ -210,19 +210,19 @@ func TestSSU2Listener_RemoveSession(t *testing.T) {
 	conn := NewMockSSU2Conn(connID)
 
 	// Add session
-	// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+	// Use listener.AddSession (delegates to router) instead of direct map access
 	listener.AddSession(connID, conn)
 
 	assert.Equal(t, 1, listener.SessionCount())
 
 	// Remove session
-	// AUDIT 8.3: Use listener.RemoveSession (delegates to router) instead of internal method
+	// Use listener.RemoveSession (delegates to router) instead of internal method
 	listener.RemoveSession(connID)
 
 	assert.Equal(t, 0, listener.SessionCount())
 
 	// Removing non-existent session should not panic
-	// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+	// Use listener.RemoveSession (delegates to router)
 	listener.RemoveSession(99999)
 	assert.Equal(t, 0, listener.SessionCount())
 }
@@ -262,9 +262,9 @@ func TestSSU2Listener_HandleIncomingPacket(t *testing.T) {
 		listener.handleIncomingPacket(data, remoteAddr)
 	})
 
-	// AUDIT C-1: verify that when an IntroKey is configured the listener
-	// successfully decrypts header-protected inbound packets that would
-	// otherwise fail plaintext deserialization.
+	// Verify that when an IntroKey is configured the listener successfully
+	// decrypts header-protected inbound packets that would otherwise fail
+	// plaintext deserialization.
 	t.Run("HeaderProtectedTokenRequest", func(t *testing.T) {
 		pc := createMockPacketConn(t)
 		config := createValidConfig(t)
@@ -336,7 +336,7 @@ func TestSSU2Listener_Concurrent(t *testing.T) {
 
 			connID := uint64(id + 1000)
 			conn := NewMockSSU2Conn(connID)
-			// AUDIT 8.3: Use listener.AddSession (delegates to router) instead of direct map access
+			// Use listener.AddSession (delegates to router) instead of direct map access
 			listener.AddSession(connID, conn)
 
 			// Small delay
@@ -346,7 +346,7 @@ func TestSSU2Listener_Concurrent(t *testing.T) {
 			_ = listener.SessionCount()
 
 			// Remove session
-			// AUDIT 8.3: Use listener.RemoveSession (delegates to router)
+			// Use listener.RemoveSession (delegates to router)
 			listener.RemoveSession(connID)
 		}(i)
 	}
@@ -657,7 +657,6 @@ func TestListenerRouterHash(t *testing.T) {
 // TestRetransmittedSessionRequestDedup verifies that retransmitted SessionRequests
 // (same initiator connection ID and source address) are deduplicated and route
 // to the existing session instead of creating a duplicate.
-// AUDIT 8.1: Duplicate session per retransmitted SessionRequest
 func TestRetransmittedSessionRequestDedup(t *testing.T) {
 	t.Run("deduplicates identical retransmits", func(t *testing.T) {
 		listener := createTestListener(t)
@@ -799,7 +798,7 @@ func TestRetransmittedSessionRequestDedup(t *testing.T) {
 
 // TestListenerClose_ParallelTeardown verifies that listener.Close() cancels all
 // pending DestroyTimeout waits in parallel, completing in ~one destroy interval
-// rather than N× destroy intervals. AUDIT 3.2.
+// rather than N× destroy intervals.
 func TestListenerClose_ParallelTeardown(t *testing.T) {
 	t.Run("closes multiple sessions without blocking", func(t *testing.T) {
 		listener := createTestListener(t)
@@ -810,9 +809,9 @@ func TestListenerClose_ParallelTeardown(t *testing.T) {
 
 		// Create N sessions and verify that closing the listener completes
 		// in reasonable time (not serially waiting on each session's destroy).
-		// With the AUDIT 3.2 fix, all sessions' forceDestroy channels are
-		// closed in parallel, allowing their CloseWithReason goroutines to
-		// unblock immediately instead of waiting for the full timeout.
+		// All sessions' forceDestroy channels are closed in parallel, allowing
+		// their CloseWithReason goroutines to unblock immediately instead of
+		// waiting for the full timeout.
 		numSessions := 10
 
 		for i := 0; i < numSessions; i++ {
@@ -824,11 +823,11 @@ func TestListenerClose_ParallelTeardown(t *testing.T) {
 		// Verify all sessions are registered
 		assert.Equal(t, numSessions, listener.SessionCount())
 
-		// Close the listener and measure how long it takes.
-		// With AUDIT 3.2 fix: all forceDestroy channels closed in parallel
-		// Without fix (bug): would wait serially on each session
-		// Since we're not testing exact timing but just that it completes
-		// without hanging, a simple measurement is sufficient.
+		// Close the listener and measure how long it takes. All forceDestroy
+		// channels are closed in parallel, so the close should not wait
+		// serially on each session. Since we're not testing exact timing but
+		// just that it completes without hanging, a simple measurement is
+		// sufficient.
 		startTime := time.Now()
 		err = listener.Close()
 		duration := time.Since(startTime)
@@ -841,7 +840,7 @@ func TestListenerClose_ParallelTeardown(t *testing.T) {
 		// in well under 1 second for this test.
 		maxExpectedDuration := 1 * time.Second
 		assert.Less(t, duration, maxExpectedDuration,
-			"listener.Close() took %v, expected < %v (AUDIT 3.2 parallel teardown should be fast)",
+			"listener.Close() took %v, expected < %v (parallel teardown should be fast)",
 			duration, maxExpectedDuration)
 
 		t.Logf("listener.Close() with %d sessions took %v", numSessions, duration)
@@ -890,11 +889,11 @@ func TestListenerClose_ParallelTeardown(t *testing.T) {
 	})
 }
 
-// TestAuditFix_3_4_RouterHashHook tests the router layer hook pattern for updating
-// placeholder RouterHash on responder connections (AUDIT 3.4).
-func TestAuditFix_3_4_RouterHashHook(t *testing.T) {
+// TestRouterHashHook tests the router layer hook pattern for updating the
+// placeholder RouterHash on responder connections.
+func TestRouterHashHook(t *testing.T) {
 	t.Run("GetSSU2Addr_ReturnsAddressWithPlaceholderHash", func(t *testing.T) {
-		// AUDIT 3.4: Verify that a responder connection's SSU2Addr can be retrieved
+		// Verify that a responder connection's SSU2Addr can be retrieved
 		// and contains a placeholder RouterHash (SHA256 of ephemeral key).
 		connID := uint64(12345)
 		conn := NewMockSSU2Conn(connID)
@@ -909,7 +908,7 @@ func TestAuditFix_3_4_RouterHashHook(t *testing.T) {
 	})
 
 	t.Run("UpdateRouterHash_ReplacesPlaceholder", func(t *testing.T) {
-		// AUDIT 3.4: Verify that the router layer can call UpdateRouterHash()
+		// Verify that the router layer can call UpdateRouterHash()
 		// to replace the placeholder with a real identity hash.
 		connID := uint64(54321)
 		conn := NewMockSSU2Conn(connID)
@@ -939,7 +938,7 @@ func TestAuditFix_3_4_RouterHashHook(t *testing.T) {
 	})
 
 	t.Run("RouterHashHook_Pattern", func(t *testing.T) {
-		// AUDIT 3.4: Full router layer hook pattern demonstration:
+		// Full router layer hook pattern demonstration:
 		// 1. Accept a responder connection from listener
 		// 2. After handshake completes, get SSU2Addr
 		// 3. Compute/retrieve real router hash

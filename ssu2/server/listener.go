@@ -145,9 +145,9 @@ type SSU2Listener struct {
 	readBufferFailed atomic.Bool
 
 	// Lifecycle management
-	closed     bool
-	started    bool // guards against double-Start()
-	closeMutex sync.Mutex
+	closed       bool
+	started      bool // guards against double-Start()
+	closeMutex   sync.Mutex
 	shutdownChan chan struct{}
 	wg           sync.WaitGroup
 }

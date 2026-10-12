@@ -11,7 +11,7 @@ import (
 
 // TestIPRateLimiter_LRUEviction verifies that the IP rate limiter enforces its
 // capacity bound and evicts the least-recently-used IP in O(1), rather than
-// growing without bound (AUDIT 8.4 — remote memory-exhaustion DoS).
+// growing without bound (which would be a remote memory-exhaustion DoS).
 func TestIPRateLimiter_LRUEviction(t *testing.T) {
 	const maxIPs = 4
 	rl := newIPRateLimiter(10, maxIPs)
@@ -57,7 +57,7 @@ func TestIPRateLimiter_Unlimited(t *testing.T) {
 }
 
 // TestSSU2Config_MaxSessionsDefault verifies the listener session cap has a
-// sane bounded default (AUDIT 8.2 — unbounded session accumulation).
+// sane bounded default, preventing unbounded session accumulation.
 func TestSSU2Config_MaxSessionsDefault(t *testing.T) {
 	cfg, err := NewSSU2Config(data.Hash{}, false)
 	require.NoError(t, err)

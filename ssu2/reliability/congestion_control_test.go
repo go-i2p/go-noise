@@ -482,7 +482,7 @@ func TestCongestionController_Constants(t *testing.T) {
 	assert.Equal(t, 1280, MinCongestionWindow)
 }
 
-// --- Westwood+ Bandwidth Estimation Tests (G-6) ---
+// --- Westwood+ Bandwidth Estimation Tests ---
 
 func TestCongestionController_BWE_UpdatedOnAck(t *testing.T) {
 	rtt := NewRTTEstimator()

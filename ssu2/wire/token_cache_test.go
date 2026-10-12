@@ -10,8 +10,8 @@ import (
 )
 
 // TestTokenCache_GenerateToken_SameAddressReturnsSameToken verifies that
-// generating a token for the same address twice returns the same token
-// (M-8 audit finding: prevent retry eviction).
+// generating a token for the same address twice returns the same token,
+// preventing retry-storm eviction of a valid token.
 func TestTokenCache_GenerateToken_SameAddressReturnsSameToken(t *testing.T) {
 	tc := NewTokenCache(60 * time.Second)
 

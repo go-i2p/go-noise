@@ -329,7 +329,7 @@ func TestPacketRouter_RoutePacket(t *testing.T) {
 		var router *PacketRouter
 		// Production newSessionHandler is responsible for registering the
 		// session in the router (via registerAndQueueConn → AddSession).
-		// RoutePacket no longer calls AddSession itself (AUDIT 1.2 / 3.2).
+		// RoutePacket no longer calls AddSession itself.
 		handler := func(addr *net.UDPAddr, pkt *SSU2Packet) (*SSU2Conn, error) {
 			handlerCalled = true
 			receivedAddr = addr

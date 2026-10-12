@@ -34,10 +34,9 @@ func TestACKHandler_RecordReceived(t *testing.T) {
 	assert.Contains(t, handler.receivedPackets, uint32(102))
 }
 
-// TestACKHandler_RecordReceived_BoundedGrowth is the regression test for the
-// AUDIT.md MEDIUM finding: receivedPackets must not grow past
-// maxReceivedPackets even when the caller never drains it via
-// ShouldSendACK/GenerateACK, guarding against unbounded memory growth
+// TestACKHandler_RecordReceived_BoundedGrowth verifies that receivedPackets
+// must not grow past maxReceivedPackets even when the caller never drains it
+// via ShouldSendACK/GenerateACK, guarding against unbounded memory growth
 // combined with SortDescDedupPackets's O(n^2) drain cost.
 func TestACKHandler_RecordReceived_BoundedGrowth(t *testing.T) {
 	handler := NewACKHandler()
@@ -337,10 +336,10 @@ func TestACKHandler_AddPending(t *testing.T) {
 	assert.WithinDuration(t, time.Now(), pending.SentTime, time.Second)
 }
 
-// TestACKHandler_AddPending_BoundedGrowth is the regression test for the
-// AUDIT.md LOW finding: pendingACKs must not grow past maxPendingACKs even
-// when the caller keeps adding new pending entries without any being
-// acknowledged, evicting the oldest entry first as defense-in-depth.
+// TestACKHandler_AddPending_BoundedGrowth verifies that pendingACKs must not
+// grow past maxPendingACKs even when the caller keeps adding new pending
+// entries without any being acknowledged, evicting the oldest entry first as
+// defense-in-depth.
 func TestACKHandler_AddPending_BoundedGrowth(t *testing.T) {
 	handler := NewACKHandler()
 
@@ -567,7 +566,7 @@ func BenchmarkSortDescDedupPackets(b *testing.B) {
 }
 
 // FuzzProcessACK fuzzes the ACK block parsing to detect cursor underflow and other
-// parsing bugs. This addresses AUDIT H-7.
+// parsing bugs.
 func FuzzProcessACK(f *testing.F) {
 	// Seed with valid ACK block
 	seed := make([]byte, 9)
@@ -613,7 +612,7 @@ func FuzzProcessACK(f *testing.F) {
 }
 
 // TestACKHandler_BurstACKAmplification tests that ACK generation respects minACKInterval
-// to prevent ACK amplification under bursty traffic (M-6 audit finding).
+// to prevent ACK amplification under bursty traffic.
 func TestACKHandler_BurstACKAmplification(t *testing.T) {
 	handler := NewACKHandler()
 	handler.SetACKThreshold(2) // Low threshold to trigger easily

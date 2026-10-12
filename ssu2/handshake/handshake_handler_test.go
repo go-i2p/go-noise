@@ -876,7 +876,7 @@ func TestCreateSessionConfirmedFragments_NotReady(t *testing.T) {
 	assert.Nil(t, packets)
 }
 
-// --- G-3: Options Block Padding Negotiation Tests ---
+// --- Options Block Padding Negotiation Tests ---
 
 func TestFixedPointRoundTrip(t *testing.T) {
 	cases := []struct {

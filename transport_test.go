@@ -405,12 +405,12 @@ func TestDialNoiseWithHandshakeContext(t *testing.T) {
 	}
 }
 
-// TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure is the
-// regression test for the AUDIT.md HIGH finding: a pool-retrieved connection
-// that fails NewNoiseConn construction must be permanently discarded from the
-// pool (via pool.PooledConnection.Discard()) rather than silently returned
-// for reuse via Close(), which would let a broken connection be repeatedly
-// re-served by future Dial calls to the same address.
+// TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure verifies that
+// a pool-retrieved connection that fails NewNoiseConn construction is
+// permanently discarded from the pool (via pool.PooledConnection.Discard())
+// rather than silently returned for reuse via Close(), which would let a
+// broken connection be repeatedly re-served by future Dial calls to the same
+// address.
 func TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure(t *testing.T) {
 	const addr = "127.0.0.1:19999"
 

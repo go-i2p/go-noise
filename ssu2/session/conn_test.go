@@ -463,7 +463,7 @@ func TestSSU2Conn_ReadWriteNotEstablished(t *testing.T) {
 	assert.Contains(t, err.Error(), "not established")
 }
 
-// TestSSU2Conn_ReadShortBufferReassembles verifies the MED-1 fix: when the
+// TestSSU2Conn_ReadShortBufferReassembles verifies that when the
 // caller's buffer is smaller than the next message, Read returns the partial
 // data with a nil error (not a "buffer too small" error) and the remainder is
 // returned on subsequent Read calls, mirroring conn.Conn.Read and honoring the
@@ -500,8 +500,8 @@ func TestSSU2Conn_ReadShortBufferReassembles(t *testing.T) {
 	assert.Equal(t, msg, got, "message must be fully reassembled across multiple Reads")
 }
 
-// Test for MEDIUM-1 (M-1): unguarded dual message-delivery path.
-// Verify that both Read and MessageChan paths work but warn when used together.
+// TestSSU2Conn_DualDeliveryPathMutualExclusion verifies that both Read and
+// MessageChan paths work but enforce mutual exclusivity when used together.
 func TestSSU2Conn_DualDeliveryPathMutualExclusion(t *testing.T) {
 	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
 	defer initConn.Close()
@@ -519,7 +519,7 @@ func TestSSU2Conn_DualDeliveryPathMutualExclusion(t *testing.T) {
 	conn.stateMutex.Unlock()
 
 	// Test: Call MessageChan first, then Read. Read should now return an error
-	// enforcing mutual exclusivity (MEDIUM-1 fix).
+	// enforcing mutual exclusivity.
 	// Inject two messages.
 	msg1 := []byte("message 1")
 	msg2 := []byte("message 2")
@@ -538,7 +538,7 @@ func TestSSU2Conn_DualDeliveryPathMutualExclusion(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// Now call Read(); it should return an error because MessageChan was called first,
-	// enforcing mutual exclusivity per MEDIUM-1 audit finding.
+	// enforcing mutual exclusivity.
 	buf := make([]byte, 100)
 	n, rerr := conn.Read(buf)
 	require.Error(t, rerr, "Read should return an error when called after MessageChan")
@@ -869,8 +869,7 @@ func TestBuildI2NPFragmentBlocks_MessageIDConsistent(t *testing.T) {
 
 // TestBuildI2NPFragmentBlocks_FragmentCountLimit verifies that oversized writes
 // that would exceed the maximum follow-on fragment count (127) return an error
-// rather than silently overflowing the fragment number field. This is a regression
-// test for AUDIT.md MED-1: SSU2 fragment number wrap protection.
+// rather than silently overflowing the fragment number field.
 func TestBuildI2NPFragmentBlocks_FragmentCountLimit(t *testing.T) {
 	config := createTestConfig(t)
 	dh, err := noise.DH25519.GenerateKeypair(nil)
@@ -1025,7 +1024,7 @@ func setupHandshakePair(t *testing.T) (*HandshakeHandler, *HandshakeHandler, []b
 }
 
 // TestPathValidationRace verifies that reading remoteAddr during path validation
-// is protected by remoteAddrLock. This addresses AUDIT H-6.
+// is protected by remoteAddrLock.
 func TestPathValidationRace(t *testing.T) {
 	config := createTestConfig(t)
 
@@ -1060,7 +1059,7 @@ func TestPathValidationRace(t *testing.T) {
 }
 
 // TestHandshakeFailureNoGoroutineLeak verifies that a failed handshake properly
-// cleans up the recvLoop goroutine. This addresses AUDIT H-8.
+// cleans up the recvLoop goroutine.
 func TestHandshakeFailureNoGoroutineLeak(t *testing.T) {
 	// Record baseline goroutine count (with some tolerance for runtime background goroutines)
 	runtime.GC()
@@ -1104,7 +1103,7 @@ func TestHandshakeFailureNoGoroutineLeak(t *testing.T) {
 }
 
 // TestReadAfterMessageChanReturnsError verifies that calling Read() after
-// MessageChan() returns an error, enforcing mutual exclusivity. Addresses MEDIUM-1.
+// MessageChan() returns an error, enforcing mutual exclusivity.
 func TestReadAfterMessageChanReturnsError(t *testing.T) {
 	// Create a mock connection in Established state
 	conn := NewMockSSU2Conn(12345)
@@ -1127,7 +1126,7 @@ func TestReadAfterMessageChanReturnsError(t *testing.T) {
 
 // TestMessageChanAfterReadReturnsClosedChannel verifies that calling MessageChan()
 // after Read() returns a closed channel (panic-free sentinel), enforcing mutual
-// exclusivity. Addresses MEDIUM-1.
+// exclusivity.
 func TestMessageChanAfterReadReturnsClosedChannel(t *testing.T) {
 	// Create a mock connection in Established state
 	conn := NewMockSSU2Conn(12345)
@@ -1154,7 +1153,7 @@ func TestMessageChanAfterReadReturnsClosedChannel(t *testing.T) {
 }
 
 // TestDualDeliveryPathsRace verifies that concurrent use of Read() and MessageChan()
-// is properly detected and prevented under -race. Addresses MEDIUM-1.
+// is properly detected and prevented under -race.
 func TestDualDeliveryPathsRace(t *testing.T) {
 	// Create a mock connection in Established state
 	conn := NewMockSSU2Conn(12345)
@@ -1199,12 +1198,12 @@ func TestDualDeliveryPathsRace(t *testing.T) {
 	// This test passes if it doesn't panic and -race is clean.
 }
 
-// NextNonce rekey tests (M-2)
+// NextNonce rekey tests
 
 // TestSSU2Conn_NextNonceDisabledByDefault verifies that the rekey
 // mechanism does not trigger when EnableNextNonce is false (default).
-// This test addresses M-2: NextNonce is disabled by default to avoid
-// interoperability issues with the unfinalized SSU2 spec area.
+// NextNonce is disabled by default to avoid interoperability issues with
+// the unfinalized SSU2 spec area.
 func TestSSU2Conn_NextNonceDisabledByDefault(t *testing.T) {
 	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
 	defer initConn.Close()
@@ -1286,12 +1285,11 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 	// Allow minimal time for any goroutine scheduling
 	time.Sleep(10 * time.Millisecond)
 
-	// AUDIT.md Level 10 Finding 1 fix: initiateRekey now always resets
-	// rekeyInFlight via a deferred Store(false), whether the attempt
-	// succeeds or fails, so a failed/no-op rekey (sendCipher is nil here,
-	// since no handshake occurred) does not permanently disable all future
-	// rekeys. By the time the goroutine has run (already awaited above),
-	// rekeyInFlight should be back to false.
+	// initiateRekey always resets rekeyInFlight via a deferred Store(false),
+	// whether the attempt succeeds or fails, so a failed/no-op rekey
+	// (sendCipher is nil here, since no handshake occurred) does not
+	// permanently disable all future rekeys. By the time the goroutine has
+	// run (already awaited above), rekeyInFlight should be back to false.
 	assert.False(t, conn.rekeyInFlight.Load(), "rekeyInFlight should be reset to false after initiateRekey's goroutine completes (even on a no-op/failed attempt)")
 
 	// Verify send sequence advanced
@@ -1302,10 +1300,9 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 }
 
 // TestProcessInboundPacket_ReorderedDataDelivery tests that out-of-order data
-// packets are all delivered when gaps are filled (H-1 regression test).
-// This test verifies the fix for the bug where processInboundPacket ignored the
-// ready packet list returned by recvWindow.Insert(), causing reordered packets to
-// be silently dropped.
+// packets are all delivered when gaps are filled. It verifies that
+// processInboundPacket honors the ready packet list returned by
+// recvWindow.Insert(), so reordered packets are not silently dropped.
 func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow test")
@@ -1356,10 +1353,10 @@ func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 	assert.Equal(t, uint64(2), received2, "both packets should be counted after gap is filled")
 }
 
-// TestIdleTimeoutKeepaliveLoopDeadlock verifies that idle timeout on keepaliveLoop
-// does not deadlock on Close() (H-3). The old code called h.Close() directly which
-// called h.wg.Wait(), creating a self-deadlock when keepaliveLoop is counted in h.wg.
-// The fix spawns Close in a separate goroutine instead.
+// TestIdleTimeoutKeepaliveLoopDeadlock verifies that idle timeout on
+// keepaliveLoop does not deadlock on Close(). Calling h.Close() directly
+// would call h.wg.Wait(), creating a self-deadlock when keepaliveLoop is
+// counted in h.wg; Close is therefore spawned in a separate goroutine.
 func TestIdleTimeoutKeepaliveLoopDeadlock(t *testing.T) {
 	initConn, _, _, _, initPriv, respPub := setupConnPair(t)
 	defer initConn.Close()
@@ -1407,17 +1404,18 @@ func TestIdleTimeoutKeepaliveLoopDeadlock(t *testing.T) {
 	select {
 	case success := <-done:
 		if !success {
-			t.Error("Connection did not reach expected close state (H-3 regression test)")
+			t.Error("Connection did not reach expected close state")
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("Test timed out: likely deadlock on idle timeout Close() (H-3 not fixed)")
+		t.Fatal("Test timed out: likely deadlock on idle timeout Close()")
 	}
 }
 
-// TestDelayedACKSchedulerTriggersOnThreshold verifies that the delayed ACK scheduler
-// (H-2) actually checks ShouldSendACK in processInboundPacket after RecordReceived.
-// This is a basic sanity test that the code path doesn't crash or panic.
-// The actual ACK generation depends on ackThreshold and timing configuration.
+// TestDelayedACKSchedulerTriggersOnThreshold verifies that the delayed ACK
+// scheduler actually checks ShouldSendACK in processInboundPacket after
+// RecordReceived. This is a basic sanity test that the code path doesn't
+// crash or panic. The actual ACK generation depends on ackThreshold and
+// timing configuration.
 func TestDelayedACKSchedulerTriggersOnThreshold(t *testing.T) {
 	initConn, _, _, _, initPriv, respPub := setupConnPair(t)
 	defer initConn.Close()
@@ -1447,17 +1445,13 @@ func TestDelayedACKSchedulerTriggersOnThreshold(t *testing.T) {
 	// Explicitly ensure immediate-ACK flag is NOT set
 	testPacket.Header[13] = 0x00
 
-	// Process the packet - this should call RecordReceived and check ShouldSendACK (H-2 fix)
-	// If H-2 is not implemented, ShouldSendACK would not be called.
-	// This test verifies the code path exists and doesn't panic.
-	//
-	// This test mainly verifies that:
-	// 1. The code doesn't panic when ShouldSendACK is called
-	// 2. The H-2 code path is integrated into processInboundPacket
-	// The actual ACK generation depends on ackThreshold and other timing factors.
+	// Process the packet - this should call RecordReceived and check
+	// ShouldSendACK. This test verifies the code path exists and doesn't
+	// panic. The actual ACK generation depends on ackThreshold and other
+	// timing factors.
 	assert.NotPanics(t, func() {
 		conn.processInboundPacket(testPacket)
-	}, "H-2: processInboundPacket should not panic when calling ShouldSendACK for delayed ACK scheduling")
+	}, "processInboundPacket should not panic when calling ShouldSendACK for delayed ACK scheduling")
 }
 
 // WriteBlocksWithNumbers tests

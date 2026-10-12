@@ -190,9 +190,8 @@ func TestSSU2Addr_NetAddrInterface(t *testing.T) {
 
 // TestSSU2Addr_ConcurrentUpdateRouterHash exercises concurrent
 // UpdateRouterHash() writes racing against RouterHash()/String() reads,
-// verifying the sync.RWMutex guard added for AUDIT.md Level 9 ssu2/config
-// Finding 1 (previously unsynchronized, unlike ntcp2.Addr's identical
-// pattern). Run with -race.
+// verifying the sync.RWMutex guard (previously unsynchronized, unlike
+// ntcp2.Addr's identical pattern). Run with -race.
 func TestSSU2Addr_ConcurrentUpdateRouterHash(t *testing.T) {
 	underlying := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 8080}
 	addr, err := NewSSU2Addr(underlying, generateRandomHash(), 12345, "responder")

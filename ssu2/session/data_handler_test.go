@@ -392,7 +392,7 @@ func TestDataHandler_FollowOnFragment(t *testing.T) {
 	msg := handler.GetMessage()
 	require.NotNil(t, msg)
 
-	// Verify reassembled message has 9-byte I2NP short header prepended (G-3)
+	// Verify reassembled message has 9-byte I2NP short header prepended.
 	var expected []byte
 	expected = append(expected, firstBlockData[:9]...)
 	expected = append(expected, firstData...)
@@ -569,7 +569,7 @@ func TestDataHandler_FragmentReassembly_MultiFragment(t *testing.T) {
 	// Fragment set should be cleaned up
 	assert.Equal(t, 0, handler.GetFragmentCount())
 
-	// Verify the reassembled message has 9-byte I2NP short header prepended (G-3)
+	// Verify the reassembled message has 9-byte I2NP short header prepended.
 	assert.True(t, handler.HasMessages())
 	msg := handler.GetMessage()
 	var expected []byte
@@ -585,8 +585,7 @@ func TestDataHandler_FragmentReassembly_MultiFragment(t *testing.T) {
 
 // TestDataHandler_FragmentReassembly_OversizedMessage verifies that reassembled
 // messages exceeding the maximum I2NP message size (64 KB) are dropped rather
-// than queued. This is a regression test for AUDIT.md MED-2: oversized message
-// detection and rejection.
+// than queued.
 func TestDataHandler_FragmentReassembly_OversizedMessage(t *testing.T) {
 	handler := NewDataHandler(10)
 
@@ -1264,7 +1263,7 @@ func TestDataHandler_RelayCallbacks(t *testing.T) {
 			relayTagCalled = true
 			return nil
 		},
-		// Pass-through verifiers for testing (G-2)
+		// Pass-through verifiers for testing.
 		VerifyRelayRequestSignature:  func(block *RelayRequestBlock) error { return nil },
 		VerifyRelayResponseSignature: func(block *RelayResponseBlock) error { return nil },
 		VerifyRelayIntroSignature:    func(block *RelayIntroBlock) error { return nil },
@@ -1571,7 +1570,7 @@ func TestDataHandler_PeerTestCallback(t *testing.T) {
 			receivedBlock = block
 			return nil
 		},
-		// Pass-through verifier for testing (G-2)
+		// Pass-through verifier for testing.
 		VerifyPeerTestSignature: func(block *PeerTestBlock) error { return nil },
 	})
 
@@ -1672,7 +1671,7 @@ func TestDataHandler_MetadataBlockCallbacks(t *testing.T) {
 }
 
 // TestDataHandler_FragmentMapCapacity verifies that the fragments map is bounded
-// to prevent memory exhaustion from fragmentation attacks (M-5 audit finding).
+// to prevent memory exhaustion from fragmentation attacks.
 func TestDataHandler_FragmentMapCapacity(t *testing.T) {
 	handler := NewDataHandler(10)
 
@@ -1718,9 +1717,9 @@ func TestDataHandler_FragmentMapCapacity(t *testing.T) {
 		"fragment map should stabilize at maxFragmentsPerConn")
 }
 
-// Test for MEDIUM-3 (M-3): Per-set fragment memory bound.
-// Verify that fragments exceeding maxI2NPMessageSize (64 KB) are dropped immediately,
-// preventing memory exhaustion attacks.
+// TestDataHandler_FragmentMemoryBoundEnforced verifies the per-set fragment
+// memory bound: fragments exceeding maxI2NPMessageSize (64 KB) are dropped
+// immediately, preventing memory exhaustion attacks.
 func TestDataHandler_FragmentMemoryBoundEnforced(t *testing.T) {
 	handler := NewDataHandler(100)
 

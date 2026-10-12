@@ -283,11 +283,10 @@ func TestSSU2Packet_PacketNumber_ParsedFromHeader(t *testing.T) {
 // ============================================================================
 
 // FuzzSSU2Packet_Deserialize fuzzes SSU2Packet.Deserialize, the outermost
-// pre-authentication parser for every inbound SSU2 datagram (AUDIT.md
-// cross-cutting concerns: this was one of four pre-auth parser families
-// flagged with zero fuzz coverage). It only asserts the parser never panics
-// on arbitrary or boundary-crafted input; errors are an expected, correct
-// outcome for malformed data.
+// pre-authentication parser for every inbound SSU2 datagram. Because it runs
+// before any authentication, it must never panic on arbitrary or
+// boundary-crafted input; errors are an expected, correct outcome for
+// malformed data.
 //
 // Run with: go test -fuzz=FuzzSSU2Packet_Deserialize ./ssu2/wire/
 func FuzzSSU2Packet_Deserialize(f *testing.F) {

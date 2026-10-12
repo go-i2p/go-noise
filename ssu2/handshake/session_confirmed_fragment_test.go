@@ -39,11 +39,11 @@ func TestValidateFragmentOrdering_EmptyPacketsRejected(t *testing.T) {
 	}
 }
 
-// TestValidateFragmentOrdering_ShortHeaderRejected is the regression test for
-// AUDIT.md Level 6/10: validateFragmentOrdering must reject a packet whose
-// Header is shorter than 14 bytes (the minimum needed to read Header[13])
-// rather than panicking with an index-out-of-range, so the function is safe
-// in isolation regardless of caller-side guards.
+// TestValidateFragmentOrdering_ShortHeaderRejected verifies that
+// validateFragmentOrdering rejects a packet whose Header is shorter than 14
+// bytes (the minimum needed to read Header[13]) rather than panicking with an
+// index-out-of-range, so the function is safe in isolation regardless of
+// caller-side guards.
 func TestValidateFragmentOrdering_ShortHeaderRejected(t *testing.T) {
 	handler := newTestHandlerForFragmentTests(t)
 
@@ -51,7 +51,7 @@ func TestValidateFragmentOrdering_ShortHeaderRejected(t *testing.T) {
 		short := buildFragmentPacket(13, 0, 1) // only 13 bytes; Header[13] out of range
 		err := handler.validateFragmentOrdering([]*SSU2Packet{short})
 		if err == nil {
-			t.Fatal("expected error for short header on first packet, got nil (or a panic would have occurred without the fix)")
+			t.Fatal("expected error for short header on first packet, got nil")
 		}
 	})
 

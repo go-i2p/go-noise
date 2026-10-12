@@ -153,7 +153,7 @@ func TestRelay6StepProcess(t *testing.T) {
 	sessionID, err := alice.holePunchCoord.InitiateHolePunch(charlie.addr, bob.addr, aliceRelayTag)
 	require.NoError(t, err)
 
-	// BUG-M03: block must be non-nil; sign it with the resolver's keypair so
+	// The block must be non-nil and signed with the resolver's keypair so
 	// the coordinator's real signature verification succeeds.
 	hpTimestamp := uint32(time.Now().Unix())
 	hpSignature, err := SignRelayRequest(alice.hpSignPriv, relayTestBobHash, relayTestCharlieHash,

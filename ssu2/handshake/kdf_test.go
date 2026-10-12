@@ -17,7 +17,7 @@ func hmacSHA256Test(key, data []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// TestAudit_SSU2_KDF_IntermediateHeaderKey verifies that deriveIntermediateHeaderKey
+// TestSSU2_KDF_IntermediateHeaderKey verifies that deriveIntermediateHeaderKey
 // follows the SSU2 spec's HKDF pattern for intermediate header protection keys:
 //
 //	temp_key = HMAC-SHA256(salt=chainKey, ikm=ZEROLEN)
@@ -25,12 +25,12 @@ func hmacSHA256Test(key, data []byte) []byte {
 //
 // Used during handshake for SessionRequest and SessionCreated header protection.
 //
-// NOTE (M-3): This is an algorithm-conformance test based on the SSU2 spec
-// description. It should be supplemented with official I2P SSU2 test vectors
-// when they become publicly available. Self-consistency tests passed for NTCP2
-// but failed interop (msg2 option layout, msg3 RI flag byte); spec-vector tests
-// would catch wire-format drift that Go↔Go tests cannot.
-func TestAudit_SSU2_KDF_IntermediateHeaderKey(t *testing.T) {
+// This is an algorithm-conformance test based on the SSU2 spec description.
+// It should be supplemented with official I2P SSU2 test vectors when they
+// become publicly available: self-consistency tests can pass while interop
+// still fails (e.g. msg2 option layout, msg3 RI flag byte), and spec-vector
+// tests would catch wire-format drift that Go↔Go tests cannot.
+func TestSSU2_KDF_IntermediateHeaderKey(t *testing.T) {
 	// Test with deterministic chain key
 	chainKey := make([]byte, 32)
 	for i := range chainKey {
@@ -58,9 +58,9 @@ func TestAudit_SSU2_KDF_IntermediateHeaderKey(t *testing.T) {
 	assert.Equal(t, expectedKey, derivedKey, "intermediate header key derivation must match SSU2 spec algorithm")
 }
 
-// TestAudit_SSU2_KDF_IntermediateHeaderKey_Deterministic verifies that
+// TestSSU2_KDF_IntermediateHeaderKey_Deterministic verifies that
 // deriveIntermediateHeaderKey produces deterministic output.
-func TestAudit_SSU2_KDF_IntermediateHeaderKey_Deterministic(t *testing.T) {
+func TestSSU2_KDF_IntermediateHeaderKey_Deterministic(t *testing.T) {
 	chainKey := make([]byte, 32)
 	for i := range chainKey {
 		chainKey[i] = byte(i * 3)
@@ -76,9 +76,9 @@ func TestAudit_SSU2_KDF_IntermediateHeaderKey_Deterministic(t *testing.T) {
 	assert.Equal(t, key1, key2, "deriveIntermediateHeaderKey must be deterministic")
 }
 
-// TestAudit_SSU2_KDF_IntermediateHeaderKey_DistinctKeys verifies that
+// TestSSU2_KDF_IntermediateHeaderKey_DistinctKeys verifies that
 // different chain keys or info strings produce different derived keys.
-func TestAudit_SSU2_KDF_IntermediateHeaderKey_DistinctKeys(t *testing.T) {
+func TestSSU2_KDF_IntermediateHeaderKey_DistinctKeys(t *testing.T) {
 	chainKey1 := make([]byte, 32)
 	chainKey2 := make([]byte, 32)
 	for i := range chainKey1 {
@@ -100,13 +100,12 @@ func TestAudit_SSU2_KDF_IntermediateHeaderKey_DistinctKeys(t *testing.T) {
 	assert.NotEqual(t, key3, key4, "different info strings must produce different keys")
 }
 
-// TestAudit_SSU2_KDF_DeriveHeaderKeys_NilCipherStates verifies error
-// handling when cipher states are not yet available (handshake incomplete).
-//
-// NOTE (M-3): Full handshake spec-vector testing requires published I2P SSU2
-// test vectors, which may not yet exist. This test validates error handling;
-// algorithm-conformance is tested via TestAudit_SSU2_KDF_IntermediateHeaderKey.
-func TestAudit_SSU2_KDF_DeriveHeaderKeys_NilCipherStates(t *testing.T) {
+// TestSSU2_KDF_DeriveHeaderKeys_NilCipherStates verifies error handling when
+// cipher states are not yet available (handshake incomplete). Full handshake
+// spec-vector testing requires published I2P SSU2 test vectors, which may not
+// yet exist; this test validates error handling, while algorithm-conformance
+// is tested via TestSSU2_KDF_IntermediateHeaderKey.
+func TestSSU2_KDF_DeriveHeaderKeys_NilCipherStates(t *testing.T) {
 	_, _, err := DeriveHeaderKeys(nil, nil)
 	assert.Error(t, err, "nil cipher states must fail")
 	assert.Contains(t, err.Error(), "handshake not complete", "error must indicate incomplete handshake")

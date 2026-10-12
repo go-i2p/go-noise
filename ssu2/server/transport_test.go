@@ -479,8 +479,8 @@ func createValidResponderConfig(t *testing.T) *SSU2Config {
 	return config
 }
 
-// TestAddressValidation_BoundaryConditions tests edge cases in address validation.
-// AUDIT 7.2 — Address validation for dial/listen.
+// TestAddressValidation_BoundaryConditions tests edge cases in address
+// validation for dial/listen.
 func TestAddressValidation_BoundaryConditions(t *testing.T) {
 	remoteRouterHash := generateRandomHash()
 

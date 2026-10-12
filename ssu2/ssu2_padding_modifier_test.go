@@ -381,12 +381,11 @@ func TestSSU2PaddingModifier_EstimatePaddingSize(t *testing.T) {
 	assert.LessOrEqual(t, estimate, 64, "should not exceed max padding")
 }
 
-// TestSSU2PaddingModifier_EstimatePaddingSize_NeverNegative is the regression
-// test for AUDIT.md Level 5 item 2: when dataLen is close to or exceeds the
-// MTU, availableSpace can go negative; EstimatePaddingSize must clamp to 0
-// (matching calculateMTUAwarePadding's existing behavior) rather than
-// returning a negative size that could panic a caller doing
-// make([]byte, negativeValue).
+// TestSSU2PaddingModifier_EstimatePaddingSize_NeverNegative verifies that when
+// dataLen is close to or exceeds the MTU, availableSpace can go negative;
+// EstimatePaddingSize must clamp to 0 (matching calculateMTUAwarePadding's
+// existing behavior) rather than returning a negative size that could panic a
+// caller doing make([]byte, negativeValue).
 func TestSSU2PaddingModifier_EstimatePaddingSize_NeverNegative(t *testing.T) {
 	const mtu = 1280
 	mod, err := NewSSU2PaddingModifierWithMTU("test-estimate-negative", 0, 64, mtu, true, 1.0)

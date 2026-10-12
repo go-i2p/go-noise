@@ -13,13 +13,9 @@ import (
 
 // TestE2EHandshake_ResponderHandshakePath tests the complete listener-driven
 // responder handshake: initiator dials, listener accepts, session established,
-// and both can read/write data. This is the regression oracle for AUDIT finding 8.1
-// (duplicate session per retransmitted SessionRequest) and 1.2 (shared-socket
-// double reader).
-//
-// Note: This test validates the current behavior; AUDIT 8.1/1.2 fixes will make
-// this more reliable by properly deduplicating sessions and managing the shared
-// socket read path.
+// and both can read/write data. It exercises the session deduplication path
+// (a retransmitted SessionRequest must not create a duplicate session) and the
+// shared-socket read path.
 func TestE2EHandshake_ResponderHandshakePath(t *testing.T) {
 	t.Run("ListenerCreatedAndListening", func(t *testing.T) {
 		// === Setup Listener (Responder) ===
@@ -57,11 +53,10 @@ func TestE2EHandshake_ResponderHandshakePath(t *testing.T) {
 }
 
 // TestE2EHandshake_RetransmittedSessionRequest tests that a retransmitted
-// SessionRequest does not create a duplicate session. This is the core regression
-// test for AUDIT finding 8.1 (duplicate session per retransmitted SessionRequest).
-//
-// Note: This test documents the current behavior. AUDIT 8.1 fix will add a
-// pre-establishment dedup index keyed on (initiatorConnID, remoteAddr).
+// SessionRequest does not create a duplicate session. The listener maintains a
+// pre-establishment dedup index keyed on (initiatorConnID, remoteAddr) so a
+// retransmit is routed to the existing pending session rather than spawning a
+// second one.
 func TestE2EHandshake_RetransmittedSessionRequest(t *testing.T) {
 	t.Run("LossySocketBehavior", func(t *testing.T) {
 		// === Setup Listener with Lossy Socket ===
@@ -105,7 +100,7 @@ func TestE2EHandshake_RetransmittedSessionRequest(t *testing.T) {
 		assert.GreaterOrEqual(t, listener.SessionCount(), initialCount,
 			"Session count should not decrease")
 
-		t.Log("✓ Lossy socket behavior documented (dedup is Phase 1 fix)")
+		t.Log("✓ Lossy socket behavior: listener tolerates a dropped first message")
 	})
 }
 

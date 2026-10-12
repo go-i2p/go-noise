@@ -6,7 +6,6 @@
 //   go test -tags=test_with_external_deps -race ./ssu2
 // To exclude these tests (keeping the main suite green), simply run:
 //   go test -race ./ssu2
-// See AUDIT.md (LOW-2) for details on the external dependency issue.
 
 package ssu2
 
