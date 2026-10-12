@@ -74,7 +74,6 @@ type ShutdownManager struct {
 
 	// shutdownErr stores the error from the shutdown sequence.
 	// Protected by mu to ensure concurrent callers can read it.
-	// See LOW-1 audit finding.
 	shutdownErr error
 }
 
@@ -223,8 +222,7 @@ func (sm *ShutdownManager) Shutdown() error {
 		shutdownErr = sm.executeShutdownSequence()
 		sm.logger.WithFields(logger.Fields{"pkg": "noise", "func": "ShutdownManager.Shutdown"}).Info("graceful shutdown complete")
 
-		// Store the error in the struct so subsequent callers can retrieve it.
-		// See LOW-1 audit finding: all callers should see the same result.
+		// Store the error in the struct so all callers see the same result.
 		sm.mu.Lock()
 		sm.shutdownErr = shutdownErr
 		sm.mu.Unlock()

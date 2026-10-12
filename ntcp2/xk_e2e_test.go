@@ -28,9 +28,10 @@ import (
 //  7. Bidirectional data exchange over framed I/O
 //  8. Verify PeerStatic, ChannelBinding, NonceExhaustionImminent
 //
-// This test is the "most critical test gap" from AUDIT.md — without it,
-// interoperability bugs between go-noise and other I2P implementations
-// would not be caught.
+// This end-to-end test is the primary guard against interoperability bugs
+// between go-noise and other I2P implementations: it exercises the full
+// NTCP2 pipeline (handshake, SipHash key derivation, framed data exchange)
+// rather than any single unit in isolation.
 func TestXKHandshake_NTCP2_FullE2E(t *testing.T) {
 	cs := upstreamnoise.NewCipherSuite(
 		upstreamnoise.DH25519,
@@ -427,10 +428,8 @@ func setupHandshakedPair(t *testing.T) (initiator, responder *Conn) {
 // responder (inbound) side exposes SHA-256(initiator_static_key) as the remote
 // router hash, rather than the raw key bytes or all zeros.
 //
-// Before AUDIT 5.3: RouterHash was set to the raw 32-byte Noise static public
-// key via data.NewHashFromSlice, which is not SHA-256(RouterIdentity).
-// After AUDIT 5.3: RouterHash is SHA-256(static_key), a closer approximation
-// to the I2P router-hash definition until the full RouterIdentity is available.
+// The router hash is SHA-256(static_key), a closer approximation to the I2P
+// router-hash definition until the full RouterIdentity is available.
 func TestInboundRouterHash(t *testing.T) {
 	cs := upstreamnoise.NewCipherSuite(
 		upstreamnoise.DH25519,
@@ -501,7 +500,7 @@ func TestInboundRouterHash(t *testing.T) {
 
 	// --- Assertions ---
 	// The responder's RouterHash() should be SHA-256(initiator static key),
-	// not all zeros and not the raw key bytes (AUDIT 5.3).
+	// not all zeros and not the raw key bytes.
 	responderRemoteHash := responderNTCP2.RouterHash()
 
 	assert.False(t, responderRemoteHash.IsZero(),

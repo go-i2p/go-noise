@@ -1,10 +1,3 @@
-// Package ratchet provides ECIES-X25519-AEAD-Ratchet cryptographic primitives.
-//
-// This file implements tunnel build record encryption/decryption using
-// ChaCha20-Poly1305 (I2P 0.9.44+). All function signatures use primitive
-// types ([32]byte, [16]byte, []byte) rather than I2P-specific types.
-// The go-i2p consumer converts session_key.SessionKey and
-// BuildResponseRecord/BuildRequestRecord before calling these APIs.
 package ratchet
 
 import (

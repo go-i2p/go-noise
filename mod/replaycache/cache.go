@@ -106,7 +106,7 @@ func New(cfg Config) *TTLCache {
 
 // resolveTTL returns a strictly positive TTL for cache entries.
 // If ttl is non-positive, returns defaultTTL.
-// This prevents silent weakening of replay detection (M-2 audit finding).
+// This prevents silent weakening of replay detection.
 func resolveTTL(ttl time.Duration) time.Duration {
 	if ttl > 0 {
 		return ttl
@@ -127,7 +127,7 @@ func resolveMaxSize(maxSize int) int {
 // resolveCleanupInterval returns a strictly positive cleanup interval for the
 // given config. It prefers CleanupInterval, falls back to TTL, and finally to
 // defaultCleanupInterval, guaranteeing time.NewTicker never receives a
-// non-positive duration (MEDIUM-1).
+// non-positive duration.
 func resolveCleanupInterval(cfg Config) time.Duration {
 	if cfg.CleanupInterval > 0 {
 		return cfg.CleanupInterval

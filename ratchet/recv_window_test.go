@@ -22,7 +22,7 @@ func assertRecvWindowBase(t *testing.T, session *Session, expected uint32, msgAn
 }
 
 // ============================================================================
-// Receive Window Tests (AUDIT item #8)
+// Receive Window Tests
 // ============================================================================
 
 // TestReceiveWindow_OutOfOrder verifies that up to tagWindowSize ES messages
@@ -331,7 +331,7 @@ func TestSendTagPollution_RecvWindowStillWorks(t *testing.T) {
 }
 
 // ============================================================================
-// Security Tests (AUDIT items: replay prevention, ES-before-NSR, NS freshness)
+// Security Tests (replay prevention, ES-before-NSR, NS freshness)
 // ============================================================================
 
 // TestESReplayRejection verifies that re-submitting an already-decrypted
@@ -422,7 +422,7 @@ func TestNSDateTimeFreshnessRejected(t *testing.T) {
 }
 
 // ============================================================================
-// Tag Window Replenishment Tests (AUDIT items: collision skip, retry)
+// Tag Window Replenishment Tests (collision skip, retry)
 // ============================================================================
 
 // TestInstallGeneratedTagsLocked_CollisionSkip verifies that
@@ -585,7 +585,7 @@ func TestReplenishTagWindow_PartialCollisionRetries(t *testing.T) {
 }
 
 // ============================================================================
-// TEST-2: Window Exhaustion Beyond recvWindowSize
+// Window Exhaustion Beyond recvWindowSize
 // ============================================================================
 
 // TestRecvWindow_ExhaustionBeyondWindowSize verifies that an ES message whose
@@ -593,9 +593,6 @@ func TestReplenishTagWindow_PartialCollisionRetries(t *testing.T) {
 // is correctly rejected. This documents the boundary behavior: if message N+W+1
 // (where W = recvWindowSize) arrives before messages N+1 … N+W are consumed,
 // the receiver has no pre-derived key for counter N+W+1 and must reject it.
-//
-// Audit ref: [TEST-2] recv_window_test.go does not test window exhaustion
-// beyond recvWindowSize.
 func TestRecvWindow_ExhaustionBeyondWindowSize(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 
@@ -653,8 +650,7 @@ func TestRecvWindow_ExhaustionBeyondWindowSize(t *testing.T) {
 }
 
 // TestRecvWindowOverflow_SaturatingAddition verifies that the receive window
-// calculation uses saturating addition to prevent uint32 overflow. This addresses
-// AUDIT M-8: receive-window arithmetic overflow.
+// calculation uses saturating addition to prevent uint32 overflow.
 //
 // When recvWindowBase is near MaxUint32 (0xFFFFFFFF), adding recvWindowSize (128)
 // would wrap around. The fix saturates windowEnd at MaxUint32 to prevent the
@@ -711,7 +707,7 @@ func TestRecvWindowOverflow_SaturatingAddition(t *testing.T) {
 // TestRecvWindowOverflow_NoBillionIterationLoop verifies that when recvWindowBase
 // approaches MaxUint32, the window calculation caps windowEnd at recvFillMark +
 // recvWindowSize instead of saturating to MaxUint32, preventing a multi-billion
-// iteration loop in fillRecvKeyCache. This addresses AUDIT M-2.
+// iteration loop in fillRecvKeyCache.
 //
 // The issue: if recvWindowBase + recvWindowSize overflows and saturates to
 // MaxUint32, but recvFillMark is still at a much lower value (e.g., recvWindowBase),

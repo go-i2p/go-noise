@@ -803,8 +803,7 @@ func TestInboundSessionEnforcesMaxGarlicSessions(t *testing.T) {
 
 // TestPerPeerQuotaProtectsHonestPeers verifies that MaxSessionsPerPeer caps
 // the number of sessions a single remote identity may hold, so that a
-// flooding attacker cannot evict honest peers' sessions via LRU churn
-// (AUDIT L-4).
+// flooding attacker cannot evict honest peers' sessions via LRU churn.
 func TestPerPeerQuotaProtectsHonestPeers(t *testing.T) {
 	sm := createTestSessionManager(t)
 
@@ -863,7 +862,7 @@ func TestPerPeerQuotaProtectsHonestPeers(t *testing.T) {
 // TestPerPeerQuotaPreservesNSRPendingSessions verifies that when a peer hits
 // MaxSessionsPerPeer, the eviction logic prefers removing established sessions
 // over initiator sessions awaiting NSR. This prevents self-DoS when a caller
-// repeatedly creates outbound sessions to the same destination (AUDIT LOW-9).
+// repeatedly creates outbound sessions to the same destination.
 func TestPerPeerQuotaPreservesNSRPendingSessions(t *testing.T) {
 	initiator := createTestSessionManager(t)
 
@@ -917,8 +916,7 @@ func TestPerPeerQuotaPreservesNSRPendingSessions(t *testing.T) {
 
 // TestPerPeerQuotaZeroHashGuard verifies that enforcePerPeerQuotaLocked does
 // not attempt to delete a zero-hash session when no sessions match the target
-// peer key. This is a defensive guard against a code complexity edge case
-// identified in AUDIT H-4.
+// peer key. This is a defensive guard against a code complexity edge case.
 func TestPerPeerQuotaZeroHashGuard(t *testing.T) {
 	sm := createTestSessionManager(t)
 
@@ -953,7 +951,7 @@ func TestPerPeerQuotaZeroHashGuard(t *testing.T) {
 }
 
 // TestKeyZeroization verifies that cryptographic key material is securely
-// zeroized before being discarded. This test addresses AUDIT H-5.
+// zeroized before being discarded.
 func TestKeyZeroization(t *testing.T) {
 	t.Run("zero32 helper", func(t *testing.T) {
 		// Test the zero32 helper function directly
@@ -1454,7 +1452,7 @@ func BenchmarkDecryptGarlicMessage(b *testing.B) {
 }
 
 // ============================================================================
-// NSR Flow — end-to-end tests (Recommendations 2, 3, 4 from ratchet/AUDIT.md)
+// NSR Flow — end-to-end tests
 // ============================================================================
 
 // TestDecryptGarlicMessage_ReturnsSessionHashForNewSession verifies that
@@ -1508,8 +1506,8 @@ func TestDecryptGarlicMessage_NilSessionHashForExistingSession(t *testing.T) {
 //     applies the post-handshake keys (ee DH), and re-initializes both ratchets.
 //  4. Both sides exchange Existing Session (ES) messages encrypted with NSR-derived keys.
 //
-// This validates items 2 (NSR dispatch), 3 (apply NSR keys), and 4 (session hash) from
-// the ratchet/AUDIT.md Recommendations.
+// This validates the full NSR dispatch path, the application of post-handshake
+// keys, and the session-hash derivation end to end.
 func TestNSNSRESFlow_EndToEnd(t *testing.T) {
 	alice, err := GenerateSessionManager()
 	require.NoError(t, err)
@@ -1799,7 +1797,7 @@ func TestEncryptUnboundGarlicMessage_IsNonRepliable(t *testing.T) {
 }
 
 // ============================================================================
-// [SPEC] NS payload DateTime validation — AUDIT item
+// NS payload DateTime validation
 // ============================================================================
 
 // TestEncryptGarlicMessage_RejectsNSPayloadWithoutDateTime verifies that
@@ -1845,7 +1843,7 @@ func TestEncryptGarlicMessage_AcceptsValidNSPayload(t *testing.T) {
 }
 
 // ============================================================================
-// [EDGE] Lock splitting — AUDIT item
+// Lock splitting
 // ============================================================================
 
 // TestReplenishTagWindowOutsideLock_DoesNotDeadlock verifies that concurrent
@@ -2534,7 +2532,7 @@ func TestDecryptExistingSession_ForgedTag_FallsThrough(t *testing.T) {
 }
 
 // ============================================================================
-// TEST-1: Concurrent DecryptGarlicMessage (ES) + CleanupExpiredSessions
+// Concurrent DecryptGarlicMessage (ES) + CleanupExpiredSessions
 // ============================================================================
 
 // TestConcurrentDecryptWithCleanup exercises the specific race window where:
@@ -2545,9 +2543,6 @@ func TestDecryptExistingSession_ForgedTag_FallsThrough(t *testing.T) {
 // and DecryptGarlicMessage acquires sm.mu (read lock). The test runs both
 // operations concurrently under the race detector to validate that no data race
 // exists on tagIndex, sessions, or session ratchet state.
-//
-// Audit ref: [TEST-1] No dedicated test for concurrent CleanupExpiredSessions
-// + DecryptGarlicMessage.
 func TestConcurrentDecryptWithCleanup(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	bob.sessionTimeout = 200 * time.Millisecond
@@ -2670,11 +2665,10 @@ func TestResponder_CannotSendES_BeforeReceivingFirstES(t *testing.T) {
 
 // TestNSRTagRegistrationFailure_AbortsSessionCreation verifies that if NSR tag
 // registration fails for an initiator session, the session is not stored.
-// This addresses AUDIT M-7: NSR-tag registration failure is non-fatal.
 //
 // Note: In the current implementation, deriveNSRTagRatchet is resilient to various
 // edge cases (nil/empty chainKey), so we cannot easily force a failure without
-// modifying internal code. However, the fix (propagating errors) is still valid
+// modifying internal code. However, the error-propagation path is still valid
 // for future scenarios where tag generation might fail (e.g., resource exhaustion,
 // crypto library updates). This test documents the expected behavior.
 func TestNSRTagRegistrationFailure_AbortsSessionCreation(t *testing.T) {
@@ -2721,8 +2715,8 @@ func TestNSRTagRegistrationFailure_AbortsSessionCreation(t *testing.T) {
 	assert.Equal(t, 1, sessionCount, "responder session should be stored")
 }
 
-// TestNSRTagRegistration_ErrorPropagation verifies that the code change to
-// propagate NSR registration errors is in place (AUDIT M-7 fix).
+// TestNSRTagRegistration_ErrorPropagation verifies that NSR registration
+// errors are propagated to the caller rather than silently swallowed.
 func TestNSRTagRegistration_ErrorPropagation(t *testing.T) {
 	sm := createTestSessionManager(t)
 

@@ -154,7 +154,7 @@ func TestTTLCache_DoubleClose(t *testing.T) {
 
 func TestTTLCache_ZeroConfigNoPanic(t *testing.T) {
 	// A zero-value Config has non-positive TTL and CleanupInterval. New must
-	// not panic in its background cleanup goroutine (MEDIUM-1).
+	// not panic in its background cleanup goroutine.
 	var c *TTLCache
 	assert.NotPanics(t, func() { c = New(Config{}) }, "New(Config{}) must not panic")
 	defer c.Close()

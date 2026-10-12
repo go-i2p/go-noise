@@ -1,5 +1,15 @@
-// Package mod provides shared helpers and secure utilities used across
-// go-noise sub-packages, including state management and cryptographic zeroing.
+// Package mod provides shared helpers used across go-noise sub-packages.
+//
+// It contains the connection state type (ConnState) and thread-safe
+// connection metrics (ConnectionMetrics) that track handshake timing and
+// byte counters.
+//
+// Sub-packages:
+//
+//   - mod/replaycache: a bounded, TTL-based cache for detecting replayed
+//     handshake keys.
+//   - mod/validation: shared validation helpers for Noise configuration
+//     values (patterns, key lengths, timeouts, retry parameters).
 package mod
 
 import (

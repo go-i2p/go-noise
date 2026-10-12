@@ -175,7 +175,7 @@ func TestFormatRouterHash(t *testing.T) {
 }
 
 // ============================================================================
-// Listener accept error-path tests (TEST-2 from AUDIT.md)
+// Listener accept error-path tests
 // ============================================================================
 
 // errorListener is a net.Listener whose Accept always returns an error,

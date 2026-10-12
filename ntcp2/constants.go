@@ -81,8 +81,11 @@ const (
 	// still bounding memory use. The limit applies to the encrypted size.
 	MaxNTCP2Message3Part2Len = 8192
 
-	// MaxPaddingRatio is the maximum padding ratio allowed by the I2P
-	// NTCP2 spec. The ratio is padding bytes per data byte.
+	// MaxPaddingRatio is the largest padding ratio this implementation
+	// accepts. The ratio is padding bytes per data byte. The NTCP2 spec
+	// leaves the padding min/max "TBD" (it notes Java implementations cap
+	// padding at 256 bytes), so this is an implementation limit, not a
+	// value taken from the spec.
 	MaxPaddingRatio = 15.9375
 
 	// Poly1305Overhead is the size of the ChaCha20-Poly1305

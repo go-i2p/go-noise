@@ -576,12 +576,11 @@ func TestNoiseConnConcurrentClose(t *testing.T) {
 	}
 }
 
-// TestNoiseConnClose_UnblocksInFlightRead is the regression test for the
-// AUDIT.md CRITICAL finding: Close() must not hang indefinitely when a
-// concurrent Read() is blocked with no ReadTimeout configured (the default).
-// This exact scenario was empirically reproduced to hang before the fix
-// (Close() acquired readMutex before closing the underlying connection,
-// and a blocked Read() holds readMutex for the entire blocking syscall).
+// TestNoiseConnClose_UnblocksInFlightRead verifies that Close() does not hang
+// indefinitely when a concurrent Read() is blocked with no ReadTimeout
+// configured (the default). Before the fix, Close() acquired readMutex before
+// closing the underlying connection, and a blocked Read() holds readMutex for
+// the entire blocking syscall, so Close() would hang until the Read timed out.
 func TestNoiseConnClose_UnblocksInFlightRead(t *testing.T) {
 	client, server := setupNNHandshake(t)
 	defer server.Close()
@@ -804,11 +803,9 @@ func TestNoiseConnCipherOperations(t *testing.T) {
 }
 
 // TestNoiseConnHandshakeContexts tests handshake timeout and context cancellation
-// TestNoiseConnHandshake_HonorsCtxCancellationPromptly is the regression test
-// for the AUDIT.md HIGH finding: Handshake(ctx) must abort promptly when the
-// caller cancels ctx early, rather than blocking until the full configured
-// HandshakeTimeout elapses. This exact scenario was empirically confirmed to
-// block for the full timeout despite cancellation at ~200ms.
+// TestNoiseConnHandshake_HonorsCtxCancellationPromptly verifies that
+// Handshake(ctx) aborts promptly when the caller cancels ctx early, rather
+// than blocking until the full configured HandshakeTimeout elapses.
 func TestNoiseConnHandshake_HonorsCtxCancellationPromptly(t *testing.T) {
 	clientPipe, serverPipe := net.Pipe()
 	defer serverPipe.Close()
@@ -1390,9 +1387,9 @@ func TestApplyModifier_InvokesPhaseData(t *testing.T) {
 }
 
 // TestConfigReuseAfterClose verifies that closing a connection does not corrupt
-// a reused ConnConfig's StaticKey (HIGH-1 regression test).
-// The fix ensures that each Conn has its own copy of the StaticKey, so closing
-// one connection does not affect other connections using the same config.
+// a reused ConnConfig's StaticKey. Each Conn holds its own copy of the
+// StaticKey, so closing one connection does not affect other connections
+// that share the same config.
 func TestConfigReuseAfterClose(t *testing.T) {
 	// Create a shared config with a static key
 	originalKey := []byte{
@@ -1414,7 +1411,7 @@ func TestConfigReuseAfterClose(t *testing.T) {
 	err = conn1.Close()
 	require.NoError(t, err)
 
-	// Verify the caller's config StaticKey was NOT corrupted (HIGH-1 fix)
+	// Verify the caller's config StaticKey was NOT corrupted
 	assert.Equal(t, keyBackup, config.StaticKey,
 		"closing conn1 should not zero the config's StaticKey")
 	pipe1b.Close()

@@ -1,6 +1,6 @@
 # go-noise
 
-A wrapper library around the flynn/noise package that provides `net.Conn`, `net.Listener`, and `net.Addr` interfaces for the Noise Protocol Framework. Designed for implementing I2P's NTCP2 and SSU2 transport protocols with extensible handshake modification capabilities.
+A wrapper library around the [go-i2p/noise](https://github.com/go-i2p/noise) package that provides `net.Conn`, `net.Listener`, and `net.Addr` interfaces for the Noise Protocol Framework. Designed for implementing I2P's NTCP2 and SSU2 transport protocols with extensible handshake modification capabilities.
 
 ## Notes on scope
 
@@ -192,7 +192,7 @@ detection (`ReplayCache`), and KDF utilities.
 ```
 NoiseConn (net.Conn)
 ├── Config (pattern, keys, timeouts)
-├── HandshakeState (flynn/noise)
+├── HandshakeState (go-i2p/noise)
 ├── CipherState (post-handshake encryption)
 ├── NoiseAddr (net.Addr with pattern info)
 └── Underlying net.Conn (TCP, UDP, etc.)
@@ -200,9 +200,9 @@ NoiseConn (net.Conn)
 
 ## Dependencies
 
-- **flynn/noise** v1.1.0: Core Noise Protocol implementation
+- **go-i2p/noise**: Core Noise Protocol implementation
 - **go-i2p/logger**: Structured logging support
-- **samber/oops** v1.19.0: Rich error context
+- **samber/oops**: Rich error context
 
 ## Logging
 
@@ -247,9 +247,10 @@ DEBUG_I2P=debug go test ./...
 
 # With warn-fail mode (warnings become fatal)
 # Note: WARNFAIL_I2P=true exercises warn-level paths in production code,
-# but many intentional warn-path tests will fail (see AUDIT.md L-2).
-# For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
-# For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
+# but many intentional warn-path tests will fail because they deliberately
+# trigger warnings. For the full test suite, use DEBUG_I2P=debug without
+# WARNFAIL_I2P. For CI validation of production warnings, run WARNFAIL_I2P
+# only on the production-path subset below.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 
 # Production-path test subset for CI (WARNFAIL_I2P compatible):

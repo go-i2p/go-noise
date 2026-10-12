@@ -409,7 +409,7 @@ func TestMessage3Part2Validation_RejectsExcessiveM3P2Len(t *testing.T) {
 	responderConn.Close()
 }
 
-// ── RouterInfo / static-key verification tests (M-4) ─────────────────
+// ── RouterInfo / static-key verification tests ───────────────────────
 
 // TestRouterInfoVerification_MismatchIsError verifies that a mismatch
 // between the static key and LocalRouterInfo is reported as an error by
@@ -417,12 +417,12 @@ func TestMessage3Part2Validation_RejectsExcessiveM3P2Len(t *testing.T) {
 // unconditional in performInitiatorHandshake (the handshake fails with
 // ROUTER_INFO_KEY_MISMATCH); StrictRouterInfoVerification no longer gates it.
 //
-// NOTE (M-4): The full handshake failure path cannot be trivially triggered
+// NOTE: The full handshake failure path cannot be trivially triggered
 // end-to-end because crafting a valid RouterInfo with a *wrong* NTCP2 `s=`
 // option requires producing a signed RouterInfo structure (not just raw
 // bytes). The real-world trigger is a config bug in the router
 // (go-i2p/go-i2p) where the LocalRouterInfo diverges from the live static
-// key. This test validates the unit-level behavior of
+// key. This test therefore validates the unit-level behavior of
 // verifyLocalRouterInfoMatchesStaticKey.
 func TestRouterInfoVerification_MismatchIsError(t *testing.T) {
 	// Generate a fresh key pair for testing
@@ -516,16 +516,14 @@ func TestStrictRouterInfoVerification_EdgeCases(t *testing.T) {
 }
 
 // ============================================================================
-// M-5: NTCP2 handshake padding randomization
+// NTCP2 handshake padding randomization
 // ============================================================================
-// Per AUDIT.md line 98 (MEDIUM priority): "NTCP2 wire fingerprint: default
-// zero-length msg1 padding vs i2pd's randomized 0–223 byte padding".
-// Remediation: "enable spec-conformant randomized handshake padding by default
-// (sourced from crypto/rand), matching the Java/i2pd distribution. Validate:
-// a statistical test asserting padding length is randomized across many handshakes."
+// The NTCP2 spec requires random cleartext padding on handshake messages 1
+// and 2 (sourced from crypto/rand), matching the Java/i2pd distribution.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst).
 //
 // These tests validate that:
-// 1. The randomPaddingLength helper produces uniform distribution [0, maxPadLen]
+// 1. The randomPaddingLength helper produces a uniform distribution [0, maxPadLen]
 // 2. Message 1 and Message 2 use randomized padding (not always 0)
 // 3. The padding distribution matches statistical expectations (chi-squared test)
 

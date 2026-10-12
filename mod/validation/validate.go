@@ -1,10 +1,6 @@
-// Package validation provides shared validation helpers for go-noise sub-packages.
-// These functions validate Noise protocol configuration values such as patterns,
-// key lengths, timeouts, and retry parameters.
-//
-// Callers may use this package directly or use the forwarding shims in the
-// parent mod package (mod.ValidatePattern, mod.ValidateHandshakeTimeout, …)
-// which maintain backward compatibility.
+// Package validation provides shared validation helpers for go-noise
+// sub-packages. These functions validate Noise protocol configuration values
+// such as patterns, key lengths, timeouts, and retry parameters.
 package validation
 
 import (

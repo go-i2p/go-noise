@@ -62,9 +62,8 @@ func TestRemoveTrailingAEADPadding_NoPaddingPresent(t *testing.T) {
 
 // TestRemoveTrailingAEADPadding_AmbiguousFailsClosed constructs a buffer with
 // two coincidentally valid-looking trailing padding block headers within the
-// scan window and verifies the function now fails closed with an error
-// instead of silently guessing (regression test for AUDIT.md item: ambiguous
-// reverse-scan heuristic).
+// scan window and verifies the function fails closed with an error instead of
+// silently guessing which header is the real one.
 func TestRemoveTrailingAEADPadding_AmbiguousFailsClosed(t *testing.T) {
 	engine, err := NewPaddingEngine(PaddingEngineConfig{
 		MinPadding: 0,

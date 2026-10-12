@@ -122,7 +122,8 @@ func TestReplayCache_MaxSizeEviction(t *testing.T) {
 }
 
 // TestReplayCache_DoubleClose verifies that calling Close() twice does not
-// panic. This exercises the sync.Once guard added to fix BUG-1 from AUDIT.md.
+// panic. Close() must be idempotent: the sync.Once guard ensures the
+// background cleanup goroutine is stopped exactly once.
 func TestReplayCache_DoubleClose(t *testing.T) {
 	rc := NewReplayCache()
 

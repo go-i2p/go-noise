@@ -309,11 +309,9 @@ func TestNoiseListenerClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "listener is closed")
 }
 
-// TestNoiseListenerClose_UnblocksAcceptWaitingForConnectionSlot is the
-// regression test for the AUDIT.md HIGH finding: Close() must promptly
-// unblock an Accept() call that is blocked acquiring a MaxConnections
-// connection slot, rather than hanging indefinitely (empirically confirmed
-// to hang before the fix).
+// TestNoiseListenerClose_UnblocksAcceptWaitingForConnectionSlot verifies that
+// Close() promptly unblocks an Accept() call that is blocked acquiring a
+// MaxConnections connection slot, rather than hanging indefinitely.
 func TestNoiseListenerClose_UnblocksAcceptWaitingForConnectionSlot(t *testing.T) {
 	nl := newTestNoiseListenerFromTCP(t, "XX")
 	nl.config.MaxConnections = 1
@@ -915,7 +913,7 @@ func TestListenerSetShutdownManagerRace(t *testing.T) {
 
 // TestAccept_MaxConnections_ExposesHandshake verifies that when MaxConnections is
 // configured, the semaphoreReleaseWrapper still exposes the Handshake() method and
-// other Noise-specific methods through method promotion (HIGH-1 regression test).
+// other Noise-specific methods through method promotion.
 func TestAccept_MaxConnections_ExposesHandshake(t *testing.T) {
 	nl := newTestNoiseListenerFromTCP(t, "XX")
 	// Enable connection limiting with a small limit to force wrapper usage

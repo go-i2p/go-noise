@@ -64,8 +64,8 @@ func NewNTCP2PaddingModifier(name string, minPadding, maxPadding int, useAEADPad
 //   - maxPadding: maximum padding bytes (>= minPadding, 0-65516)
 //   - useAEADPadding: false for messages 1-2 (cleartext padding), true
 //     for message 3 and the data phase (AEAD padding)
-//   - paddingRatio: ratio of padding to data (0.0 to 15.9375, as per the
-//     I2P NTCP2 spec)
+//   - paddingRatio: ratio of padding to data (0.0 to 15.9375; the spec
+//     leaves padding limits "TBD", so 15.9375 is an implementation cap)
 //
 // A paddingRatio of 0.0 means no ratio-based padding (uses min/max only).
 // A paddingRatio of 1.0 means 100% padding (double the message size).

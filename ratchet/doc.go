@@ -28,6 +28,7 @@
 // and decrypts.
 //
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
+// See [I2P Proposal 144: ECIES-X25519-AEAD-Ratchet](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/proposals/144-ecies-x25519-aead-ratchet.rst) for the ratchet design.
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
 // # What this package provides

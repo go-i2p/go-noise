@@ -1683,7 +1683,7 @@ func TestNTCP2ApplyModifier_InvokesPhaseData(t *testing.T) {
 }
 
 // ============================================================================
-// Concurrent read/write test (TEST-3 from AUDIT.md)
+// Concurrent read/write test
 // ============================================================================
 
 // TestNTCP2Conn_ConcurrentReadWrite verifies that concurrent Read and Write
@@ -1745,11 +1745,15 @@ func TestNTCP2Conn_ConcurrentReadWrite(t *testing.T) {
 }
 
 // ============================================================================
-// randomAEADTimeout test (SPEC-3 from AUDIT.md)
+// randomAEADTimeout test
 // ============================================================================
 
 // TestRandomAEADTimeout verifies that randomAEADTimeout returns durations
-// within the expected [AEADErrorTimeoutMin, AEADErrorTimeoutMax] range.
+// within the expected [AEADErrorTimeoutMin, AEADErrorTimeoutMax] range. The
+// random timeout is part of NTCP2's probing resistance: on an AEAD failure
+// the responder waits a random interval before responding, so an attacker
+// cannot distinguish a valid handshake from a random probe.
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst).
 func TestRandomAEADTimeout(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		d := randomAEADTimeout()
@@ -1817,13 +1821,13 @@ func TestNTCP2Conn_ZeroKeyMaterial(t *testing.T) {
 }
 
 // TestWriteFramed_UnderflowGuard verifies that writeFramed detects and rejects
-// maxFrameSize < Poly1305Overhead before arithmetic underflow (M-9 audit finding).
+// maxFrameSize < Poly1305Overhead before arithmetic underflow. Config
+// validation normally prevents this, but the defensive check in writeFramed
+// itself must also guard against a corrupted or hand-built Config.
 func TestWriteFramed_UnderflowGuard(t *testing.T) {
 	conn := createTestNTCP2Conn(&mockNoiseConn{})
 
 	// Create a config with MaxFrameSize below Poly1305Overhead (16).
-	// Config validation normally prevents this, but this tests the
-	// defensive check in writeFramed itself.
 	corruptedConfig := &Config{
 		MaxFrameSize: 8, // Below Poly1305Overhead (16)
 	}

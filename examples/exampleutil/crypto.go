@@ -32,7 +32,7 @@ func ParseKeyFromHex(keyStr string) ([]byte, error) {
 	key, err := hex.DecodeString(keyStr)
 	if err != nil {
 		// Never include keyStr in the error context: a user typo in a valid
-		// key would otherwise leak the secret into logs (AUDIT M-2).
+		// key would otherwise leak the secret into logs.
 		return nil, oops.
 			Code("INVALID_KEY_FORMAT").
 			In("examples").

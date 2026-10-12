@@ -613,12 +613,11 @@ func TestGetModifierChainCaching(t *testing.T) {
 	})
 }
 
-// TestConnConfig_ConcurrentModifierMutationAndRead is the regression test for
-// the AUDIT.md MEDIUM finding: WithModifiers/AddModifier/ClearModifiers must
-// hold chainMu for their entire body (including the c.Modifiers
-// read-modify-write), not just the subsequent cache-invalidation call, so
-// concurrent mutation and GetModifierChain reads do not race. Run with
-// `go test -race` to verify.
+// TestConnConfig_ConcurrentModifierMutationAndRead verifies that
+// WithModifiers/AddModifier/ClearModifiers hold chainMu for their entire body
+// (including the c.Modifiers read-modify-write), not just the subsequent
+// cache-invalidation call, so concurrent mutation and GetModifierChain reads
+// do not race. Run with `go test -race` to verify.
 func TestConnConfig_ConcurrentModifierMutationAndRead(t *testing.T) {
 	config := NewConnConfig("XX", true)
 	mod := &testHandshakeModifier{name: "concurrent-mod"}

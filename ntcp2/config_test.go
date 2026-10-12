@@ -236,7 +236,7 @@ func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
 			// time (ToConnConfig -> createPaddingModifierIfEnabled).
 			// Previously ValidatePaddingRange only checked min>=0 and
 			// max>=min, letting this pass Validate() and fail later
-			// with a different error code (AUDIT.md).
+			// with a different error code.
 			name: "max padding size exceeds I2P spec limit",
 			setupConfig: func() *Config {
 				config, _ := NewNTCP2Config(routerHash, false)
@@ -248,12 +248,12 @@ func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
 			errorCode:   "INVALID_PADDING",
 		},
 		{
-			// Regression test for AUDIT.md Level 3 finding: GenericPaddingModifier
-			// uses an NTCP2-incompatible 4-byte length-prefix wire format and
-			// must be rejected by config validation rather than silently produce
-			// non-interoperable messages. validateModifiers already enforces
-			// this at runtime (INCOMPATIBLE_MODIFIER); this test asserts that
-			// guard is actually exercised via Config.Validate().
+			// GenericPaddingModifier uses an NTCP2-incompatible 4-byte
+			// length-prefix wire format and must be rejected by config
+			// validation rather than silently produce non-interoperable
+			// messages. validateModifiers already enforces this at runtime
+			// (INCOMPATIBLE_MODIFIER); this test asserts that guard is
+			// actually exercised via Config.Validate().
 			name: "GenericPaddingModifier is rejected as an NTCP2 modifier",
 			setupConfig: func() *Config {
 				config, _ := NewNTCP2Config(routerHash, false)
