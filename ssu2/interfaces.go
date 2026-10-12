@@ -1,13 +1,3 @@
-// This file declares the top-level interfaces that external callers should
-// use when working with SSU2.
-//
-// Depending on interfaces rather than concrete types (*SSU2Listener,
-// *PacketRouter, *SSU2Conn) makes it possible to unit-test components in
-// isolation without an active network.
-//
-// Acceptor and Router are re-exported from their sub-packages; Dialer is
-// defined here because the dialing functionality is implemented as free
-// functions rather than a struct.
 package ssu2
 
 import (

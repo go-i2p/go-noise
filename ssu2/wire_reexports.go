@@ -1,6 +1,3 @@
-// Package ssu2: wire-level type re-exports from ssu2/wire.
-// Implementations live in ssu2/wire; this file provides
-// backward-compatible access from the flat ssu2 package.
 package ssu2
 
 import "github.com/go-i2p/go-noise/ssu2/wire"

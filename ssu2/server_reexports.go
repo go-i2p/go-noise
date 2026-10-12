@@ -1,6 +1,3 @@
-// Package ssu2: server re-exports from ssu2/server.
-// Implementations live in ssu2/server; this file provides
-// backward-compatible access from the flat ssu2 package.
 package ssu2
 
 import "github.com/go-i2p/go-noise/ssu2/server"

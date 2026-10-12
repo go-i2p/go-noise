@@ -1,6 +1,3 @@
-// Package ssu2: reliability re-exports from ssu2/reliability.
-// Implementations live in ssu2/reliability; this file provides
-// backward-compatible access from the flat ssu2 package.
 package ssu2
 
 import "github.com/go-i2p/go-noise/ssu2/reliability"

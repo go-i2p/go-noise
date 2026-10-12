@@ -73,6 +73,24 @@
 // obfuscation uses ChaCha20 (from ECIES) instead of AES. Packet numbering
 // is adapted from WireGuard and QUIC, and ACKs/nacks are adapted from QUIC.
 //
+// # NAT detection and reachability state
+//
+// All NAT detection, peer-test management, and reachability state management
+// (PeerTestManager, TestResult, NATStatus) is delegated to the external
+// github.com/go-i2p/path package. This means:
+//
+//  1. Errors or panics in path validation code cannot be observed or
+//     instrumented from within go-noise.
+//  2. A bug in external path detection (for example, a false-positive
+//     FIREWALLED state) would be invisible at the go-noise layer.
+//  3. NAT state is the single source of truth from go-i2p/path; go-noise does
+//     not validate or override it.
+//
+// If you need to observe NAT state transitions or integrate custom
+// reachability logic, you must hook directly into go-i2p/path, not go-noise.
+// This is by design, to keep the transport layer (go-noise) separate from the
+// routing/path layer.
+//
 // # Package layout
 //
 //   - ssu2 (this package): top-level API — dialing, listening, the

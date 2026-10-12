@@ -1,45 +1,3 @@
-// This file implements the Coordinator, which wires SSU2 peer tests and
-// relays into live sessions.
-//
-// # What the Coordinator does
-//
-// SSU2 has two extra features beyond carrying I2NP messages: peer testing
-// (checking whether a peer can be reached from outside its network) and
-// relaying (having a third router forward messages between two peers that
-// cannot reach each other directly). The state machines for these features
-// live in the go-i2p/path package (re-exported by this package). The
-// Coordinator connects those state machines to a live session: it turns
-// inbound PeerTest and Relay blocks into responses, and it verifies the
-// signatures on those blocks.
-//
-// # Layering
-//
-// The Coordinator never resolves sessions or imports the router
-// (go-i2p/go-i2p). It only decides *what* to send and *to which peer*.
-// Actual delivery is delegated to an injected Dispatcher, which the router
-// implements.
-//
-// # Threading model
-//
-// A single Coordinator is shared by the local router across all of its SSU2
-// sessions. BuildCallbacks is called once per established session with that
-// peer's router hash and Ed25519 signing key. It returns closures that read
-// and write the Coordinator's shared, mutex-guarded state. Peer-test and
-// relay flows span three peers and three distinct sessions (Alice<->Bob,
-// Bob<->Charlie), so cross-session state such as the per-nonce context lives
-// on the shared Coordinator, not on a per-connection object.
-//
-// # Peer-test signature semantics
-//
-// In a peer test, three routers take the roles of Alice (initiator), Bob
-// (relay), and Charlie (responder). Bob never signs; he forwards Alice's
-// signature (message 1 -> message 2) and Charlie's signature (message 3 ->
-// message 4), only changing the message code and the included router hash.
-// Only Alice (messages 1/2) and Charlie (messages 3/4) produce signatures.
-// The same is true of relaying: Bob forwards Alice's request signature into
-// the RelayIntro; only Alice and Charlie sign.
-//
-// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 package ssu2
 
 import (
@@ -193,6 +151,46 @@ type relayClient struct {
 // Coordinator wires the peer-test and relay state machines into session
 // callbacks. A single instance is shared across all of the local router's
 // SSU2 sessions.
+//
+// # What the Coordinator does
+//
+// SSU2 has two extra features beyond carrying I2NP messages: peer testing
+// (checking whether a peer can be reached from outside its network) and
+// relaying (having a third router forward messages between two peers that
+// cannot reach each other directly). The state machines for these features
+// live in the go-i2p/path package (re-exported by this package). The
+// Coordinator connects those state machines to a live session: it turns
+// inbound PeerTest and Relay blocks into responses, and it verifies the
+// signatures on those blocks.
+//
+// # Layering
+//
+// The Coordinator never resolves sessions or imports the router
+// (go-i2p/go-i2p). It only decides *what* to send and *to which peer*.
+// Actual delivery is delegated to an injected Dispatcher, which the router
+// implements.
+//
+// # Threading model
+//
+// A single Coordinator is shared by the local router across all of its SSU2
+// sessions. BuildCallbacks is called once per established session with that
+// peer's router hash and Ed25519 signing key. It returns closures that read
+// and write the Coordinator's shared, mutex-guarded state. Peer-test and
+// relay flows span three peers and three distinct sessions (Alice<->Bob,
+// Bob<->Charlie), so cross-session state such as the per-nonce context lives
+// on the shared Coordinator, not on a per-connection object.
+//
+// # Peer-test signature semantics
+//
+// In a peer test, three routers take the roles of Alice (initiator), Bob
+// (relay), and Charlie (responder). Bob never signs; he forwards Alice's
+// signature (message 1 -> message 2) and Charlie's signature (message 3 ->
+// message 4), only changing the message code and the included router hash.
+// Only Alice (messages 1/2) and Charlie (messages 3/4) produce signatures.
+// The same is true of relaying: Bob forwards Alice's request signature into
+// the RelayIntro; only Alice and Charlie sign.
+//
+// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 type Coordinator struct {
 	cfg CoordinatorConfig
 
