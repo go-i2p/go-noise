@@ -24,6 +24,15 @@ type Session struct {
 	mu               sync.Mutex
 	RemotePublicKey  [32]byte
 	DHRatchet        *ratchet.DHRatchet
+	// sendRootKey and recvRootKey are the per-direction "next root key"
+	// values maintained by the DH Ratchet KDF. The spec keeps an independent
+	// nextRootKey for the inbound and outbound directions (ratchet.md
+	// §"DH Ratchet KDF": "rootKey = nextRootKey // from previous tagset in
+	// this direction"). Before each PerformRatchet call the Session selects
+	// the appropriate direction's root key via DHRatchet.SetRootKey and
+	// stores the returned nextRootKey back here.
+	sendRootKey [32]byte
+	recvRootKey [32]byte
 	SymmetricRatchet *ratchet.SymmetricRatchet // sending chain
 	TagRatchet       *ratchet.TagRatchet       // sending tags
 	// RecvSymmetricRatchet is the receiving chain ratchet.
@@ -125,18 +134,18 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to derive send-direction tag set")
 	}
-	// The recv-direction nextRootKey is not stored: the DHRatchet holds a single
-	// rootKey (send direction). The recv tag/sym chain keys below are still
-	// derived from the recv-direction DH_INITIALIZE output, so the initial recv
-	// tag set is correct; only advancing the recv root key on a DH step is not
-	// supported by the current single-rootKey DHRatchet (documented P0 #3 gap).
-	_, recvTagCK, recvSymCK, err := deriveDirectionalTagSet(keys.chainKey, recvK)
+	// The recv-direction nextRootKey is the KDF input for the first DH ratchet
+	// step in the receive direction. The spec maintains an independent
+	// nextRootKey per direction (ratchet.md §"DH Ratchet KDF"), so both are
+	// stored on the Session.
+	recvRootKey, recvTagCK, recvSymCK, err := deriveDirectionalTagSet(keys.chainKey, recvK)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to derive recv-direction tag set")
 	}
 
-	// The DH ratchet uses the send-direction root key (single rootKey design;
-	// see P0 #3 gap note — spec has per-direction nextRootKey).
+	// The DHRatchet's rootKey is a working value the Session selects per
+	// direction via SetRootKey before each ratchet step. Initialize it with
+	// the send-direction root key (the send direction ratchets first).
 	dhRatchet := ratchet.NewDHRatchet(sendRootKey, ourPrivateKey, remotePubKey)
 	symRatchet := ratchet.NewSymmetricRatchet(sendSymCK)
 	tagRatchet := ratchet.NewTagRatchet(sendTagCK)
@@ -146,6 +155,8 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 	return &Session{
 		RemotePublicKey:      remotePubKey,
 		DHRatchet:            dhRatchet,
+		sendRootKey:          sendRootKey,
+		recvRootKey:          recvRootKey,
 		SymmetricRatchet:     symRatchet,
 		TagRatchet:           tagRatchet,
 		RecvSymmetricRatchet: recvSymRatchet,

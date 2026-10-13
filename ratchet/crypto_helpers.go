@@ -191,10 +191,24 @@ func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte
 	return tagKey, symKey, nil
 }
 
-// applyRatchetKeysInternal performs a DH ratchet step and applies derived keys
-// to the session's receiving or sending ratchet state based on isReceiving.
-// When isReceiving=true, uses receiving chain key and assigns to Recv* fields.
-// When isReceiving=false, uses sending chain key and assigns to symmetric/tag ratchets.
+// applyRatchetKeysInternal performs one DH ratchet step in a single direction
+// and applies the resulting chain key to that direction's symmetric and tag
+// ratchets.
+//
+// Per the spec's DH Ratchet KDF (ratchet.md §"DH Ratchet KDF"), each direction
+// maintains its own nextRootKey: "rootKey = nextRootKey // from previous
+// tagset in this direction". The conformant DHRatchet.PerformRatchet performs
+// the X25519 DH, derives tagsetKey = HKDF(sharedSecret, ZEROLEN,
+// "XDHRatchetTagSet", 32), then runs DH_INITIALIZE(rootKey, tagsetKey) and
+// returns (nextRootKey, ck) for ONE direction. The Session therefore:
+//
+//  1. selects the target direction's root key via DHRatchet.SetRootKey,
+//  2. calls PerformRatchet to obtain (nextRootKey, ck),
+//  3. persists nextRootKey back into that direction's root key, and
+//  4. derives (sessTag_ck, symmKey_ck) from ck via TagAndKeyGenKeys and
+//     installs them into the direction's ratchets.
+//
+// Must be called with session.mu held.
 func applyRatchetKeysInternal(session *Session, isReceiving bool) error {
 	var logFunc string
 	if isReceiving {
@@ -204,7 +218,17 @@ func applyRatchetKeysInternal(session *Session, isReceiving bool) error {
 	}
 	flog(logFunc).Debug("performing DH ratchet step and applying derived keys")
 
-	sendChainKey, recvChainKey, err := session.DHRatchet.PerformRatchet()
+	// Select the target direction's root key as the KDF input.
+	var rootKey *[32]byte
+	if isReceiving {
+		rootKey = &session.recvRootKey
+	} else {
+		rootKey = &session.sendRootKey
+	}
+	session.DHRatchet.SetRootKey(*rootKey)
+
+	// Perform the single-direction ratchet step.
+	nextRootKey, chainKey, err := session.DHRatchet.PerformRatchet()
 	if err != nil {
 		if isReceiving {
 			return oops.Wrapf(err, "failed to perform receiving DH ratchet")
@@ -213,13 +237,8 @@ func applyRatchetKeysInternal(session *Session, isReceiving bool) error {
 		}
 	}
 
-	// Select chain key based on direction
-	var chainKey [32]byte
-	if isReceiving {
-		chainKey = recvChainKey
-	} else {
-		chainKey = sendChainKey
-	}
+	// Persist the direction's next root key for the subsequent ratchet step.
+	*rootKey = nextRootKey
 
 	tagKey, symKey, err := deriveTagAndSymKeysFromChainKey(chainKey)
 	if err != nil {
