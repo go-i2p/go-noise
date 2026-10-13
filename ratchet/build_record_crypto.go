@@ -1,7 +1,9 @@
 package ratchet
 
 import (
-	"github.com/go-i2p/common/data"
+	"crypto/sha256"
+	"crypto/subtle"
+
 	"github.com/go-i2p/crypto/chacha20poly1305"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -129,6 +131,15 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 	return cleartext, nil
 }
 
+// BuildResponseRecordSize is the total wire size of a build response record.
+const BuildResponseRecordSize = 528
+
+// BuildResponseRecordHashSize is the size of the leading SHA-256 hash field.
+const BuildResponseRecordHashSize = 32
+
+// BuildResponseRecordRandomSize is the size of the random padding field.
+const BuildResponseRecordRandomSize = 495
+
 // SerializeResponseRecord converts response record fields to wire format
 // (528 bytes).
 //
@@ -140,10 +151,22 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 //
 // The hash lets the receiver verify that the record has not been tampered
 // with; see [VerifyResponseRecordHash].
-//
-// Deprecated: use [data.SerializeResponseRecord].
 func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []byte {
-	return data.SerializeResponseRecord(hash, randomData, reply)
+	buf := make([]byte, BuildResponseRecordSize)
+	copy(buf[0:BuildResponseRecordHashSize], hash[:])
+	copy(buf[BuildResponseRecordHashSize:BuildResponseRecordHashSize+BuildResponseRecordRandomSize], randomData[:])
+	buf[BuildResponseRecordHashSize+BuildResponseRecordRandomSize] = reply
+	return buf
+}
+
+// buildResponseRecordHashInput constructs the 496-byte buffer that is hashed
+// to produce (or verify) the SHA-256 field of a build response record.
+// Layout: randomData[0:495] || reply byte.
+func buildResponseRecordHashInput(randomData *[495]byte, reply byte) []byte {
+	data := make([]byte, BuildResponseRecordRandomSize+1)
+	copy(data[0:BuildResponseRecordRandomSize], randomData[:])
+	data[BuildResponseRecordRandomSize] = reply
+	return data
 }
 
 // VerifyResponseRecordHash verifies the SHA-256 hash in a serialized
@@ -151,10 +174,14 @@ func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []
 //
 // Returns an error if the hash does not match, which means the record was
 // tampered with or corrupted in transit.
-//
-// Deprecated: use [data.VerifyResponseRecordHash].
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
-	return data.VerifyResponseRecordHash(hash, randomData, reply)
+	expectedHash := sha256.Sum256(buildResponseRecordHashInput(&randomData, reply))
+
+	if subtle.ConstantTimeCompare(hash[:], expectedHash[:]) != 1 {
+		return oops.Errorf("BuildResponseRecord hash verification failed")
+	}
+
+	return nil
 }
 
 // CreateBuildResponseRecordRaw creates a valid response record with proper hash.
@@ -164,10 +191,8 @@ func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) e
 //   - randomData: 495 bytes of random data (should be cryptographically random)
 //
 // Returns the SHA-256 hash that should be placed in the first 32 bytes of the record.
-//
-// Deprecated: use [data.CreateBuildResponseRecordRaw].
 func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
-	return data.CreateBuildResponseRecordRaw(reply, randomData)
+	return sha256.Sum256(buildResponseRecordHashInput(&randomData, reply))
 }
 
 // newChaCha20Poly1305 creates a ChaCha20-Poly1305 AEAD cipher and derives the
