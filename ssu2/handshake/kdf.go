@@ -1,9 +1,7 @@
 package handshake
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-
+	"github.com/go-i2p/crypto/kdf"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
 )
@@ -13,14 +11,18 @@ import (
 //
 //	temp_key = HMAC-SHA256(salt=chainKey, ikm=ZEROLEN)
 //	key      = HMAC-SHA256(temp_key, info || 0x01)
+//
+// This is standard HKDF (RFC 5869) with an empty IKM, so it delegates to the
+// canonical go-i2p/crypto/kdf.StandardHKDF one-shot wrapper (salt=chainKey,
+// ikm=ZEROLEN).
 func deriveIntermediateHeaderKey(chainKey []byte, info string) []byte {
-	mac := hmac.New(sha256.New, chainKey)
-	tempKey := mac.Sum(nil)
-
-	mac = hmac.New(sha256.New, tempKey)
-	mac.Write([]byte(info))
-	mac.Write([]byte{0x01})
-	return mac.Sum(nil)
+	key, err := kdf.StandardHKDF(chainKey, nil, []byte(info), 32)
+	if err != nil {
+		// Unreachable: chainKey is a 32-byte chaining key and info is a short
+		// constant, so the HKDF parameter validation can never fail here.
+		panic("ssu2/handshake: deriveIntermediateHeaderKey: " + err.Error())
+	}
+	return key
 }
 
 // deriveDataPhaseKeys derives both k_data and k_header_2 for the data phase
@@ -30,32 +32,21 @@ func deriveIntermediateHeaderKey(chainKey []byte, info string) []byte {
 //	k_data   = HMAC-SHA256(temp_key, "HKDFSSU2DataKeys" || 0x01)  // first 32 bytes
 //	k_header_2 = HMAC-SHA256(temp_key, k_data || "HKDFSSU2DataKeys" || 0x02)
 //
+// This is standard HKDF (RFC 5869) with an empty IKM expanded to 64 bytes, so
+// it delegates to the canonical go-i2p/crypto/kdf.StandardHKDF one-shot wrapper
+// (salt=chainingKey, ikm=ZEROLEN).
+//
 // Per spec, k_data replaces the raw split key for AEAD encryption,
 // and k_header_2 is used for data-phase header protection.
 func deriveDataPhaseKeys(cs *noise.CipherState) (kData, kHeader2 []byte, err error) {
 	key := cs.UnsafeKey()
 
-	info := []byte("HKDFSSU2DataKeys")
+	out, err := kdf.StandardHKDF(key[:], nil, []byte("HKDFSSU2DataKeys"), 64)
+	if err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to derive data-phase keys")
+	}
 
-	// HKDF-Extract: temp_key = HMAC-SHA256(salt=key, ikm=zerolen)
-	mac := hmac.New(sha256.New, key[:])
-	// ikm = zerolen (write nothing)
-	tempKey := mac.Sum(nil)
-
-	// HKDF-Expand T(1) = HMAC-SHA256(temp_key, info || 0x01) → k_data (32 bytes)
-	mac = hmac.New(sha256.New, tempKey)
-	mac.Write(info)
-	mac.Write([]byte{0x01})
-	kData = mac.Sum(nil)
-
-	// HKDF-Expand T(2) = HMAC-SHA256(temp_key, T(1) || info || 0x02) → k_header_2 (32 bytes)
-	mac = hmac.New(sha256.New, tempKey)
-	mac.Write(kData)
-	mac.Write(info)
-	mac.Write([]byte{0x02})
-	kHeader2 = mac.Sum(nil)
-
-	return kData, kHeader2, nil
+	return out[:32], out[32:64], nil
 }
 
 // DeriveHeaderKeys derives data-phase header protection keys (k_header_2) for both
