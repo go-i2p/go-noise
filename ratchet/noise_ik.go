@@ -87,10 +87,9 @@ func resumeNoiseHandshakeState(ns *noise.SymmetricState, hs *noiseHandshakeState
 // Unlike MixKey, this does NOT update the cipher key (k) or reset the nonce.
 // The spec mandates single-output HKDF for "ee" to prevent accidental use
 // of an intermediate cipher key between the "ee" and "se" steps.
-func mixKeyCKOnly(ns *noise.SymmetricState, ikm []byte) {
-	flog("mixKeyCKOnly", logger.Fields{"ikm_len": len(ikm)}).Debug("mixKeyCKOnly: updating chaining key via single-output HKDF")
-	ck1 := noise.HKDF1SHA256(ns.ChainingKey(), ikm)
-	ns.SetChainingKey(ck1[:])
+func mixKeyCKOnly(ns *noise.SymmetricState, ikm []byte) error {
+	flog("mixKeyCKOnly", logger.Fields{"ikm_len": len(ikm)}).Debug("mixKeyCKOnly: updating chaining key via RFC 5869 HKDF (32-byte output)")
+	return ns.MixKeyRFC5869CKOnly(ikm)
 }
 
 // writeNoiseIKMessage1 constructs a New Session message using the Noise IK pattern
@@ -130,7 +129,9 @@ func writeNoiseIKMessage1(
 	if err != nil {
 		return nil, nil, nil, oops.Wrapf(err, "failed to compute DH(e, rs)")
 	}
-	ns.MixKey(sharedES)
+	if err := ns.MixKeyRFC5869(sharedES); err != nil {
+		return nil, nil, nil, oops.Wrapf(err, "failed to MixKey(es)")
+	}
 
 	// Token s: Encrypt our static public key under the current key
 	encryptedStatic, err := ns.EncryptAndHash(nil, ourStaticPub[:])
@@ -143,7 +144,9 @@ func writeNoiseIKMessage1(
 	if err != nil {
 		return nil, nil, nil, oops.Wrapf(err, "failed to compute DH(s, rs)")
 	}
-	ns.MixKey(sharedSS)
+	if err := ns.MixKeyRFC5869(sharedSS); err != nil {
+		return nil, nil, nil, oops.Wrapf(err, "failed to MixKey(ss)")
+	}
 
 	// Encrypt the garlic payload
 	encryptedPayload, err := ns.EncryptAndHash(nil, payload)
@@ -224,7 +227,9 @@ func writeNoiseIKMessage1Unbound(
 	if err != nil {
 		return nil, nil, oops.Wrapf(err, "failed to compute DH(e, rs)")
 	}
-	ns.MixKey(sharedES) // n=0 after this
+	if err := ns.MixKeyRFC5869(sharedES); err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to MixKey(es)")
+	}
 
 	// Flags section (unbound marker): EncryptAndHash(zeros32) using n=0.
 	// Plaintext is 32 zero bytes — the receiver tests the decrypted plaintext
@@ -308,7 +313,9 @@ func readNoiseIKMessage1(
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to compute DH(s, re)")
 	}
-	ns.MixKey(sharedES)
+	if err := ns.MixKeyRFC5869(sharedES); err != nil {
+		return nil, oops.Wrapf(err, "failed to MixKey(es)")
+	}
 
 	// Decrypt the static key / flags section (n=0; after decryption ns.n=1).
 	encryptedStatic := message[32 : 32+noiseEncryptedStaticSize]
@@ -372,7 +379,9 @@ func readBoundPayload(
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to compute DH(s, rs)")
 	}
-	ns.MixKey(sharedSS)
+	if err := ns.MixKeyRFC5869(sharedSS); err != nil {
+		return nil, oops.Wrapf(err, "failed to MixKey(ss)")
+	}
 
 	payload, err := ns.DecryptAndHash(nil, encryptedPayload)
 	if err != nil {

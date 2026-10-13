@@ -158,14 +158,18 @@ func writeNoiseIKMessage2(
 	if err != nil {
 		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to compute NSR DH(e, re)")
 	}
-	mixKeyCKOnly(ns, sharedEE)
+	if err := mixKeyCKOnly(ns, sharedEE); err != nil {
+		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to MixKey(ee)")
+	}
 
 	// "se" pattern: DH(besk, apk)
 	sharedSE, err := curve25519.SharedKey(ephPrivBytes, hs.remoteStaticPub[:])
 	if err != nil {
 		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to compute NSR DH(e, rs)")
 	}
-	ns.MixKey(sharedSE)
+	if err := ns.MixKeyRFC5869(sharedSE); err != nil {
+		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to MixKey(se)")
+	}
 
 	// Encrypt ZEROLEN to produce the key section MAC (16 bytes)
 	keySectionMAC, err := ns.EncryptAndHash(nil, []byte{})
@@ -237,14 +241,18 @@ func readNoiseIKMessage2(
 	if err != nil {
 		return nil, nil, oops.Wrapf(err, "failed to compute NSR DH(e, re)")
 	}
-	mixKeyCKOnly(ns, sharedEE)
+	if err := mixKeyCKOnly(ns, sharedEE); err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to MixKey(ee)")
+	}
 
 	// "se" pattern: DH(ask, bepk)
 	sharedSE, err := curve25519.SharedKey(ourStaticPriv[:], ephPubBytes)
 	if err != nil {
 		return nil, nil, oops.Wrapf(err, "failed to compute NSR DH(s, re)")
 	}
-	ns.MixKey(sharedSE)
+	if err := ns.MixKeyRFC5869(sharedSE); err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to MixKey(se)")
+	}
 
 	// Decrypt key section MAC (verify ZEROLEN encryption)
 	keySectionMAC := message[40:56]
@@ -270,7 +278,13 @@ func readNoiseIKMessage2(
 func deriveNSRPayloadCipher(ns *noise.SymmetricState) (*chacha20poly1305.AEAD, [32]byte, [32]byte, error) {
 	flog("deriveNSRPayloadCipher").Debug("Deriving NSR payload cipher via split() and HKDF")
 	// split(): keydata = HKDF(chainKey, ZEROLEN, "", 64)
-	kAB, kBA := noise.HKDF2SHA256(ns.ChainingKey(), nil)
+	keydata, err := kdf.StandardHKDF(ns.ChainingKey(), nil, []byte(""), 64)
+	if err != nil {
+		return nil, [32]byte{}, [32]byte{}, oops.Wrapf(err, "failed to split() for NSR payload")
+	}
+	var kAB, kBA [32]byte
+	copy(kAB[:], keydata[0:32])
+	copy(kBA[:], keydata[32:64])
 
 	// Derive payload key: k = HKDF(k_ba, ZEROLEN, "AttachPayloadKDF", 32)
 	payloadKeyBytes, err := kdf.StandardHKDF(kBA[:], nil, []byte(hkdfInfoAttachPayloadKDF), 32)

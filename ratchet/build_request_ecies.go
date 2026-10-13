@@ -49,9 +49,9 @@ func NewBuildRequestCrypto() *BuildRequestCrypto {
 //
 //   - Bytes 0-15: First 16 bytes of recipientIdentityHash (lets the recipient
 //     quickly check whether the record is for them).
-//   - Bytes 16-297: ECIES-X25519 encrypted data (ephemeral public key +
-//     nonce + AEAD ciphertext).
-//   - Bytes 298-527: Zero padding.
+//   - Bytes 16-333: ECIES-X25519 one-time encrypted data (Elligator2-encoded
+//     ephemeral public key 32 + flags section 48 + payload section 238).
+//   - Bytes 334-527: Zero padding.
 //
 // Parameters:
 //   - cleartext: 222-byte serialized BuildRequestRecord.
@@ -74,8 +74,8 @@ func (c *BuildRequestCrypto) EncryptBuildRequest(
 	// Copy first 16 bytes of identity hash (toPeer field)
 	writePrefix16FromArray32(encrypted[0:16], recipientIdentityHash)
 
-	// Encrypt using ECIES-X25519
-	// Output: ephemeral_pubkey(32) + nonce(12) + aead_ciphertext(222+16=238) = 282 bytes
+	// Encrypt using ECIES-X25519 one-time format.
+	// Output: encodedAepk(32) + flagsCt(48) + payloadCt(222+16=238) = 318 bytes
 	ciphertext, err := ecies.EncryptECIESX25519(recipientPubKey[:], cleartext)
 	if err != nil {
 		return encrypted, oops.Wrapf(err, "ECIES encryption failed")
@@ -110,9 +110,9 @@ func (c *BuildRequestCrypto) DecryptBuildRequest(encrypted [528]byte, privateKey
 		return nil, err
 	}
 
-	// Extract ECIES ciphertext portion (bytes 16-297)
-	// ephemeral_pubkey(32) + nonce(12) + aead_ciphertext(222+16=238) = 282 bytes
-	const eciesCiphertextLen = 32 + 12 + 222 + 16 // = 282
+	// Extract ECIES ciphertext portion (bytes 16-333).
+	// One-time format: encodedAepk(32) + flagsCt(32+16=48) + payloadCt(222+16=238) = 318 bytes
+	const eciesCiphertextLen = 32 + 48 + 222 + 16 // = 318
 	ciphertext := encrypted[16 : 16+eciesCiphertextLen]
 
 	cleartext, err := ecies.DecryptECIESX25519(privateKey, ciphertext)
