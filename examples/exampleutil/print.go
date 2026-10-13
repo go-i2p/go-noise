@@ -1,4 +1,3 @@
-// Package exampleutil provides common utilities for go-noise examples
 package exampleutil
 
 import "fmt"
