@@ -1,4 +1,4 @@
-// Package shared provides common utilities for go-noise examples
+// Package exampleutil provides common utilities for go-noise examples
 package exampleutil
 
 import (

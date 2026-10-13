@@ -1,4 +1,4 @@
-// Package shared provides NTCP2-specific utilities for go-noise examples
+// Package exampleutil provides NTCP2-specific utilities for go-noise examples
 package exampleutil
 
 import (
