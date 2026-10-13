@@ -1,10 +1,8 @@
 package ratchet
 
 import (
-	"crypto/subtle"
-
+	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/crypto/chacha20poly1305"
-	"github.com/go-i2p/crypto/types"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -142,23 +140,10 @@ func (c *BuildReplyCrypto) DecryptReplyRecord(
 //
 // The hash lets the receiver verify that the record has not been tampered
 // with; see [VerifyResponseRecordHash].
+//
+// Deprecated: use [data.SerializeResponseRecord].
 func SerializeResponseRecord(hash [32]byte, randomData [495]byte, reply byte) []byte {
-	flog("SerializeResponseRecord", logger.Fields{"reply_code": reply}).Debug("Serializing response record")
-	buf := make([]byte, 528)
-	writeArray32(buf[0:32], hash)
-	writeArray495(buf[32:527], &randomData)
-	buf[527] = reply
-	return buf
-}
-
-// buildResponseRecordHashInput constructs the 496-byte buffer that is hashed
-// to produce (or verify) the SHA-256 field of a build response record.
-// Layout: randomData[0:495] || reply byte.
-func buildResponseRecordHashInput(randomData *[495]byte, reply byte) []byte {
-	data := make([]byte, 496)
-	writeArray495(data[0:495], randomData)
-	data[495] = reply
-	return data
+	return data.SerializeResponseRecord(hash, randomData, reply)
 }
 
 // VerifyResponseRecordHash verifies the SHA-256 hash in a serialized
@@ -166,17 +151,10 @@ func buildResponseRecordHashInput(randomData *[495]byte, reply byte) []byte {
 //
 // Returns an error if the hash does not match, which means the record was
 // tampered with or corrupted in transit.
+//
+// Deprecated: use [data.VerifyResponseRecordHash].
 func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) error {
-	flog("VerifyResponseRecordHash", logger.Fields{"reply_code": reply}).Debug("Verifying response record hash")
-	data := buildResponseRecordHashInput(&randomData, reply)
-
-	expectedHash := types.SHA256(data)
-
-	if subtle.ConstantTimeCompare(hash[:], expectedHash[:]) != 1 {
-		return oops.Errorf("hash verification failed")
-	}
-
-	return nil
+	return data.VerifyResponseRecordHash(hash, randomData, reply)
 }
 
 // CreateBuildResponseRecordRaw creates a valid response record with proper hash.
@@ -186,9 +164,10 @@ func VerifyResponseRecordHash(hash [32]byte, randomData [495]byte, reply byte) e
 //   - randomData: 495 bytes of random data (should be cryptographically random)
 //
 // Returns the SHA-256 hash that should be placed in the first 32 bytes of the record.
+//
+// Deprecated: use [data.CreateBuildResponseRecordRaw].
 func CreateBuildResponseRecordRaw(reply byte, randomData [495]byte) [32]byte {
-	flog("CreateBuildResponseRecordRaw", logger.Fields{"reply_code": reply}).Debug("Creating build response record hash")
-	return types.SHA256(buildResponseRecordHashInput(&randomData, reply))
+	return data.CreateBuildResponseRecordRaw(reply, randomData)
 }
 
 // newChaCha20Poly1305 creates a ChaCha20-Poly1305 AEAD cipher and derives the

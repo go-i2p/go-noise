@@ -14,12 +14,6 @@ func readArray32(dst *[32]byte, src []byte) {
 	copy(dst[:], src[:32])
 }
 
-// writeArray495 serializes a fixed 495-byte value into dst.
-// Caller must ensure len(dst) >= 495.
-func writeArray495(dst []byte, src *[495]byte) {
-	copy(dst[:495], src[:])
-}
-
 // writePrefix16FromArray32 serializes the first 16 bytes of a 32-byte value.
 // Caller must ensure len(dst) >= 16.
 func writePrefix16FromArray32(dst []byte, src [32]byte) {

@@ -7,11 +7,17 @@ import (
 	"github.com/samber/oops"
 )
 
-// sessionKeys holds the cryptographic keys derived from ECIES key exchange.
+// sessionKeys holds the keys derived from the Noise handshake chain key.
+// chainKey is the final Noise handshake chain key (input to split).
+// kAB and kBA are the directional keys from the spec split() operation:
+//
+//	keydata = HKDF(chainKey, ZEROLEN, "", 64)
+//	k_ab = keydata[0:32]  (initiator → responder)
+//	k_ba = keydata[32:64] (responder → initiator)
 type sessionKeys struct {
-	rootKey [32]byte
-	symKey  [32]byte
-	tagKey  [32]byte
+	chainKey [32]byte
+	kAB      [32]byte
+	kBA      [32]byte
 }
 
 const (

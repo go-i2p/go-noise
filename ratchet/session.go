@@ -99,25 +99,49 @@ type Session struct {
 }
 
 // createSession initializes a new Session with ratchet state from derived keys.
-// The isInitiator flag determines key direction: the initiator's send ratchets
-// use "initiator" direction keys and its receive ratchets use "responder" direction
-// keys (and vice versa for the responder).
+// The isInitiator flag determines key direction: the initiator sends on k_ab
+// and receives on k_ba; the responder sends on k_ba and receives on k_ab.
+//
+// Spec ref: ratchet.md §"Data Phase" — after split() produces k_ab and k_ba,
+// each direction gets its own DH_INITIALIZE + TagAndKeyGenKeys:
+//
+//	tagset_ab = DH_INITIALIZE(chainKey, k_ab)
+//	tagset_ba = DH_INITIALIZE(chainKey, k_ba)
 func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]byte, isInitiator bool) (*Session, error) {
 	flog("createSession", logger.Fields{"is_initiator": isInitiator}).Debug("Creating new ratchet session")
-	sendRootKey, recvRootKey, err := deriveDirectionalKeys(keys.rootKey, isInitiator)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive directional root keys")
-	}
-	sendTagKey, recvTagKey, err := deriveDirectionalKeys(keys.tagKey, isInitiator)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive directional tag keys")
+
+	// Select directional keys based on role.
+	var sendK, recvK [32]byte
+	if isInitiator {
+		sendK = keys.kAB // initiator → responder
+		recvK = keys.kBA // responder → initiator
+	} else {
+		sendK = keys.kBA // responder → initiator
+		recvK = keys.kAB // initiator → responder
 	}
 
-	dhRatchet := ratchet.NewDHRatchet(keys.rootKey, ourPrivateKey, remotePubKey)
-	symRatchet := ratchet.NewSymmetricRatchet(sendRootKey)
-	tagRatchet := ratchet.NewTagRatchet(sendTagKey)
-	recvSymRatchet := ratchet.NewSymmetricRatchet(recvRootKey)
-	recvTagRatchet := ratchet.NewTagRatchet(recvTagKey)
+	// Derive per-direction tag sets (DH_INITIALIZE + TagAndKeyGenKeys).
+	sendRootKey, sendTagCK, sendSymCK, err := deriveDirectionalTagSet(keys.chainKey, sendK)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to derive send-direction tag set")
+	}
+	// The recv-direction nextRootKey is not stored: the DHRatchet holds a single
+	// rootKey (send direction). The recv tag/sym chain keys below are still
+	// derived from the recv-direction DH_INITIALIZE output, so the initial recv
+	// tag set is correct; only advancing the recv root key on a DH step is not
+	// supported by the current single-rootKey DHRatchet (documented P0 #3 gap).
+	_, recvTagCK, recvSymCK, err := deriveDirectionalTagSet(keys.chainKey, recvK)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to derive recv-direction tag set")
+	}
+
+	// The DH ratchet uses the send-direction root key (single rootKey design;
+	// see P0 #3 gap note — spec has per-direction nextRootKey).
+	dhRatchet := ratchet.NewDHRatchet(sendRootKey, ourPrivateKey, remotePubKey)
+	symRatchet := ratchet.NewSymmetricRatchet(sendSymCK)
+	tagRatchet := ratchet.NewTagRatchet(sendTagCK)
+	recvSymRatchet := ratchet.NewSymmetricRatchet(recvSymCK)
+	recvTagRatchet := ratchet.NewTagRatchet(recvTagCK)
 
 	return &Session{
 		RemotePublicKey:      remotePubKey,

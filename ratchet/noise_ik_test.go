@@ -357,9 +357,9 @@ func TestWriteReadNoiseIKMessage1_Roundtrip(t *testing.T) {
 		"Responder should recover initiator's static public key")
 
 	// Both sides should derive the same session keys
-	assert.Equal(t, iKeys.rootKey, result.keys.rootKey, "Root keys should match")
-	assert.Equal(t, iKeys.symKey, result.keys.symKey, "Symmetric keys should match")
-	assert.Equal(t, iKeys.tagKey, result.keys.tagKey, "Tag keys should match")
+	assert.Equal(t, iKeys.chainKey, result.keys.chainKey, "Chain keys should match")
+	assert.Equal(t, iKeys.kAB, result.keys.kAB, "kAB should match")
+	assert.Equal(t, iKeys.kBA, result.keys.kBA, "kBA should match")
 }
 
 func TestWriteReadNoiseIKMessage1_EmptyPayload(t *testing.T) {
@@ -507,9 +507,9 @@ func TestWriteReadNoiseIKMessage1Unbound_Roundtrip(t *testing.T) {
 	assert.NotNil(t, result.keys, "Receiver should derive session keys from unbound handshake")
 
 	// Both sides derive session keys from the same chaining key; verify they match.
-	assert.Equal(t, wKeys.rootKey, result.keys.rootKey, "Root keys should match across unbound session")
-	assert.Equal(t, wKeys.symKey, result.keys.symKey, "Symmetric keys should match")
-	assert.Equal(t, wKeys.tagKey, result.keys.tagKey, "Tag keys should match")
+	assert.Equal(t, wKeys.chainKey, result.keys.chainKey, "Chain keys should match across unbound session")
+	assert.Equal(t, wKeys.kAB, result.keys.kAB, "kAB should match")
+	assert.Equal(t, wKeys.kBA, result.keys.kBA, "kBA should match")
 }
 
 // TestWriteReadNoiseIKMessage1Unbound_EmptyPayload verifies behaviour with an

@@ -15,41 +15,64 @@ func zero32(k *[32]byte) {
 	}
 }
 
-// deriveDirectionalKeys derives distinct send and receive keys from a base key
-// using HKDF with the spec-compliant "KDFDHRatchetStep" info string.
-// Produces 64 bytes split into two 32-byte directional keys (a→b and b→a).
-// The initiator sends on keys[0] and receives on keys[1]; the responder
-// reverses this to maintain symmetric key agreement.
-// Returns an error if key derivation fails.
-// Spec ref: ratchet.md §"DH INITIALIZATION KDF".
-func deriveDirectionalKeys(baseKey [32]byte, isInitiator bool) (sendKey, recvKey [32]byte, err error) {
-	flog("deriveDirectionalKeys", logger.Fields{"is_initiator": isInitiator}).Debug("deriving send/recv keys")
-	kd := kdf.NewKeyDerivation(baseKey)
-
-	keys, err := kd.DeriveKeys([]byte(hkdfInfoDHRatchetStep), 2)
+// deriveDirectionalTagSet performs the full per-direction DH_INITIALIZE
+// followed by TagAndKeyGenKeys, producing the root key, session tag chain key,
+// and symmetric key chain key for one direction.
+//
+// Spec ref: ratchet.md §"DH Ratchet KDF" + §"Tag and Key Generation" —
+//
+//	// DH_INITIALIZE(rootKey, k):
+//	keydata = HKDF(rootKey, k, "KDFDHRatchetStep", 64)
+//	nextRootKey = keydata[0:32]
+//	ck = keydata[32:64]
+//
+//	// TagAndKeyGenKeys(ck):
+//	keydata2 = HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64)
+//	sessTag_ck = keydata2[0:32]
+//	symmKey_ck = keydata2[32:64]
+func deriveDirectionalTagSet(rootKey [32]byte, k [32]byte) (nextRootKey, sessTagCK, symmKeyCK [32]byte, err error) {
+	// Step 1: DH_INITIALIZE(rootKey, k)
+	nextRootKey, ck, err := ratchet.DH_INITIALIZEFull(rootKey, k)
 	if err != nil {
-		return [32]byte{}, [32]byte{}, oops.Wrapf(err, "failed to derive directional keys via KDFDHRatchetStep")
+		return [32]byte{}, [32]byte{}, [32]byte{}, oops.Wrapf(err, "DH_INITIALIZE failed")
 	}
 
-	if isInitiator {
-		return keys[0], keys[1], nil
+	// Step 2: TagAndKeyGenKeys(ck)
+	sessTagCK, symmKeyCK, err = deriveTagAndSymKeysFromChainKey(ck)
+	if err != nil {
+		return [32]byte{}, [32]byte{}, [32]byte{}, oops.Wrapf(err, "TagAndKeyGenKeys failed")
 	}
-	return keys[1], keys[0], nil
+
+	return nextRootKey, sessTagCK, symmKeyCK, nil
 }
 
-// deriveSessionKeysFromSecret derives root, symmetric, and tag keys from a shared secret.
-// The intermediate arr copy is zeroed before returning to prevent key material lingering on the stack.
-func deriveSessionKeysFromSecret(sharedSecret []byte) (*sessionKeys, error) {
-	flog("deriveSessionKeysFromSecret", logger.Fields{"secret_len": len(sharedSecret)}).Debug("deriving root/sym/tag keys from shared secret")
+// deriveSessionKeysFromSecret performs the spec's split() operation on the
+// final Noise handshake chain key, producing the directional keys k_ab and k_ba.
+//
+// Spec ref: ratchet.md §"Data Phase" —
+//
+//	keydata = HKDF(chainKey, ZEROLEN, "", 64)
+//	k_ab = keydata[0:32]  (initiator → responder)
+//	k_ba = keydata[32:64] (responder → initiator)
+//
+// The intermediate arr copy is zeroed before returning to prevent key material
+// lingering on the stack.
+func deriveSessionKeysFromSecret(chainKey []byte) (*sessionKeys, error) {
+	flog("deriveSessionKeysFromSecret", logger.Fields{"secret_len": len(chainKey)}).Debug("deriving directional keys via split()")
 	var arr [32]byte
 	defer func() { zero32(&arr) }() // Zero intermediate key material
-	copy(arr[:], sharedSecret)
-	kd := kdf.NewKeyDerivation(arr)
-	rootKey, symKey, tagKey, err := kd.DeriveSessionKeys()
+	copy(arr[:], chainKey)
+
+	keydata, err := kdf.StandardHKDF(arr[:], nil, []byte(""), 64)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to derive session keys")
+		return nil, oops.Wrapf(err, "failed to derive session keys via split()")
 	}
-	return &sessionKeys{rootKey: rootKey, symKey: symKey, tagKey: tagKey}, nil
+
+	var kAB, kBA [32]byte
+	copy(kAB[:], keydata[0:32])
+	copy(kBA[:], keydata[32:64])
+
+	return &sessionKeys{chainKey: arr, kAB: kAB, kBA: kBA}, nil
 }
 
 // parseExistingSessionMessage parses an Existing Session message (without session tag prefix).
@@ -155,36 +178,23 @@ func generateAndTrackSessionTag(session *Session) ([8]byte, error) {
 }
 
 // deriveTagAndSymKeysFromChainKey derives session tag and symmetric key chain keys
-// from a chain key using HKDF with the spec-compliant "TagAndKeyGenKeys" info string.
-// Returns (sessTag_ck, symmKey_ck) per the DH INITIALIZATION KDF:
+// from a chain key using RFC 5869 HKDF with the "TagAndKeyGenKeys" info string.
 //
 //	keydata = HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64)
-//	sessTag_ck = keydata[0:31], symmKey_ck = keydata[32:63]
-//
-// Note: the byte ranges above use the I2P spec's inclusive notation, so each
-// key is a full 32 bytes: sessTag_ck = keydata bytes 0..31, symmKey_ck =
-// keydata bytes 32..63. The implementation derives the two 32-byte keys via the
-// KDF library (DeriveKeys(..., 2)).
+//	sessTag_ck = keydata[0:32]
+//	symmKey_ck = keydata[32:64]
 //
 // Spec ref: ratchet.md §"DH INITIALIZATION KDF".
 func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte, err error) {
 	flog("deriveTagAndSymKeysFromChainKey").Debug("deriving tag and symmetric keys via TagAndKeyGenKeys")
-	kd := kdf.NewKeyDerivation(chainKey)
-	keys, err := kd.DeriveKeys([]byte(hkdfInfoTagAndKeyGenKeys), 2)
+	keydata, err := kdf.StandardHKDF(chainKey[:], nil, []byte(hkdfInfoTagAndKeyGenKeys), 64)
 	if err != nil {
 		return [32]byte{}, [32]byte{}, oops.Wrapf(err, "failed to derive tag and symmetric keys via TagAndKeyGenKeys")
 	}
-	return keys[0], keys[1], nil
+	copy(tagKey[:], keydata[0:32])
+	copy(symKey[:], keydata[32:64])
+	return tagKey, symKey, nil
 }
-
-// performDHRatchetStep performs a Diffie-Hellman ratchet step for forward secrecy.
-// After obtaining the new chain key from the DH ratchet, it derives the session tag
-// and symmetric key chain keys using HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64)
-// per the spec's DH INITIALIZATION KDF.
-// On success, a NextKey block is queued for inclusion in the next outgoing message
-// and session.sendKeyID is incremented to the new tag-set ID.
-// Spec ref: ratchet.md §"Key and Tag Set IDs" — tag set ID is incremented when a
-// new forward key is issued; maximum is MaxKeyID (32767).
 
 // applyRatchetKeysInternal performs a DH ratchet step and applies derived keys
 // to the session's receiving or sending ratchet state based on isReceiving.

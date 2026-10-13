@@ -53,19 +53,16 @@ func randomKeyPair32(t testing.TB) (pubKey, privKey [32]byte) {
 }
 
 // randomSessionKeysForTest generates a sessionKeys struct with all fields
-// randomised. If fillSymKey is true, symKey is also filled (needed for
-// createSession's full initialisation path).
-func randomSessionKeysForTest(t testing.TB, fillSymKey bool) *sessionKeys {
+// randomised.
+func randomSessionKeysForTest(t testing.TB, _ bool) *sessionKeys {
 	t.Helper()
 	keys := &sessionKeys{}
-	_, err := rand.Read(keys.rootKey[:])
+	_, err := rand.Read(keys.chainKey[:])
 	require.NoError(t, err)
-	_, err = rand.Read(keys.tagKey[:])
+	_, err = rand.Read(keys.kAB[:])
 	require.NoError(t, err)
-	if fillSymKey {
-		_, err = rand.Read(keys.symKey[:])
-		require.NoError(t, err)
-	}
+	_, err = rand.Read(keys.kBA[:])
+	require.NoError(t, err)
 	return keys
 }
 
@@ -327,42 +324,60 @@ func randomBaseKey(t *testing.T) [32]byte {
 	return key
 }
 
-func TestDeriveDirectionalKeys(t *testing.T) {
+func TestDeriveDirectionalTagSet(t *testing.T) {
 	t.Run("Distinct", func(t *testing.T) {
-		baseKey := randomBaseKey(t)
-		sendKey, recvKey, err := deriveDirectionalKeys(baseKey, true)
+		chainKey := randomBaseKey(t)
+		kAB := randomBaseKey(t)
+		kBA := randomBaseKey(t)
+		_, sendTagCK, sendSymCK, err := deriveDirectionalTagSet(chainKey, kAB)
 		require.NoError(t, err)
-		assert.NotEqual(t, sendKey, recvKey, "Send and receive keys must differ")
+		_, recvTagCK, recvSymCK, err := deriveDirectionalTagSet(chainKey, kBA)
+		require.NoError(t, err)
+		assert.NotEqual(t, sendTagCK, recvTagCK, "Send and receive tag chain keys must differ")
+		assert.NotEqual(t, sendSymCK, recvSymCK, "Send and receive symmetric chain keys must differ")
 	})
 
 	t.Run("Symmetry", func(t *testing.T) {
-		baseKey := randomBaseKey(t)
-		initSend, initRecv, err := deriveDirectionalKeys(baseKey, true)
+		chainKey := randomBaseKey(t)
+		kAB := randomBaseKey(t)
+		kBA := randomBaseKey(t)
+		// Initiator: send=a→b (kAB), recv=b→a (kBA)
+		_, initSendTag, initSendSym, err := deriveDirectionalTagSet(chainKey, kAB)
 		require.NoError(t, err)
-		respSend, respRecv, err := deriveDirectionalKeys(baseKey, false)
+		_, initRecvTag, initRecvSym, err := deriveDirectionalTagSet(chainKey, kBA)
 		require.NoError(t, err)
-		assert.Equal(t, initSend, respRecv, "Initiator send == Responder receive")
-		assert.Equal(t, initRecv, respSend, "Initiator receive == Responder send")
+		// Responder: send=b→a (kBA), recv=a→b (kAB)
+		_, respSendTag, respSendSym, err := deriveDirectionalTagSet(chainKey, kBA)
+		require.NoError(t, err)
+		_, respRecvTag, respRecvSym, err := deriveDirectionalTagSet(chainKey, kAB)
+		require.NoError(t, err)
+		assert.Equal(t, initSendTag, respRecvTag, "Initiator send tag == Responder recv tag")
+		assert.Equal(t, initSendSym, respRecvSym, "Initiator send sym == Responder recv sym")
+		assert.Equal(t, initRecvTag, respSendTag, "Initiator recv tag == Responder send tag")
+		assert.Equal(t, initRecvSym, respSendSym, "Initiator recv sym == Responder send sym")
 	})
 
 	t.Run("Deterministic", func(t *testing.T) {
-		baseKey := randomBaseKey(t)
-		s1, r1, err := deriveDirectionalKeys(baseKey, true)
+		chainKey := randomBaseKey(t)
+		kAB := randomBaseKey(t)
+		r1, t1, s1, err := deriveDirectionalTagSet(chainKey, kAB)
 		require.NoError(t, err)
-		s2, r2, err := deriveDirectionalKeys(baseKey, true)
+		r2, t2, s2, err := deriveDirectionalTagSet(chainKey, kAB)
 		require.NoError(t, err)
-		assert.Equal(t, s1, s2, "Same key should produce same send key")
-		assert.Equal(t, r1, r2, "Same key should produce same recv key")
+		assert.Equal(t, r1, r2, "Same inputs should produce same root key")
+		assert.Equal(t, t1, t2, "Same inputs should produce same tag chain key")
+		assert.Equal(t, s1, s2, "Same inputs should produce same symmetric chain key")
 	})
 
 	t.Run("DifferentBaseKeys", func(t *testing.T) {
-		key1 := randomBaseKey(t)
-		key2 := randomBaseKey(t)
-		s1, _, err := deriveDirectionalKeys(key1, true)
+		chainKey1 := randomBaseKey(t)
+		chainKey2 := randomBaseKey(t)
+		kAB := randomBaseKey(t)
+		_, t1, _, err := deriveDirectionalTagSet(chainKey1, kAB)
 		require.NoError(t, err)
-		s2, _, err := deriveDirectionalKeys(key2, true)
+		_, t2, _, err := deriveDirectionalTagSet(chainKey2, kAB)
 		require.NoError(t, err)
-		assert.NotEqual(t, s1, s2, "Different base keys should produce different results")
+		assert.NotEqual(t, t1, t2, "Different chain keys should produce different results")
 	})
 }
 

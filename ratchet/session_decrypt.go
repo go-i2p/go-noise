@@ -330,17 +330,23 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 		recvKey = nsrKeys.keyAB // B receives from A
 	}
 
-	// Zero the NSR keys immediately after copying to prevent recovery from
-	// memory dumps. The ratchet's forward secrecy guarantees rely on securely
-	// destroying keys after use.
+	// Copy the chain key before zeroing the directional keys. The chain key is
+	// the input to DH_INITIALIZE for each direction.
+	chainKey := nsrKeys.chainKey
+
+	// Zero the NSR directional keys immediately after copying to prevent
+	// recovery from memory dumps. The ratchet's forward secrecy guarantees
+	// rely on securely destroying keys after use.
 	zero32(&nsrKeys.keyAB)
 	zero32(&nsrKeys.keyBA)
 
-	sendTagKey, sendSymKey, err := deriveTagAndSymKeysFromChainKey(sendKey)
+	// Each direction gets its own DH_INITIALIZE(chainKey, k) + TagAndKeyGenKeys.
+	// Spec ref: ratchet.md §"Data Phase" — tagset_ab/ba = DH_INITIALIZE(chainKey, k_ab/k_ba).
+	_, sendTagKey, sendSymKey, err := deriveDirectionalTagSet(chainKey, sendKey)
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive NSR send-direction ratchet keys")
 	}
-	recvTagKey, recvSymKey, err := deriveTagAndSymKeysFromChainKey(recvKey)
+	_, recvTagKey, recvSymKey, err := deriveDirectionalTagSet(chainKey, recvKey)
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive NSR recv-direction ratchet keys")
 	}
