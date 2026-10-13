@@ -6,6 +6,7 @@ import (
 	"github.com/go-i2p/crypto/chacha20poly1305"
 	"github.com/go-i2p/crypto/ratchet"
 	"github.com/go-i2p/crypto/types"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -337,8 +338,8 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 	// Zero the NSR directional keys immediately after copying to prevent
 	// recovery from memory dumps. The ratchet's forward secrecy guarantees
 	// rely on securely destroying keys after use.
-	zero32(&nsrKeys.keyAB)
-	zero32(&nsrKeys.keyBA)
+	securemem.SecureZero(nsrKeys.keyAB[:])
+	securemem.SecureZero(nsrKeys.keyBA[:])
 
 	// Each direction gets its own DH_INITIALIZE(chainKey, k) + TagAndKeyGenKeys.
 	// Spec ref: ratchet.md §"Data Phase" — tagset_ab/ba = DH_INITIALIZE(chainKey, k_ab/k_ba).

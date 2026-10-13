@@ -55,10 +55,6 @@ const (
 	recvWindowSize = 128
 )
 
-// zero32 overwrites a 32-byte key with zeros. This should be called before
-// discarding any cryptographic key material to prevent recovery from memory
-// dumps or core files. The ratchet's forward secrecy guarantees rely on
-// securely destroying keys after use.
 func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) {
 	nextKeyBlocks := session.GetPendingNextKeys()
 	ackBlocks := session.GetPendingAcks()

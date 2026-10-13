@@ -4,16 +4,11 @@ import (
 	"github.com/go-i2p/crypto/chacha20poly1305"
 	"github.com/go-i2p/crypto/kdf"
 	"github.com/go-i2p/crypto/ratchet"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
 )
-
-func zero32(k *[32]byte) {
-	for i := range k {
-		k[i] = 0
-	}
-}
 
 // deriveDirectionalTagSet performs the full per-direction DH_INITIALIZE
 // followed by TagAndKeyGenKeys, producing the root key, session tag chain key,
@@ -60,7 +55,7 @@ func deriveDirectionalTagSet(rootKey [32]byte, k [32]byte) (nextRootKey, sessTag
 func deriveSessionKeysFromSecret(chainKey []byte) (*sessionKeys, error) {
 	flog("deriveSessionKeysFromSecret", logger.Fields{"secret_len": len(chainKey)}).Debug("deriving directional keys via split()")
 	var arr [32]byte
-	defer func() { zero32(&arr) }() // Zero intermediate key material
+	defer securemem.SecureZero(arr[:]) // Zero intermediate key material
 	copy(arr[:], chainKey)
 
 	keydata, err := kdf.StandardHKDF(arr[:], nil, []byte(""), 64)
@@ -94,7 +89,7 @@ func parseExistingSessionMessage(msg []byte) (ciphertext []byte, tag [16]byte, e
 // The nonce is counter-based: [0,0,0,0 || LE64(messageNumber)] per the spec.
 // The messageKey is zeroed before returning to prevent key material lingering in memory.
 func encryptWithSessionKey(messageKey [32]byte, plaintext []byte, sessionTag [8]byte, messageNumber uint32) (ciphertext []byte, tag [16]byte, err error) {
-	defer func() { zero32(&messageKey) }() // Zero message key after use
+	defer securemem.SecureZero(messageKey[:]) // Zero message key after use
 
 	flog("encryptWithSessionKey", logger.Fields{"plaintext_len": len(plaintext), "message_number": messageNumber}).Debug("encrypting with session key")
 	aead, nonce, err := setupAEADWithNonce(messageKey, messageNumber)
@@ -114,7 +109,7 @@ func encryptWithSessionKey(messageKey [32]byte, plaintext []byte, sessionTag [8]
 // The nonce is derived from the message number: [0,0,0,0 || LE64(messageNumber)].
 // The messageKey is zeroed before returning to prevent key material lingering in memory.
 func decryptWithSessionTag(messageKey [32]byte, ciphertext []byte, tag [16]byte, sessionTag [8]byte, messageNumber uint32) ([]byte, error) {
-	defer func() { zero32(&messageKey) }() // Zero message key after use
+	defer securemem.SecureZero(messageKey[:]) // Zero message key after use
 
 	flog("decryptWithSessionTag", logger.Fields{"ciphertext_len": len(ciphertext), "message_number": messageNumber}).Debug("decrypting with session tag")
 	aead, nonce, err := setupAEADWithNonce(messageKey, messageNumber)

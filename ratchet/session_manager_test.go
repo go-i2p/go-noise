@@ -10,6 +10,7 @@ import (
 	"github.com/go-i2p/crypto/ecies"
 	"github.com/go-i2p/crypto/rand"
 	"github.com/go-i2p/crypto/types"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -968,8 +969,8 @@ func TestPerPeerQuotaZeroHashGuard(t *testing.T) {
 // TestKeyZeroization verifies that cryptographic key material is securely
 // zeroized before being discarded.
 func TestKeyZeroization(t *testing.T) {
-	t.Run("zero32 helper", func(t *testing.T) {
-		// Test the zero32 helper function directly
+	t.Run("secure zeroing", func(t *testing.T) {
+		// Test the secure zeroing helper directly
 		var key [32]byte
 		for i := range key {
 			key[i] = byte(i)
@@ -977,7 +978,7 @@ func TestKeyZeroization(t *testing.T) {
 		// Copy original for comparison
 		original := key
 
-		zero32(&key)
+		securemem.SecureZero(key[:])
 
 		// Verify all bytes are zero
 		for i, b := range key {
