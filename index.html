@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 568 commits
+        📝 584 commits
          • 📜 License
       </div>
     </div>
@@ -23,8 +23,6 @@
       
       
         <div class="nav-section-title">Documentation:</div>
-        
-          <li><a href="docs/ANYWAY_MY_POINT.html">ANYWAY MY POINT</a></li>
         
           <li><a href="docs/ratchet/ratchet.html">ECIES-X25519-AEAD-Ratchet</a></li>
         
@@ -46,11 +44,9 @@
         
           <li><a href="docs/examples/modifiers/DOC.html">modifiers</a></li>
         
-          <li><a href="docs/DOC.html">noise</a></li>
+          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
         
           <li><a href="docs/ntcp2/DOC.html">ntcp2</a></li>
-        
-          <li><a href="docs/examples/ntcp2/DOC.html">ntcp2</a></li>
         
           <li><a href="docs/examples/ntcp2-config/DOC.html">ntcp2-config</a></li>
         
@@ -79,17 +75,17 @@
   <div class="main-content">
     <header class="repo-header">
       <h1>go-i2p/go-noise</h1>
-      <div class="repo-description">A wrapper library around the flynn/noise package that provides `net.Conn`, `net.Listener`, and `net.Addr` interfaces for the Noise Protocol Framewo...</div>
+      <div class="repo-description">A wrapper library around the [go-i2p/noise](https://github.com/go-i2p/noise) package that provides `net.Conn`, `net.Listener`, and `net.Addr` inter...</div>
       
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>568 commits</span>
+          <span>📝</span> <span>584 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: October 8, 2026</span>
+          <span>📅</span> <span>Last updated: October 13, 2026</span>
         </div>
         
         
@@ -107,7 +103,7 @@
         <div class="readme-content">
           <h1 id="go-noise">go-noise</h1>
 
-<p>A wrapper library around the flynn/noise package that provides <code>net.Conn</code>, <code>net.Listener</code>, and <code>net.Addr</code> interfaces for the Noise Protocol Framework. Designed for implementing I2P&rsquo;s NTCP2 and SSU2 transport protocols with extensible handshake modification capabilities.</p>
+<p>A wrapper library around the <a href="https://github.com/go-i2p/noise" target="_blank">go-i2p/noise</a> package that provides <code>net.Conn</code>, <code>net.Listener</code>, and <code>net.Addr</code> interfaces for the Noise Protocol Framework. Designed for implementing I2P&rsquo;s NTCP2 and SSU2 transport protocols with extensible handshake modification capabilities.</p>
 
 <h2 id="notes-on-scope">Notes on scope</h2>
 
@@ -321,7 +317,7 @@ detection (<code>ReplayCache</code>), and KDF utilities.</p>
 
 <pre><code>NoiseConn (net.Conn)
 ├── Config (pattern, keys, timeouts)
-├── HandshakeState (flynn/noise)
+├── HandshakeState (go-i2p/noise)
 ├── CipherState (post-handshake encryption)
 ├── NoiseAddr (net.Addr with pattern info)
 └── Underlying net.Conn (TCP, UDP, etc.)
@@ -330,9 +326,9 @@ detection (<code>ReplayCache</code>), and KDF utilities.</p>
 <h2 id="dependencies">Dependencies</h2>
 
 <ul>
-<li><strong>flynn/noise</strong> v1.1.0: Core Noise Protocol implementation</li>
+<li><strong>go-i2p/noise</strong>: Core Noise Protocol implementation</li>
 <li><strong>go-i2p/logger</strong>: Structured logging support</li>
-<li><strong>samber/oops</strong> v1.19.0: Rich error context</li>
+<li><strong>samber/oops</strong>: Rich error context</li>
 </ul>
 
 <h2 id="logging">Logging</h2>
@@ -393,9 +389,10 @@ DEBUG_I2P=debug go test ./...
 
 # With warn-fail mode (warnings become fatal)
 # Note: WARNFAIL_I2P=true exercises warn-level paths in production code,
-# but many intentional warn-path tests will fail (see AUDIT.md L-2).
-# For full test suite: use DEBUG_I2P=debug without WARNFAIL_I2P.
-# For CI validation of production warnings: use WARNFAIL_I2P on production code paths only.
+# but many intentional warn-path tests will fail because they deliberately
+# trigger warnings. For the full test suite, use DEBUG_I2P=debug without
+# WARNFAIL_I2P. For CI validation of production warnings, run WARNFAIL_I2P
+# only on the production-path subset below.
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 
 # Production-path test subset for CI (WARNFAIL_I2P compatible):
@@ -490,7 +487,7 @@ WARNFAIL_I2P=true go test -count=1 \
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                568 commits
+                584 commits
               </div>
             </div>
           </div>
@@ -502,7 +499,7 @@ WARNFAIL_I2P=true go test -count=1 \
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-10-13 07:30:12 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-10-13 14:05:37 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
