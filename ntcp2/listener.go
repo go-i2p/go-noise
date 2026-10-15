@@ -23,8 +23,16 @@ type Listener struct {
 	// underlying is the raw TCP listener
 	underlying net.Listener
 
-	// config contains the NTCP2-specific configuration
-	config *Config
+	// config contains the NTCP2-specific configuration. Stored atomically
+	// because Accept() and the handshake workers read it concurrently with
+	// identity updates (UpdateIdentity); a plain pointer would be a data race.
+	//
+	// Deliberately holds the caller's pointer rather than a Clone(): callers
+	// populate identity material on this config after the listener exists, and
+	// createResponderConnConfig clones per Accept so new handshakes observe
+	// updates. Callers that must change identity after construction use
+	// UpdateIdentity, which republishes atomically.
+	config atomic.Pointer[Config]
 
 	// addr is the NTCP2 address for this listener
 	addr *Addr
@@ -94,10 +102,10 @@ func createNTCP2Address(underlying net.Listener, config *Config) (*Addr, error) 
 func initializeListener(underlying net.Listener, config *Config, ntcp2Addr *Addr) *Listener {
 	nl := &Listener{
 		underlying: underlying,
-		config:     config,
 		addr:       ntcp2Addr,
 		logger:     log,
 	}
+	nl.config.Store(config)
 
 	nl.logger.Info("NTCP2 listener created",
 		"pattern", config.Pattern,
@@ -115,7 +123,7 @@ func initializeListener(underlying net.Listener, config *Config, ntcp2Addr *Addr
 func (nl *Listener) createResponderConnConfig() (*noise.ConnConfig, *Config, error) {
 	// Clone the listener's config to get an independent per-connection config.
 	// Clone() avoids copying the atomic.Pointer and is resilient to new fields.
-	responderCfg := nl.config.Clone()
+	responderCfg := nl.config.Load().Clone()
 	responderCfg.Initiator = false
 	connConfig, err := responderCfg.ToConnConfig()
 	if err != nil {
@@ -148,8 +156,8 @@ func (nl *Listener) createRemoteNTCP2Addr(noiseConn *noise.NoiseConn) (*Addr, er
 		// directly into the Hash field. data.NewHashFromSlice stores the
 		// 32-byte key verbatim which is not SHA-256(RouterIdentity).
 		remoteHash = data.HashData(remoteRouterHash[:32])
-	} else if nl.config.RemoteRouterHash != nil {
-		remoteHash = *nl.config.RemoteRouterHash
+	} else if cfg := nl.config.Load(); cfg != nil && cfg.RemoteRouterHash != nil {
+		remoteHash = *cfg.RemoteRouterHash
 	}
 	// else remoteHash stays zero value
 
@@ -303,11 +311,6 @@ func (nl *Listener) Close() error {
 		return nil // Already closed
 	}
 
-	// Close the replay detector to stop any background cleanup goroutines.
-	if nl.config != nil && nl.config.ReplayDetector != nil {
-		nl.config.ReplayDetector.Close()
-	}
-
 	err := nl.underlying.Close()
 	if err != nil {
 		nl.logger.Error("error closing underlying listener",
@@ -331,6 +334,55 @@ func (nl *Listener) Close() error {
 // TCP listener's address.
 func (nl *Listener) Addr() net.Addr {
 	return nl.addr
+}
+
+// Underlying returns the raw TCP listener this NTCP2 listener wraps. Exposed so
+// callers can assert that an identity update did not replace the socket.
+func (nl *Listener) Underlying() net.Listener {
+	return nl.underlying
+}
+
+// Config returns the configuration used for new inbound handshakes.
+func (nl *Listener) Config() *Config {
+	return nl.config.Load()
+}
+
+// UpdateIdentity replaces the configuration used for new inbound handshakes
+// without touching the socket or any established session.
+//
+// An NTCP2 responder's identity is consumed per connection, not per socket:
+// createResponderConnConfig clones the current config on every Accept, and
+// attachLocalRouterInfo reads the transport's RouterInfo when building message
+// 3. Updating the config in place is therefore enough for subsequent handshakes
+// to use a new RouterInfo, and it preserves the live listener that recreating
+// it would destroy. Rebinding the socket instead can never succeed: the old
+// listener must stay open for the swap to be atomic, and a second bind to the
+// same port fails with EADDRINUSE.
+//
+// The listener stores the caller's pointer, mirroring NewNTCP2Listener, so a
+// caller that keeps mutating cfg continues to be observed. Use this method
+// rather than mutating after the listener has started if you need the update
+// published atomically together with the address hash.
+func (nl *Listener) UpdateIdentity(cfg *Config) error {
+	if cfg == nil {
+		return oops.
+			Code("INVALID_CONFIG").
+			In("ntcp2_listener").
+			Errorf("identity config cannot be nil")
+	}
+	if err := cfg.Validate(); err != nil {
+		return oops.
+			Code("INVALID_CONFIG").
+			In("ntcp2_listener").
+			Wrapf(err, "refusing to apply invalid identity config")
+	}
+
+	// The listener address carries the responder router hash and is guarded by
+	// Addr's own RWMutex, so readers never observe a torn value.
+	nl.addr.SetRouterHash(cfg.BobRouterHash)
+
+	nl.config.Store(cfg)
+	return nil
 }
 
 // isClosed returns true if the listener has been closed.

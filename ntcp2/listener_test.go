@@ -223,7 +223,9 @@ func TestNTCP2Listener_AcceptToConnConfigError(t *testing.T) {
 
 	// Corrupt the config's pattern so ToConnConfig() will fail during Accept.
 	// The listener clones config on each accept, so we corrupt the source.
-	ntcp2Ln.config.Pattern = "" // empty pattern → invalid
+	// The listener holds this same pointer (see NewNTCP2Listener), so mutating
+	// it through the listener's view is what the test relies on.
+	ntcp2Ln.config.Load().Pattern = "" // empty pattern → invalid
 
 	// Dial to unblock Accept
 	go func() {

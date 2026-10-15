@@ -23,7 +23,7 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 	if err != nil {
 		return oops.Wrapf(err, "failed to build inbound header protector")
 	}
-	l.introHeaderProtector = hp
+	l.introHeaderProtector.Store(hp)
 	return nil
 }
 
@@ -52,10 +52,10 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	}
 
 	// Try intro-key (new sessions)
-	if l.introHeaderProtector != nil {
+	if hp := l.introHeaderProtector.Load(); hp != nil {
 		decrypted := make([]byte, len(data))
 		copy(decrypted, data)
-		if err := l.introHeaderProtector.DecryptHeader(decrypted); err == nil {
+		if err := hp.DecryptHeader(decrypted); err == nil {
 			packet = &SSU2Packet{}
 			if err := packet.Deserialize(decrypted); err == nil {
 				return packet, true

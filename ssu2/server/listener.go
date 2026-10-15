@@ -45,8 +45,12 @@ type SSU2Listener struct {
 	// underlying is the UDP socket for receiving packets
 	underlying net.PacketConn
 
-	// config holds listener configuration
-	config *SSU2Config
+	// config holds listener configuration. Stored atomically because the
+	// receiveLoop and session workers read it concurrently with identity
+	// updates (UpdateIdentity); a plain pointer would be a data race.
+	// Sessions receive their own Clone(), so an in-flight handshake is never
+	// affected by a later update.
+	config atomic.Pointer[SSU2Config]
 
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
@@ -104,7 +108,9 @@ type SSU2Listener struct {
 	// The listener attempts header-protection decryption for incoming packets
 	// that fail plaintext deserialization, enabling interop with
 	// spec-compliant SSU2 peers (i2pd / Java I2P).
-	introHeaderProtector *HeaderProtector
+	// Stored atomically because it is derived from config.IntroKey and is
+	// rebuilt by UpdateIdentity while the packet workers read it.
+	introHeaderProtector atomic.Pointer[HeaderProtector]
 
 	// pendingOutbound tracks outbound sessions awaiting their
 	// SessionCreated/Retry replies over the listener's socket. During
@@ -198,7 +204,6 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 
 	l := &SSU2Listener{
 		underlying:         underlying,
-		config:             config,
 		addr:               addr,
 		pendingByInitiator: make(map[string]*SSU2Conn),
 		tokenCache:         newTokenCacheFromConfig(config),
@@ -217,6 +222,18 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 	if _, err := rand.Read(l.retrySourceConnID[:]); err != nil {
 		return nil, oops.Wrapf(err, "failed to generate retry source connection ID")
 	}
+
+	// Publish the config before any reader can start (Start() has not run yet).
+	//
+	// Deliberately stores the caller's pointer rather than a Clone(). go-i2p's
+	// SSU2 transport populates ObfuscationIV and IntroKey on this config AFTER
+	// the listener is constructed and started (persistent_config.go), and the
+	// per-session config copy in buildConnConfig relies on seeing them through
+	// the shared pointer. Cloning here would freeze those fields at their
+	// construction values and silently disable ChaCha obfuscation for inbound
+	// sessions. Callers that need to change identity material after start must
+	// use UpdateIdentity, which republishes atomically.
+	l.config.Store(config)
 
 	// Create packet router with session creation callback
 	l.router = NewPacketRouter(l.handleNewSession)
@@ -402,7 +419,7 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 	flog("handleNewSession", logger.Fields{"remote_addr": remoteAddr.String()}).Debug("handleNewSession: creating new session for incoming handshake")
 
 	// Validate source address (reject reserved ports, loopback unless allowed, etc.)
-	if err := validateListenAddress(remoteAddr, l.config); err != nil {
+	if err := validateListenAddress(remoteAddr, l.config.Load()); err != nil {
 		return nil, oops.
 			Code("INVALID_SOURCE_ADDRESS").
 			In("ssu2_listener").
@@ -515,7 +532,7 @@ func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *n
 		return nil, 0, oops.Errorf("connection ID collision: source and destination IDs are identical (%d)", connID)
 	}
 
-	conn, err := NewSSU2Conn(l.underlying, remoteAddr, connConfig, false, l.config.StaticKey, nil)
+	conn, err := NewSSU2Conn(l.underlying, remoteAddr, connConfig, false, l.config.Load().StaticKey, nil)
 	if err != nil {
 		return nil, 0, oops.Wrapf(err, "failed to create SSU2 connection")
 	}
@@ -572,7 +589,8 @@ func (l *SSU2Listener) handleSessionRequestToken(packet *SSU2Packet, remoteAddr 
 // An invalid/expired token is only fatal when RequireRetry=true.
 
 func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
-	if errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
+	cfg := l.config.Load()
+	if errors.Is(err, errNoTokenPresent) && cfg.RequireRetry {
 		if retryErr := l.processTokenRequest(packet, remoteAddr); retryErr != nil {
 			return oops.Wrapf(retryErr, "failed to send Retry")
 		}
@@ -582,7 +600,7 @@ func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Pac
 			Errorf("sent Retry to %s, awaiting re-request with token", remoteAddr)
 	}
 
-	if !errors.Is(err, errNoTokenPresent) && l.config.RequireRetry {
+	if !errors.Is(err, errNoTokenPresent) && cfg.RequireRetry {
 		return oops.
 			Code("TOKEN_VALIDATION_FAILED").
 			In("ssu2_listener").
@@ -642,7 +660,7 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 		routerHash = data.NewHash(sha256.Sum256(packet.EphemeralKey))
 	}
 
-	connConfig := *l.config
+	connConfig := *l.config.Load()
 	connConfig.ConnectionID = connID
 	connConfig.RouterHash = routerHash
 	connConfig.Initiator = false
@@ -662,7 +680,7 @@ func (l *SSU2Listener) checkPendingCapacity() (int, error) {
 	l.sessionMutex.RUnlock()
 
 	const defaultMaxPendingByInitiator = 2000
-	maxPendingByInitiator := l.config.MaxSessions * 2
+	maxPendingByInitiator := l.config.Load().MaxSessions * 2
 	if maxPendingByInitiator <= 0 {
 		maxPendingByInitiator = defaultMaxPendingByInitiator
 	}
@@ -711,7 +729,7 @@ func (l *SSU2Listener) registerInRouter(conn *SSU2Conn, connID uint64, dedupKey 
 		// Race lost: another worker registered for this initiator first.
 		return existing, nil
 	}
-	if err := l.router.AddSessionIfBelowCap(conn, l.config.MaxSessions); err != nil {
+	if err := l.router.AddSessionIfBelowCap(conn, l.config.Load().MaxSessions); err != nil {
 		return nil, oops.Wrapf(err, "failed to register session in router")
 	}
 	registered.Store(true)
@@ -879,13 +897,14 @@ func (l *SSU2Listener) validateSessionRequestToken(packet *SSU2Packet, remoteAdd
 	// the token to be valid for up to MaxClockSkew seconds past the expiration
 	// timestamp. This prevents legitimate tokens from being rejected due to clock drift.
 	now := time.Now().Unix()
-	expirationWithSkew := int64(newToken.Expiration) + int64(l.config.MaxClockSkew.Seconds())
+	cfg := l.config.Load()
+	expirationWithSkew := int64(newToken.Expiration) + int64(cfg.MaxClockSkew.Seconds())
 	if now > expirationWithSkew {
 		return oops.
 			Code("TOKEN_EXPIRED").
 			In("ssu2_listener").
 			With("expiration", newToken.Expiration).
-			With("max_clock_skew", l.config.MaxClockSkew.Seconds()).
+			With("max_clock_skew", cfg.MaxClockSkew.Seconds()).
 			Errorf("token has expired")
 	}
 
@@ -931,7 +950,7 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	// per-sighting state is smaller than a Token struct and lives in an
 	// independent bounded map so exhausting first-sight cannot evict
 	// real tokens.
-	if l.config.FirstSightRequired && !l.firstSight.ObserveAndAllow(addrKey) {
+	if l.config.Load().FirstSightRequired && !l.firstSight.ObserveAndAllow(addrKey) {
 		flog("processTokenRequest", logger.Fields{"remote_addr": addrKey}).Debug("declining token issuance: first-sight only, peer must retry")
 		return oops.
 			Code("NO_TOKEN_ISSUED").
@@ -1016,7 +1035,73 @@ func (l *SSU2Listener) Underlying() net.PacketConn {
 
 // Config returns the SSU2Config used by this listener.
 func (l *SSU2Listener) Config() *SSU2Config {
-	return l.config
+	return l.config.Load()
+}
+
+// UpdateIdentity replaces the configuration used for new inbound sessions,
+// without touching the socket or the sessions already established.
+//
+// An SSU2 responder's identity is consumed per session, not per socket:
+// handleNewSession reads StaticKey when creating each session and
+// buildConnConfig copies the whole config per SessionRequest. Updating the
+// config in place is therefore sufficient to make subsequent handshakes use a
+// new RouterInfo, and it preserves the live session table that recreating the
+// listener would destroy. Rebinding the socket instead cannot work at all,
+// because the old socket must stay open for the swap to be atomic and a second
+// bind to the same port fails with EADDRINUSE.
+//
+// Like NewSSU2Listener, this stores the caller's pointer rather than a copy, so
+// the caller must finish mutating cfg before publishing it (or call
+// UpdateIdentity again afterwards). go-i2p's transport populates IntroKey and
+// ObfuscationIV on this config after the listener starts, and the per-session
+// copy in buildConnConfig depends on observing that through the shared pointer;
+// a defensive copy here would freeze those fields and silently disable ChaCha
+// obfuscation for inbound sessions.
+//
+// Derived state is rebuilt before the new config is published, so a packet
+// arriving mid-update is decrypted with the new intro key while sessions are
+// still created under the old static key for at most one handshake — the peer
+// retransmits and converges. The reverse order would drop new-key SessionRequests.
+func (l *SSU2Listener) UpdateIdentity(cfg *SSU2Config) error {
+	if cfg == nil {
+		return oops.
+			Code("INVALID_CONFIG").
+			In("ssu2_listener").
+			Errorf("identity config cannot be nil")
+	}
+	if err := cfg.Validate(); err != nil {
+		return oops.
+			Code("INVALID_CONFIG").
+			In("ssu2_listener").
+			Wrapf(err, "refusing to apply invalid identity config")
+	}
+
+	l.closeMutex.Lock()
+	if l.closed {
+		l.closeMutex.Unlock()
+		return oops.
+			Code("LISTENER_CLOSED").
+			In("ssu2_listener").
+			Errorf("listener is closed")
+	}
+	l.closeMutex.Unlock()
+
+	// Rebuild the intro-key protector first (see ordering note above). The
+	// protector is derived solely from IntroKey, so an update that clears it
+	// must clear the field too rather than leave a stale protector decrypting
+	// with a retired key.
+	if len(cfg.IntroKey) != 32 {
+		l.introHeaderProtector.Store(nil)
+	} else if err := l.initHeaderProtection(cfg); err != nil {
+		return oops.Wrapf(err, "failed to rebuild inbound header protection")
+	}
+
+	// The listener address carries the router hash; it is already guarded by
+	// SSU2Addr's own RWMutex.
+	l.addr.UpdateRouterHash(cfg.RouterHash)
+
+	l.config.Store(cfg)
+	return nil
 }
 
 // TokenCache returns the token cache used by this listener.

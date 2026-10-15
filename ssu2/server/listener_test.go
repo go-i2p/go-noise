@@ -277,7 +277,7 @@ func TestSSU2Listener_HandleIncomingPacket(t *testing.T) {
 		listener, err := NewSSU2Listener(pc, config)
 		require.NoError(t, err)
 		defer listener.Close()
-		require.NotNil(t, listener.introHeaderProtector, "expected protector to be initialized")
+		require.NotNil(t, listener.introHeaderProtector.Load(), "expected protector to be initialized")
 
 		// Build a valid long-header TokenRequest with a deterministic body.
 		header := make([]byte, 32)
