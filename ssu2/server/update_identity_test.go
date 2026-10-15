@@ -95,8 +95,13 @@ func TestUpdateIdentity_RebuildsIntroKeyProtector(t *testing.T) {
 
 // TestUpdateIdentity_ConcurrentWithPacketProcessing is the regression test for
 // the data race that made identity updates unsafe: receiveLoop and the packet
-// workers read the listener config while an update publishes a new one. Run
-// under -race, this fails if config or introHeaderProtector is a plain field.
+// workers read the listener config while an update publishes a new one. Under
+// -race this fails if config or introHeaderProtector is a plain field.
+//
+// Worker goroutines never call require.*: t.FailNow is only valid on the test
+// goroutine, so assertions from a worker would abort it nondeterministically.
+// Configs are pre-built on the test goroutine because createValidConfig itself
+// uses require.
 func TestUpdateIdentity_ConcurrentWithPacketProcessing(t *testing.T) {
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -114,53 +119,58 @@ func TestUpdateIdentity_ConcurrentWithPacketProcessing(t *testing.T) {
 	require.NoError(t, err)
 	defer peer.Close()
 
+	const rounds = 200
+	nextConfigs := make([]*SSU2Config, rounds)
+	for i := range nextConfigs {
+		next := createValidConfig(t)
+		if i%2 == 0 {
+			// Alternate intro key on/off so both the protector rebuild and the
+			// protector clear paths race with readers.
+			ik := make([]byte, 32)
+			for j := range ik {
+				ik[j] = byte(j + i)
+			}
+			next.IntroKey = ik
+		}
+		// Validate here so a rejected config fails the test with a clear
+		// message instead of surfacing from inside a worker goroutine.
+		require.NoError(t, next.Validate())
+		nextConfigs[i] = next
+	}
+
+	payloads := [][]byte{make([]byte, 4), {}, make([]byte, 79), make([]byte, 200)}
+
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
-	// Drive the receive path: oversized, truncated and empty datagrams all
-	// reach the config/protector reads in parseInboundPacket and the
-	// SessionRequest path.
+	// Drive the receive path into parseInboundPacket and the SessionRequest
+	// handler, which are the read side of the race.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		payloads := [][]byte{
-			make([]byte, 4),
-			{},
-			make([]byte, 79),
-			make([]byte, 200),
-		}
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
 				return
 			default:
 			}
-			_, _ = peer.Write(payloads[i%len(payloads)])
-		}
-	}()
-
-	// Update identity concurrently, alternating intro key on and off so both
-	// the protector rebuild and the protector clear paths race with readers.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for round := 0; round < 200; round++ {
-			next := createValidConfig(t)
-			if round%2 == 0 {
-				ik := make([]byte, 32)
-				for i := range ik {
-					ik[i] = byte(i + round)
-				}
-				next.IntroKey = ik
-			}
-			if err := listener.UpdateIdentity(next); err != nil {
-				t.Errorf("UpdateIdentity round %d: %v", round, err)
+			if _, werr := peer.Write(payloads[i%len(payloads)]); werr != nil {
 				return
 			}
 		}
 	}()
 
-	// Reader that observes the same state the handshake path uses.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			if uerr := listener.UpdateIdentity(nextConfigs[i]); uerr != nil {
+				t.Errorf("UpdateIdentity round %d: %v", i, uerr)
+				return
+			}
+		}
+	}()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -170,9 +180,16 @@ func TestUpdateIdentity_ConcurrentWithPacketProcessing(t *testing.T) {
 				return
 			default:
 			}
+			// Read the same fields the handshake path reads (handleNewSession
+			// takes StaticKey, buildConnConfig copies the whole struct), so a
+			// non-atomic publisher races here exactly as it would there.
 			c := listener.Config()
-			require.NotNil(t, c)
+			if c == nil {
+				t.Error("Config() returned nil during updates")
+				return
+			}
 			_ = c.MaxSessions
+			_ = len(c.StaticKey)
 			_ = listener.Addr().(*SSU2Addr).RouterHash()
 		}
 	}()
@@ -181,7 +198,7 @@ func TestUpdateIdentity_ConcurrentWithPacketProcessing(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	assert.NotNil(t, listener.Config(), "config must remain readable after updates")
+	require.NotNil(t, listener.Config(), "config must remain readable after updates")
 }
 
 // TestUpdateIdentity_DoesNotRebindSocket is the invariant the whole design

@@ -74,6 +74,11 @@ func TestNTCP2UpdateIdentity_DoesNotRebindSocket(t *testing.T) {
 // data race that made identity updates unsafe: createResponderConnConfig clones
 // the config on every Accept while an update publishes a new one. Under -race
 // this fails if config is a plain field.
+//
+// Nothing here calls require.* from a worker goroutine: t.FailNow is only
+// valid on the test goroutine, and calling it elsewhere aborts the goroutine
+// nondeterministically. Workers report through t.Errorf and the assertions run
+// on the test goroutine.
 func TestNTCP2UpdateIdentity_ConcurrentWithAccept(t *testing.T) {
 	config := newTestResponderConfigNoAES(t)
 	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
@@ -82,43 +87,61 @@ func TestNTCP2UpdateIdentity_ConcurrentWithAccept(t *testing.T) {
 
 	ntcp2Ln, err := NewNTCP2Listener(tcpLn, config)
 	require.NoError(t, err)
-	defer ntcp2Ln.Close()
 
-	stop := make(chan struct{})
+	// Pre-build the update configs on the test goroutine so the worker only
+	// publishes them.
+	const rounds = 200
+	nextConfigs := make([]*Config, rounds)
+	for i := range nextConfigs {
+		next := newAltResponderConfig(t)
+		// Validate on the test goroutine so a rejected config fails clearly
+		// rather than surfacing from a worker.
+		require.NoError(t, next.Validate())
+		nextConfigs[i] = next
+	}
+
+	stopDial := make(chan struct{})
 	var wg sync.WaitGroup
 
-	// Drive Accept: each call clones the listener config, which is the read
-	// side of the race.
+	// Accept until the listener is closed. Accept() blocks, so it cannot poll
+	// stopDial; closing the listener is what ends it.
+	acceptErr := make(chan error, 1)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for {
-			select {
-			case <-stop:
+			conn, aerr := ntcp2Ln.Accept()
+			if aerr != nil {
+				acceptErr <- aerr
 				return
-			default:
-			}
-			conn, dialErr := net.DialTimeout("tcp", tcpLn.Addr().String(), 500*time.Millisecond)
-			if dialErr != nil {
-				return
-			}
-			accepted, acceptErr := ntcp2Ln.Accept()
-			if acceptErr == nil {
-				_ = accepted.Close()
 			}
 			_ = conn.Close()
 		}
 	}()
 
-	// Update identity concurrently.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for round := 0; round < 300; round++ {
-			next := newAltResponderConfig(t)
-			next.Pattern = "XK"
-			if err := ntcp2Ln.UpdateIdentity(next); err != nil {
-				t.Errorf("UpdateIdentity round %d: %v", round, err)
+		for {
+			select {
+			case <-stopDial:
+				return
+			default:
+			}
+			conn, derr := net.DialTimeout("tcp", tcpLn.Addr().String(), 500*time.Millisecond)
+			if derr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			if uerr := ntcp2Ln.UpdateIdentity(nextConfigs[i]); uerr != nil {
+				t.Errorf("UpdateIdentity round %d: %v", i, uerr)
 				return
 			}
 		}
@@ -129,20 +152,34 @@ func TestNTCP2UpdateIdentity_ConcurrentWithAccept(t *testing.T) {
 		defer wg.Done()
 		for {
 			select {
-			case <-stop:
+			case <-stopDial:
 				return
 			default:
 			}
-			c := ntcp2Ln.Config()
-			require.NotNil(t, c)
-			_ = c.Pattern
+			if c := ntcp2Ln.Config(); c == nil {
+				t.Error("Config() returned nil during updates")
+				return
+			}
 			_ = ntcp2Ln.Addr().(*Addr).RouterHash()
 		}
 	}()
 
-	time.Sleep(200 * time.Millisecond)
-	close(stop)
+	time.Sleep(250 * time.Millisecond)
+	close(stopDial)
+
+	// Closing the listener is what unblocks Accept.
+	closeErr := ntcp2Ln.Close()
 	wg.Wait()
+
+	require.NoError(t, closeErr, "closing the listener must succeed")
+	select {
+	case aerr := <-acceptErr:
+		// Accept must fail because the listener was closed, never because a
+		// race corrupted the responder config.
+		assert.Error(t, aerr)
+	default:
+		t.Error("accept goroutine did not report completion")
+	}
 
 	assert.NotNil(t, ntcp2Ln.Config(), "config must remain readable after updates")
 }
