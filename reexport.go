@@ -129,6 +129,11 @@ type Shutdowner = shutdown.Shutdowner
 //   - StateHandshaking: the Noise handshake is in progress.
 //   - StateEstablished: the handshake finished and data can flow.
 //   - StateClosed: the connection is closed.
+//
+// These four are the only states a conn.Conn (root NoiseConn) can be in.
+// The shared conn.ConnState type (mod.ConnState) defines a fifth value,
+// StateClosing (a transient graceful-teardown state), but it is used only by
+// SSU2, which re-exports it as ssu2.StateClosing; conn.Conn never sets it.
 const (
 	StateInit        = conn.StateInit
 	StateHandshaking = conn.StateHandshaking
@@ -178,9 +183,13 @@ func NewShutdownManager(timeout time.Duration) *ShutdownManager {
 }
 
 // ValidateHandshakePattern reports whether pattern is a known Noise
-// handshake pattern name. It accepts both short names (such as "XK") and
-// full protocol names (such as
-// "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256").
+// handshake pattern name. It accepts short names (such as "XK") and the
+// standard full protocol names built from those short names with a plain
+// cipher suite (such as "Noise_XK_25519_ChaChaPoly_SHA256" or
+// "Noise_XK_25519_AESGCM_SHA256"). It does NOT accept the I2P transport
+// protocol names with handshake modifiers (such as
+// "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256"); those are set via
+// ConnConfig.ProtocolName, which bypasses pattern parsing.
 func ValidateHandshakePattern(pattern string) error {
 	return conn.ValidateHandshakePattern(pattern)
 }

@@ -34,13 +34,15 @@ var (
 )
 
 // initiatorHandlers maps pattern names to their initiator handshake implementations.
-// Each handler is a closure over one of the six template functions in pattern_templates.go.
-// Built by init() to reduce redundancy across the three pattern type categories.
+// Each handler closes over the shared performPatternTemplate helper, selecting
+// the message-count template from patternTemplateSteps.
+// Built by the package-level initializer buildInitiatorHandlers().
 var initiatorHandlers = buildInitiatorHandlers()
 
 // responderHandlers maps pattern names to their responder handshake implementations.
-// Each handler is a closure over one of the six template functions in pattern_templates.go.
-// Built by init() to reduce redundancy across the three pattern type categories.
+// Each handler closes over the shared performPatternTemplate helper, selecting
+// the message-count template from patternTemplateSteps.
+// Built by the package-level initializer buildResponderHandlers().
 var responderHandlers = buildResponderHandlers()
 
 type connPatternMethod func(*Conn, context.Context, string) error

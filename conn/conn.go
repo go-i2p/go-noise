@@ -71,6 +71,9 @@ import (
 
 // maxNoiseMessageSize is the maximum Noise message size per the Noise spec (§12.3).
 // Each message on the wire is preceded by a 2-byte big-endian length prefix.
+// This limit applies to the ciphertext frame (encrypted data plus the 16-byte
+// AEAD tag), so the largest single Write of plaintext is
+// maxNoiseMessageSize - AEAD tag (16) = 65519 bytes.
 const maxNoiseMessageSize = 65535
 
 // Connection state constants for public API
@@ -284,9 +287,11 @@ func (nc *Conn) Read(b []byte) (int, error) {
 
 // Write writes data to the connection.
 // If the handshake is not complete, it will return an error.
-// The maximum size for a single Write call is limited by the Noise Protocol
-// specification to 65535 bytes (per-message limit for the 2-byte length prefix).
-// Attempts to write larger amounts will return an error.
+// The maximum plaintext size for a single Write call is 65519 bytes, not
+// 65535. The Noise per-message limit of 65535 applies to the ciphertext
+// frame (the 2-byte length prefix counts the encrypted data plus the
+// 16-byte AEAD tag), so the plaintext ceiling is 65535 - 16 = 65519.
+// Attempts to write more than 65519 bytes in one call will return an error.
 // For automatic fragmentation of large payloads, use the transport-layer
 // implementations (NTCP2, SSU2) which add application-level framing.
 //

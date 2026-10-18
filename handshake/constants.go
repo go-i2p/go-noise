@@ -7,9 +7,10 @@ package handshake
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 //
 // The numeric values of these constants are part of a stability contract.
-// Downstream packages (for example, ntcp2) rely on the ordering
+// Downstream packages rely on the ordering
 // PhaseInitial < PhaseExchange < PhaseFinal < PhaseData. In particular, guards
-// of the form "phase >= PhaseFinal" are used to match both PhaseFinal and
+// of the form "phase >= PhaseFinal" (ssu2/wire) are used to match both
+// PhaseFinal and PhaseData, while "phase > PhaseFinal" (ntcp2) matches only
 // PhaseData. New phase constants MUST NOT be inserted between PhaseFinal and
 // PhaseData; add them after PhaseData or before PhaseInitial instead.
 type HandshakePhase int
@@ -30,9 +31,9 @@ const (
 	// SSU2).
 	//
 	// Stability: PhaseData MUST stay strictly greater than PhaseFinal. The
-	// ntcp2 package uses "phase >= PhaseFinal" guards that depend on this
-	// ordering. Inserting a new constant between PhaseFinal and PhaseData will
-	// silently break those modifiers.
+	// ssu2 package uses "phase >= PhaseFinal" guards (and ntcp2 uses "phase >
+	// PhaseFinal") that depend on this ordering. Inserting a new constant
+	// between PhaseFinal and PhaseData will silently break those modifiers.
 	PhaseData
 )
 

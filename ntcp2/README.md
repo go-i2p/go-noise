@@ -53,8 +53,11 @@ aeadPadding, err := ntcp2.NewNTCP2PaddingModifier("aead_padding", 0, 32, true)
 // Create with specific padding ratio for traffic analysis resistance
 ratioPadding, err := ntcp2.NewNTCP2PaddingModifierWithRatio("ratio_padding", 4, 64, true, 1.0) // 100% padding
 
-// For testing only (deterministic padding - INSECURE for production)
-testPadding, err := ntcp2.NewNTCP2PaddingModifierForTesting("test_padding", 4, 16, false)
+// For testing only (deterministic padding - INSECURE for production).
+// There is no separate testing constructor; enable deterministic mode on a
+// normal modifier via WithTestMode().
+testPadding, err := ntcp2.NewNTCP2PaddingModifier("test_padding", 4, 16, false)
+testPadding = testPadding.WithTestMode()
 ```
 
 ## Package Responsibilities

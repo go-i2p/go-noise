@@ -51,8 +51,9 @@ type Config struct {
 	// remote peer's router hash.
 	BobRouterHash data.Hash
 
-	// StaticKey is this peer's long-term Curve25519 key (32 bytes).
-	// It is used to sign the handshake and to derive the session keys.
+	// StaticKey is this peer's long-term Curve25519 private key (32 bytes).
+	// It is used in the Noise XK handshake's Diffie-Hellman steps to derive
+	// the session keys and to authenticate this side to the peer.
 	StaticKey []byte
 
 	// RemoteRouterHash is the remote peer's router identity hash.
@@ -75,8 +76,10 @@ type Config struct {
 	EnableAESObfuscation bool
 
 	// ObfuscationIV is the 16-byte initialization vector (IV) for the AES
-	// obfuscation. If nil, it is derived from the router hash, which is
-	// the recommended setup.
+	// obfuscation. Per the NTCP2 spec it must be Bob's IV "as published in
+	// Bob's network database entry" (the "i=" option); there is no valid
+	// fallback. If it is nil when AES obfuscation is enabled, ToConnConfig
+	// fails with MISSING_OBFUSCATION_IV.
 	ObfuscationIV []byte
 
 	// EnableSipHashLength turns on SipHash obfuscation of the two-byte
@@ -287,9 +290,9 @@ func (nc *Config) WithAESObfuscation(enabled bool, customIV []byte) *Config {
 // WithSipHashLength enables or disables SipHash obfuscation of the
 // two-byte frame length field in the data phase.
 //
-// When enabled with custom keys, both k1 and k2 must be provided. If both
-// are zero, the keys are derived from the session keys during the
-// handshake.
+// When enabled, a custom key pair is stored only if at least one of k1 or
+// k2 is non-zero (the other is then stored as given, including 0). If both
+// are zero, the keys are derived from the session keys during the handshake.
 //
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Config) WithSipHashLength(enabled bool, k1, k2 uint64) *Config {
@@ -301,8 +304,12 @@ func (nc *Config) WithSipHashLength(enabled bool, k1, k2 uint64) *Config {
 	return nc
 }
 
-// WithModifiers adds extra handshake modifiers for custom obfuscation.
-// They run in addition to NTCP2's standard modifiers.
+// WithModifiers sets extra handshake modifiers for custom obfuscation,
+// replacing any previously set via this method (it does not accumulate
+// across calls). At ToConnConfig time these custom modifiers are appended
+// after NTCP2's standard modifiers (AES obfuscation, SipHash length,
+// padding), so on the outbound path they run last, and on the inbound path
+// (which applies the chain in reverse) they run first.
 func (nc *Config) WithModifiers(modifiers ...handshake.HandshakeModifier) *Config {
 	// Make defensive copy
 	nc.Modifiers = make([]handshake.HandshakeModifier, len(modifiers))

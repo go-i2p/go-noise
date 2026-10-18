@@ -25,10 +25,10 @@ This package MUST NOT use any of the following libraries.
 
 - **Configurable Noise Patterns**: Support for all standard Noise Protocol patterns  
 - **net.Conn Interface**: 
-  - The core Noise connection wrapper (`conn/conn.go`) implements `net.Conn` fully but is subject to the Noise Protocol specification limit of 65535 bytes per write (from the 2-byte length prefix). For automatic transparent fragmentation of larger payloads, use the transport-layer implementations below.
+  - The core Noise connection wrapper (`conn/conn.go`) implements `net.Conn` fully but is subject to the Noise Protocol specification limit of 65535 bytes per message (from the 2-byte length prefix). That limit applies to the ciphertext frame including the 16-byte AEAD tag, so the largest single `Write` is 65519 bytes of plaintext. For automatic transparent fragmentation of larger payloads, use the transport-layer implementations below.
   - NTCP2 connections (`ntcp2/conn.go`) implement `net.Conn` with `Write` auto-fragmentation for payloads larger than the frame size.
   - SSU2 connections (`ssu2/session/conn.go`) implement `net.Conn` with `Write` auto-fragmentation. 
-  - All implementations: `Read` returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer). A callback-based message path is additionally available via `DataHandler.MessageChan()` — see [SSU2 README](ssu2/README.md) for details.  
+  - Message boundaries differ per implementation: SSU2 `Read` returns one reassembled I2NP message at a time; the core Noise `conn.Conn` and NTCP2 `Read` each return one decrypted Noise/NTCP2 frame (which may contain part of, exactly one, or several I2NP blocks). All implementations buffer any remainder that does not fit the supplied buffer and return it on the next `Read`. A callback-based message path is additionally available via `DataHandler.MessageChan()` — see [SSU2 README](ssu2/README.md) for details.
 - **Error Handling**: Contextual error information using samber/oops  
 - **Thread-Safe**: Concurrent connection handling with synchronization - Read/Write operations can be called concurrently, Close() is idempotent, and state access is atomic  
 - **Memory Management**: Structured buffer management  
@@ -48,16 +48,35 @@ package main
 
 import (
     "context"
+    "crypto/ecdh"
+    "crypto/rand"
     "fmt"
     "net"
     "time"
     
-    "github.com/go-i2p/go-noise"
+    noise "github.com/go-i2p/go-noise"
 )
 
+// generateKey returns a 32-byte X25519 private key.
+func generateKey() ([]byte, error) {
+    key, err := ecdh.X25519().GenerateKey(rand.Reader)
+    if err != nil {
+        return nil, err
+    }
+    return key.Bytes(), nil
+}
+
 func main() {
+    // XX requires a long-term (static) private key on BOTH sides. Generate or
+    // load a 32-byte Curve25519 key; the handshake fails without it.
+    staticKey, err := generateKey()
+    if err != nil {
+        panic(err)
+    }
+
     // Create configuration for XX pattern
     config := noise.NewConnConfig("XX", true).
+        WithStaticKey(staticKey).
         WithHandshakeTimeout(10 * time.Second).
         WithReadTimeout(5 * time.Second)
     
@@ -96,6 +115,12 @@ func main() {
     fmt.Printf("Received: %s\n", buffer[:n])
 }
 ```
+
+> **Note:** The `XX` pattern authenticates both peers with static keys, so each
+> side must call `WithStaticKey(...)` with its own 32-byte Curve25519 private
+> key before `Handshake`. If you want a no-authentication example, use the `NN`
+> pattern instead (which needs no keys but provides no identity — not for
+> production).
 
 ## Configuration
 
@@ -211,9 +236,9 @@ This library uses [`go-i2p/logger`](https://github.com/go-i2p/logger) for struct
 | Variable | Values | Description |
 |---|---|---|
 | `DEBUG_I2P` | `debug`, `warn`, `error` | Sets log level. Unset = no output. |
-| `WARNFAIL_I2P` | `true` | Promotes warnings to fatal errors (useful for CI). |
+| `WARNFAIL_I2P` | any non-empty value | Promotes warnings to fatal errors (useful for CI). Only read when `DEBUG_I2P` is also set, so `WARNFAIL_I2P` has no effect on its own; the value is not compared to `true` — any non-empty string arms it. |
 
-Each package has a dedicated `log.go` file that initializes a package-level logger:
+Most packages have a dedicated `log.go` file that initializes a package-level logger:
 
 ```go
 var log = logger.GetGoI2PLogger()
@@ -234,7 +259,7 @@ log.WithFields(logger.Fields{
 }).WithError(err).Error("Handshake failed")
 ```
 
-Available `pkg` values: `noise`, `handshake`, `internal`, `replaycache`, `ntcp2`, `pool`, `ratchet`, `ssu2`.
+Values used in the `pkg` field include: `noise`, `conn`, `handshake`, `handshake/siphash`, `ntcp2`, `ratchet`, `replaycache`, `mod`, `mod/validation`, `validation`, `ssu2`, `config`, `session`, `server`, `wire`, `reliability`, `internal/cryptorand`, and `internal/securemem`.
 
 ### Running Tests with Logging
 
@@ -254,8 +279,10 @@ DEBUG_I2P=debug go test ./...
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 
 # Production-path test subset for CI (WARNFAIL_I2P compatible):
-# These packages contain only production-path tests that should not trigger warnings:
-WARNFAIL_I2P=true go test -count=1 \
+# These packages contain only production-path tests that should not trigger warnings.
+# DEBUG_I2P must be set: go-i2p/logger only reads WARNFAIL_I2P when DEBUG_I2P is
+# non-empty, so WARNFAIL_I2P on its own is a no-op.
+WARNFAIL_I2P=true DEBUG_I2P=debug go test -count=1 \
   ./conn \
   ./internal/securemem \
   ./mod/... \
@@ -288,7 +315,7 @@ Current test coverage includes unit and integration tests for core functionality
 The test suite is organized into two levels:
 
 - **Per-package tests** (`*_test.go` files): Unit and integration tests live alongside their source code. Each package includes focused tests for its own functionality.
-  - `conn_test.go`, `handshake_test.go`, etc. test their respective packages in isolation
+  - `conn/conn_test.go`, `conn/config_test.go`, `transport_test.go`, etc. test their respective packages in isolation
   - Some packages include integration tests (e.g., `conn/integration_test.go`, `ntcp2/e2e_integration_test.go`) for testing cross-package interaction
 
 - **`tests/` directory**: Cross-package and performance tests that depend on multiple modules:

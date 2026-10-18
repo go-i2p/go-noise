@@ -8,9 +8,12 @@
 // net.Listener (TCP, UDP-over-TCP, etc.) and returns encrypted Noise
 // connections, without caring how the underlying bytes travel.
 //
-// The protocol-specific listeners (ntcp2.NTCP2Listener and ssu2.SSU2Listener)
-// build on top of this package, so the retry, connection-limiting, and
-// shutdown behavior described here applies to them too.
+// The protocol-specific listeners are implemented independently of this
+// package: ntcp2.Listener wraps a raw net.Listener with its own accept logic,
+// and ssu2/server.SSU2Listener is a UDP packet router. The retry,
+// connection-limiting, and shutdown behavior described here applies to the
+// listener type in this package (and to the root noise.NoiseListener, which
+// re-exports it), not to the NTCP2 or SSU2 listeners.
 //
 // # Transient error retry
 //

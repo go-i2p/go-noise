@@ -89,7 +89,13 @@ func (nc *Conn) PeerStatic() []byte {
 // See [Noise Protocol Framework](https://noiseprotocol.org/noise.html) for details.
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 //
-// Returns nil if the handshake has not been initiated.
+// The handshake state is created with the connection, so this returns the
+// running transcript hash h at whatever point the handshake has reached, not
+// only after completion. Before the handshake starts, that value is the
+// zero-padded protocol name (per Noise InitializeSymmetric, see Noise spec
+// §5.1), which is not a usable channel-binding value. Do not use a non-nil
+// result here as a "handshake complete" test; check
+// GetConnectionState() == StateEstablished instead.
 func (nc *Conn) ChannelBinding() []byte {
 	return getHandshakeStateAttr(
 		nc,

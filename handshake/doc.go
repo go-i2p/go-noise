@@ -48,7 +48,7 @@
 //
 // # Example
 //
-//	xor := handshake.NewXORModifier("xor", key)
+//	xor, _ := handshake.NewXORModifier("xor", key)
 //	pad, _ := handshake.NewGenericPaddingModifier("pad", 16, 64)
 //	chain := handshake.NewModifierChain("my-chain", xor, pad)
 //

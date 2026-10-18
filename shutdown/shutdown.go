@@ -27,7 +27,7 @@ type Shutdowner interface {
 }
 
 // ShutdownConn is implemented by any connection that can be managed by ShutdownManager.
-// *NoiseConn satisfies this interface, as do *ntcp2.NTCP2Conn and *ssu2.SSU2Conn.
+// *NoiseConn satisfies this interface, as do *ntcp2.Conn and *ssu2.SSU2Conn.
 type ShutdownConn interface {
 	io.Closer
 	LocalAddr() net.Addr
@@ -35,7 +35,7 @@ type ShutdownConn interface {
 }
 
 // ShutdownListener is implemented by any listener that can be managed by ShutdownManager.
-// *NoiseListener satisfies this interface, as do *ntcp2.NTCP2Listener and *ssu2.SSU2Listener.
+// *NoiseListener satisfies this interface, as do *ntcp2.Listener and *ssu2.SSU2Listener.
 type ShutdownListener interface {
 	io.Closer
 	Addr() net.Addr
@@ -100,7 +100,7 @@ func NewShutdownManager(timeout time.Duration) *ShutdownManager {
 // RegisterConnection adds a connection to be managed during shutdown.
 // The connection will be gracefully closed during shutdown.
 // conn may be any type satisfying ShutdownConn, including *NoiseConn,
-// *ntcp2.NTCP2Conn, and *ssu2.SSU2Conn.
+// *ntcp2.Conn, and *ssu2.SSU2Conn.
 func (sm *ShutdownManager) RegisterConnection(conn ShutdownConn) {
 	sm.registerConnection(conn, true)
 }
@@ -162,7 +162,7 @@ func (sm *ShutdownManager) UnregisterConnection(conn ShutdownConn) {
 // RegisterListener adds a listener to be managed during shutdown.
 // The listener will be gracefully closed during shutdown.
 // listener may be any type satisfying ShutdownListener, including *NoiseListener,
-// *ntcp2.NTCP2Listener, and *ssu2.SSU2Listener.
+// *ntcp2.Listener, and *ssu2.SSU2Listener.
 func (sm *ShutdownManager) RegisterListener(listener ShutdownListener) {
 	sm.registerListener(listener, true)
 }

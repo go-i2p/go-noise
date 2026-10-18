@@ -62,8 +62,13 @@ type SSU2Config struct {
 	// Default: true (recommended for production)
 	EnableChaChaObfuscation bool
 
-	// ObfuscationIV is the 8-byte IV for ChaCha20 obfuscation
-	// If nil, will be derived from router hash (recommended)
+	// ObfuscationIV is the 8-byte IV for ChaCha20 obfuscation.
+	//
+	// Note: this field is currently only length-validated; it is not consumed
+	// when building the SSU2 ChaCha20 ephemeral-key obfuscation modifier. Per
+	// the SSU2 spec, that obfuscation uses Bob's intro key as the ChaCha20 key
+	// with counter position n=1 (no separate IV), so set IntroKey /
+	// RemoteIntroKey instead. See createChaChaModifierIfEnabled.
 	ObfuscationIV []byte
 
 	// MTU is the Maximum Transmission Unit for UDP packets
