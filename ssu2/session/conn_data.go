@@ -115,7 +115,8 @@ func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 }
 
 // validatePeerRouterInfo validates the peer's RouterInfo against the Noise-authenticated
-// static key per SSU2 spec §Session Confirmed (C-2).
+// static key per ssu2.rst "Session Confirmed": "Bob must verify that Alice's
+// static key received in the first frame matches the static key in the Router Info."
 func (h *SSU2Conn) validatePeerRouterInfo() error {
 	peerKey := h.handshakeHandler.GetRemoteStaticKey()
 	if len(peerKey) != 32 {
@@ -138,7 +139,10 @@ func (h *SSU2Conn) validatePeerRouterInfo() error {
 }
 
 // deriveRekeyKey derives a new cipher key from the current cipher state
-// using HKDF per SSU2 spec §NextNonce: newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+// using HKDF: newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+// The ssu2.rst "NextNonce" section is marked "TODO only if we rotate keys" with the
+// block contents "TBD", so the label and derivation follow the i2pd reference
+// implementation rather than the spec text.
 func deriveRekeyKey(cs *noise.CipherState) ([32]byte, error) {
 	key := cs.UnsafeKey()
 	deriver := i2phkdf.NewHKDF()

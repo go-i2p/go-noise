@@ -93,7 +93,7 @@ func (nc *Conn) PeerStatic() []byte {
 // running transcript hash h at whatever point the handshake has reached, not
 // only after completion. Before the handshake starts, that value is the
 // zero-padded protocol name (per Noise InitializeSymmetric, see Noise spec
-// §5.1), which is not a usable channel-binding value. Do not use a non-nil
+// §5.2 "The SymmetricState object"), which is not a usable channel-binding value. Do not use a non-nil
 // result here as a "handshake complete" test; check
 // GetConnectionState() == StateEstablished instead.
 func (nc *Conn) ChannelBinding() []byte {

@@ -407,7 +407,7 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 	if h.localOptions != nil {
 		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, h.localOptions.Serialize()))
 	} else {
-		// Default 12-byte Options block per spec §Options Block.
+		// Default 12-byte Options block per ssu2.rst "Options" (Block Specifications).
 		optData := make([]byte, 12)
 		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, optData))
 	}
@@ -474,7 +474,7 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 		return nil, oops.Wrapf(err, "failed to serialize handshake blocks")
 	}
 
-	// Build the 32-byte long header per SSU2 spec §LongHeader:
+	// Build the 32-byte long header per ssu2.rst "Packet Header":
 	// dest_conn_id(0-7), pkt_num(8-11), type(12), ver(13), id(14),
 	// flag(15), src_conn_id(16-23), token(24-31).
 	header := make([]byte, 32)

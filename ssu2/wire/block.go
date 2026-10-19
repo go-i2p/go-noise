@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 
 	"github.com/go-i2p/logger"
@@ -244,7 +245,7 @@ func (b *SSU2Block) GetData() []byte {
 }
 
 // enforceBlockOrder reorders blocks so that Padding (254) is last and
-// Termination (6) is second-to-last, per spec §Blocks.
+// Termination (6) is second-to-last, per ssu2.rst "Block Ordering Rules".
 // Returns a new slice; the original is not modified.
 func enforceBlockOrder(blocks []*SSU2Block) []*SSU2Block {
 	flog("enforceBlockOrder", logger.Fields{"blockCount": len(blocks)}).Debug("enforceBlockOrder: reordering blocks per spec")
@@ -272,9 +273,53 @@ func enforceBlockOrder(blocks []*SSU2Block) []*SSU2Block {
 	return normal
 }
 
+// PadPayloadToMin appends a Padding block so a serialized plaintext payload
+// reaches MinPayloadSize, the floor ssu2.rst places on every message: "The
+// minimum payload size is 8 bytes. This requirement will be met by any ACK,
+// I2NP, First Fragment, or Follow-on Fragment block. If the requirement is not
+// met, a Padding block must be included."
+//
+// The floor applies to the plaintext blocks, not the encrypted frame: AEAD adds
+// a 16-byte tag, so a ciphertext payload always clears it. Callers must
+// therefore pad before encryption and reject short payloads after decryption.
+//
+// Padding is the last block type permitted by the reordering rules, so
+// appending it here keeps the payload compliant. A payload already at or above
+// the floor is returned unchanged. When the deficit is too small to hold a
+// block header (3 bytes), an empty Padding block is appended, which ssu2.rst
+// explicitly allows ("Size = 0 is allowed").
+func PadPayloadToMin(payload []byte) ([]byte, error) {
+	deficit := MinPayloadSize - len(payload)
+	if deficit <= 0 {
+		return payload, nil
+	}
+
+	dataLen := deficit - minBlockHeaderSize
+	if dataLen < 0 {
+		dataLen = 0
+	}
+
+	pad := make([]byte, dataLen)
+	if dataLen > 0 {
+		if _, err := rand.Read(pad); err != nil {
+			return nil, oops.Wrapf(err, "failed to generate payload padding")
+		}
+	}
+
+	extra, err := SerializeBlocks([]*SSU2Block{NewSSU2Block(BlockTypePadding, pad)})
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to serialize payload padding block")
+	}
+
+	out := make([]byte, 0, len(payload)+len(extra))
+	out = append(out, payload...)
+	out = append(out, extra...)
+	return out, nil
+}
+
 // SerializeBlocks serializes multiple blocks into a single byte slice.
 // This is useful for creating packet payloads that contain multiple blocks.
-// Blocks are automatically reordered per spec §Blocks: Padding (254) is
+// Blocks are automatically reordered per ssu2.rst "Block Ordering Rules": Padding (254) is
 // placed last, and Termination (6) second-to-last.
 //
 // Parameters:

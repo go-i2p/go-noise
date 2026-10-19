@@ -205,7 +205,7 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 		}
 	}
 
-	// MixHash(header) per SSU2 spec §KDF — binds the header into
+	// MixHash(header) per ssu2.rst "KDF for Session Request" — binds the header into
 	// the handshake hash before processing the Noise message.
 	h.handshakeState.MixHash(packet.Header)
 
@@ -220,7 +220,7 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 	}
 
 	// After processing message 1 (→ e, es), derive "SessCreateHeader" from
-	// the intermediate chainKey per SSU2 spec §KDF for Session Request.
+	// the intermediate chainKey per ssu2.rst "KDF for Session Request".
 	h.sessCreateHeaderKey = deriveIntermediateHeaderKey(
 		h.handshakeState.ChainingKey(), "SessCreateHeader",
 	)

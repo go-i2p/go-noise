@@ -13,7 +13,7 @@ import (
 // Write implements net.Conn.Write.
 // Writes data to the connection. If the data exceeds the per-packet payload
 // capacity (determined by MTU), it is automatically split into FirstFragment
-// and FollowOnFragment blocks per SSU2 spec §FirstFragment/§FollowOnFragment.
+// and FollowOnFragment blocks per ssu2.rst "First Fragment"/"Follow-on Fragment".
 //
 // For unfragmented messages, b is sent as-is in a BlockTypeI2NPMessage block.
 // Per the SSU2 spec, block type 3 (I2NP) data must already contain the 9-byte
@@ -377,6 +377,19 @@ func (h *SSU2Conn) encryptDataPayload(packet *SSU2Packet) ([]byte, error) {
 		return nil, nil
 	}
 
+	// ssu2.rst (Messages): "The minimum payload size is 8 bytes ... If the
+	// requirement is not met, a Padding block must be included." The floor is on
+	// the plaintext blocks, so it must be enforced here, before the AEAD tag is
+	// added (ciphertext always clears 16 bytes) and before the padded plaintext
+	// is stored for retransmission.
+	if len(packet.Payload) < MinPayloadSize {
+		padded, err := PadPayloadToMin(packet.Payload)
+		if err != nil {
+			return nil, oops.Wrapf(err, "failed to pad payload to minimum size")
+		}
+		packet.Payload = padded
+	}
+
 	plaintextPayload = make([]byte, len(packet.Payload))
 	copy(plaintextPayload, packet.Payload)
 
@@ -582,8 +595,9 @@ func (h *SSU2Conn) initiateRekey() {
 
 	flog("initiateRekey").Warn("initiating NextNonce rekey (unfinalized spec area — interoperability not guaranteed)")
 
-	// Derive new send cipher key per SSU2 spec §NextNonce:
-	// newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+	// Derive new send cipher key: newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+	// The ssu2.rst "NextNonce" section is "TODO" with contents "TBD", so this
+	// derivation follows the i2pd reference implementation, not the spec text.
 	newKey, err := deriveRekeyKey(h.sendCipher)
 	if err != nil {
 		flog("initiateRekey", logger.Fields{"error": err}).Error("failed to derive rekey for send cipher")
@@ -630,6 +644,13 @@ func (h *SSU2Conn) sendNextNonceInline() error {
 	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
 	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
 	hdr[12] = MessageTypeData
+
+	// Meet the 8-byte minimum payload rule (ssu2.rst Messages). This path
+	// encrypts inline instead of going through encryptDataPayload.
+	payload, err = PadPayloadToMin(payload)
+	if err != nil {
+		return oops.Wrapf(err, "pad NextNonce payload")
+	}
 
 	// Encrypt with the current (OLD) key.
 	h.sendCipher.SetNonce(uint64(pktNum))

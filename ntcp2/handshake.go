@@ -43,6 +43,10 @@ const (
 
 	// routerInfoBlockType is the NTCP2 block type for RouterInfo (type 2).
 	routerInfoBlockType = 0x02
+
+	// optionsBlockType is the NTCP2 block type for Options (type 1), permitted
+	// in message 3 part 2 and in data-phase frames.
+	optionsBlockType = 0x01
 )
 
 // Handshake performs the NTCP2 three-way handshake (SessionRequest,
@@ -137,7 +141,8 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 		}
 	}
 
-	msg3Payload, err := c.executeHandshakeRole(cfg, nc)
+	hsDeadline, _ := c.resolveHandshakeDeadline(hsCtx)
+	msg3Payload, err := c.executeHandshakeRole(cfg, nc, hsDeadline)
 	if err != nil {
 		nc.FailHandshake()
 		flog("Handshake", logger.Fields{
@@ -269,7 +274,7 @@ func (c *Conn) resolveHandshakeDeadline(hsCtx context.Context) (time.Time, bool)
 
 // executeHandshakeRole runs initiator/responder message flow and returns
 // responder message-3 payload when available.
-func (c *Conn) executeHandshakeRole(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
+func (c *Conn) executeHandshakeRole(cfg *Config, nc *noise.NoiseConn, hsDeadline time.Time) ([]byte, error) {
 	if cfg.Initiator {
 		if len(cfg.LocalRouterInfo) == 0 {
 			return nil, oops.
@@ -277,13 +282,13 @@ func (c *Conn) executeHandshakeRole(cfg *Config, nc *noise.NoiseConn) ([]byte, e
 				In("ntcp2").
 				Errorf("LocalRouterInfo must be set in NTCP2Config for outbound connections")
 		}
-		if err := performInitiatorHandshake(cfg, nc); err != nil {
+		if err := performInitiatorHandshake(cfg, nc, hsDeadline); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
 
-	return performResponderHandshake(cfg, nc)
+	return performResponderHandshake(cfg, nc, hsDeadline)
 }
 
 func (c *Conn) storePeerMessage3Payload(msg3Payload []byte) {
@@ -298,7 +303,7 @@ func (c *Conn) storePeerMessage3Payload(msg3Payload []byte) {
 // performInitiatorHandshake executes the three-message NTCP2 XK exchange.
 // Each phase is delegated to sendInitiatorMsg1, receiveResponderMsg2, and
 // sendInitiatorMsg3 so each step can be tested independently.
-func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
+func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time.Time) error {
 	t0 := time.Now()
 	raw := nc.Underlying()
 	riBytes := cfg.LocalRouterInfo
@@ -341,7 +346,7 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 		"elapsed_ms": time.Since(t0).Milliseconds(),
 	}).Debug("NTCP2 initiator: msg1 sent, waiting for msg2")
 
-	if err := receiveResponderMsg2(cfg, nc); err != nil {
+	if err := receiveResponderMsg2(cfg, nc, hsDeadline); err != nil {
 		return err
 	}
 	flog("performInitiatorHandshake", logger.Fields{
@@ -361,13 +366,15 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn) error {
 
 // sendInitiatorMsg1 builds and sends the NTCP2 message 1 (AES-obfuscation step),
 // followed by the randomly-generated cleartext padding bytes. The padding length
-// is randomized in the range [0, 223] per the NTCP2 spec §4.3, matching the
-// i2pd/Java I2P padding distribution to prevent passive wire fingerprinting.
+// is randomized in the range [0, 223], matching the i2pd/Java I2P padding
+// distribution to prevent passive wire fingerprinting. The 223 bound keeps the
+// whole message within the 287-byte limit the spec imposes when the responder is
+// published as "NTCP"; the spec itself leaves padding sizes "TBD".
 //
 // opts construction, Noise WriteHandshakeMsg, size check, dump, wire write, and
 // padding send are kept together so this step can be unit-tested with a mock NoiseConn.
 func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
-	opts1, padLen, err := buildMessage1Options(m3p2Len)
+	opts1, padLen, err := buildMessage1Options(cfg, m3p2Len)
 	if err != nil {
 		return err // already wrapped by buildMessage1Options
 	}
@@ -408,14 +415,14 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 // receiveResponderMsg2 reads and processes the NTCP2 message 2 (Noise exchange step).
 // It uses a 1-byte probe read to distinguish early peer-close from partial
 // msg2, then MixHashes Bob's cleartext padding into the handshake state.
-func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
+func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn, hsDeadline time.Time) error {
 	t2 := time.Now()
 	raw := nc.Underlying()
 	flog("receiveResponderMsg2", logger.Fields{
 		"event":  "msg2_read_start",
 		"remote": raw.RemoteAddr().String(),
 	}).Debug("NTCP2 initiator: blocking on msg2 read")
-	bobOpts, bobPadLen, err := readMessage2WithPadding(cfg, raw, nc)
+	bobOpts, bobPadLen, err := readMessage2WithPadding(cfg, raw, nc, hsDeadline)
 	if err != nil {
 		flog("receiveResponderMsg2", logger.Fields{
 			"event":      "msg2_read_failed",
@@ -432,7 +439,7 @@ func receiveResponderMsg2(cfg *Config, nc *noise.NoiseConn) error {
 // readMessage2WithPadding reads NTCP2 message 2 using a 1-byte probe plus
 // remainder read (for precise diagnostics), processes the handshake frame,
 // then reads/MixHashes Bob's cleartext padding bytes.
-func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn) ([]byte, int, error) {
+func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn, hsDeadline time.Time) ([]byte, int, error) {
 	// Split the read into a 1-byte probe + the remaining 63 bytes so we can
 	// distinguish "peer rejected msg1 (closed before writing any byte)" from
 	// "peer started msg2 then aborted (partial write)".
@@ -458,28 +465,32 @@ func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn) ([]
 			Wrapf(err, "failed to process NTCP2 message 2")
 	}
 
-	// Read and MixHash Bob's cleartext padding (bytes 2-3 of his options = padLen).
-	bobPadLen := 0
-	if len(bobOpts) >= ntcp2OptionsSize {
-		bobPadLen = int(binary.BigEndian.Uint16(bobOpts[2:4]))
+	// Validate Bob's options block, including the tsB timestamp. The
+	// SessionCreated section requires Alice to halt and close without responding
+	// on any message 2 error, including an out-of-tolerance timestamp, so the
+	// skew is a hard failure here (unlike the responder, which must still reply).
+	bobPadLen, err := validateMessage2Options(bobOpts, cfg.maxClockSkew())
+	if err != nil {
+		return nil, 0, err
+	}
 
-		if bobPadLen > MaxNTCP2HandshakePadding {
-			return nil, 0, oops.
-				Code("MSG2_PADDING_TOO_LARGE").
-				In("ntcp2").
-				With("padLen", bobPadLen).
-				With("max", MaxNTCP2HandshakePadding).
-				Errorf("message 2 padding too large: %d > %d", bobPadLen, MaxNTCP2HandshakePadding)
+	// Read and MixHash Bob's cleartext padding. The SessionCreated section
+	// requires this padding to be included in the KDF for message 3 part 1 so
+	// tampering is detected; padLen 0 means no bytes to read.
+	if bobPadLen > 0 {
+		pad := make([]byte, bobPadLen)
+		if _, err := io.ReadFull(raw, pad); err != nil {
+			return nil, 0, oops.Code("MSG2_PAD_READ_FAILED").In("ntcp2").
+				Wrapf(err, "failed to read %d cleartext padding bytes after message 2", bobPadLen)
 		}
+		nc.MixHashData(pad)
+	}
 
-		if bobPadLen > 0 {
-			pad := make([]byte, bobPadLen)
-			if _, err := io.ReadFull(raw, pad); err != nil {
-				return nil, 0, oops.Code("MSG2_PAD_READ_FAILED").In("ntcp2").
-					Wrapf(err, "failed to read %d cleartext padding bytes after message 2", bobPadLen)
-			}
-			nc.MixHashData(pad)
-		}
+	// The SessionCreated section requires Alice to fail the connection if any
+	// incoming data remains after validating message 2 and reading the padding:
+	// Bob must not send anything before our message 3.
+	if err := probeNoMoreData(raw, hsDeadline); err != nil {
+		return nil, 0, err
 	}
 
 	return bobOpts, bobPadLen, nil
@@ -534,7 +545,7 @@ func warnMissingReplayDetector() {
 	})
 }
 
-func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error) {
+func performResponderHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time.Time) ([]byte, error) {
 	t0 := time.Now()
 	raw := nc.Underlying()
 	flog("performResponderHandshake", logger.Fields{
@@ -542,7 +553,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 		"remote": raw.RemoteAddr().String(),
 	}).Debug("NTCP2 responder: waiting for msg1")
 
-	m3p2Len, err := handleResponderMsg1(cfg, nc, raw)
+	m3p2Len, clockSkew, err := handleResponderMsg1(cfg, nc, raw, hsDeadline)
 	if err != nil {
 		return nil, err
 	}
@@ -552,13 +563,25 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 		"m3p2_len":   m3p2Len,
 	}).Debug("NTCP2 responder: msg1 processed, sending msg2")
 
-	if err := handleResponderMsg2(nc, raw); err != nil {
+	if err := handleResponderMsg2(cfg, nc, raw); err != nil {
 		return nil, err
 	}
 	flog("performResponderHandshake", logger.Fields{
 		"event":      "msg2_done",
 		"elapsed_ms": time.Since(t0).Milliseconds(),
 	}).Debug("NTCP2 responder: msg2 sent, waiting for msg3")
+
+	// Clock skew: the spec's Clock Skew Guidelines require Bob to answer with a
+	// Session Created anyway ("rather than simply closing the connection") so
+	// Alice can read tsB and compute the skew, and only then close. We have now
+	// sent message 2, so stop here without waiting for message 3.
+	if clockSkew {
+		return nil, oops.
+			Code("MSG1_CLOCK_SKEW").
+			In("ntcp2").
+			With("remote", raw.RemoteAddr().String()).
+			Errorf("message 1 timestamp exceeds clock skew tolerance of %s (SessionCreated sent for peer skew calculation)", cfg.maxClockSkew())
+	}
 
 	payload, err := handleResponderMsg3(nc, raw, m3p2Len)
 	if err != nil {
@@ -578,7 +601,7 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn) ([]byte, error)
 	return payload, nil
 }
 
-func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16, error) {
+func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn, hsDeadline time.Time) (uint16, bool, error) {
 	// === Message 1 (Alice -> Bob) ============================================
 	buf1 := make([]byte, msg1Size)
 	t1 := time.Now()
@@ -588,7 +611,7 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 		"expected_bytes": msg1Size,
 	}).Debug("NTCP2 responder: blocking on msg1 ReadFull")
 	if _, err := io.ReadFull(raw, buf1); err != nil {
-		return 0, oops.Code("MSG1_READ_FAILED").In("ntcp2").
+		return 0, false, oops.Code("MSG1_READ_FAILED").In("ntcp2").
 			Wrapf(err, "failed to read NTCP2 message 1")
 	}
 	flog("handleResponderMsg1", logger.Fields{
@@ -599,7 +622,7 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 	aliceOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseInitial, buf1)
 	if err != nil {
 		dumpInboundMsg1IfEnabled(cfg, raw, buf1, nil, err)
-		return 0, oops.Code("MSG1_PROCESS_FAILED").In("ntcp2").
+		return 0, false, oops.Code("MSG1_PROCESS_FAILED").In("ntcp2").
 			Wrapf(err, "failed to process NTCP2 message 1")
 	}
 	dumpInboundMsg1IfEnabled(cfg, raw, buf1, aliceOpts, nil)
@@ -615,7 +638,7 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 		var ephemeralKey [32]byte
 		copy(ephemeralKey[:], buf1[:32])
 		if cfg.ReplayDetector.CheckAndAdd(ephemeralKey) {
-			return 0, oops.
+			return 0, false, oops.
 				Code("MSG1_REPLAY").
 				In("ntcp2").
 				With("remote", raw.RemoteAddr().String()).
@@ -629,20 +652,28 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 		warnMissingReplayDetector()
 	}
 
-	// Parse Alice's options to extract padLen (bytes 2-3) and m3p2Len (bytes 4-5).
-	if len(aliceOpts) < ntcp2OptionsSize {
-		return 0, oops.Code("MSG1_OPTIONS_TOO_SHORT").In("ntcp2").
-			Errorf("message 1 options too short: got %d, need %d", len(aliceOpts), ntcp2OptionsSize)
+	// Validate Alice's options block: network ID, protocol version and the tsA
+	// timestamp. These are the spec's mandatory message-1 field checks. An
+	// excessive timestamp is reported as clockSkew rather than an immediate
+	// failure because the Clock Skew Guidelines section requires Bob to answer
+	// with a Session Created so Alice can read tsB and compute the skew.
+	alicePadLen, m3p2Len, clockSkew, err := validateMessage1Options(aliceOpts, cfg.networkID(), cfg.maxClockSkew())
+	if err != nil {
+		return 0, false, err
 	}
-	alicePadLen := int(binary.BigEndian.Uint16(aliceOpts[2:4]))
-	m3p2Len := binary.BigEndian.Uint16(aliceOpts[4:6])
+	if clockSkew {
+		flog("handleResponderMsg1", logger.Fields{
+			"remote": raw.RemoteAddr().String(),
+		}).Warn("NTCP2 responder: message 1 timestamp exceeds clock skew; replying with SessionCreated then closing")
+	}
 
-	// Validate alicePadLen to prevent unbounded allocation DoS.
-	// Per spec §4.3, padding is "0..223 bytes" in practice. We enforce
-	// a conservative limit to prevent an attacker from forcing the responder
-	// to allocate 64 KiB per connection and blocking on io.ReadFull.
+	// Validate alicePadLen to prevent unbounded allocation DoS. The spec sets no
+	// numeric padding limit ("Min/max guidelines TBD") but says "Bob may reject
+	// connections with excessive padding", so we enforce an implementation
+	// ceiling to stop an attacker forcing a 64 KiB allocation plus a blocking
+	// io.ReadFull per connection.
 	if alicePadLen > MaxNTCP2HandshakePadding {
-		return 0, oops.
+		return 0, false, oops.
 			Code("MSG1_PADDING_TOO_LARGE").
 			In("ntcp2").
 			With("padLen", alicePadLen).
@@ -655,7 +686,7 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 	// limit to prevent an attacker from forcing the responder to allocate
 	// excessive memory (up to 64 KiB with uint16 max) per connection.
 	if m3p2Len > MaxNTCP2Message3Part2Len {
-		return 0, oops.
+		return 0, false, oops.
 			Code("MSG3_PART2_TOO_LARGE").
 			In("ntcp2").
 			With("m3p2Len", m3p2Len).
@@ -670,7 +701,7 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 	// failure inside ReadHandshakeMsgFromBytes.
 	const minMsg3Part2Len = BlockHeaderSize + 1 + Poly1305Overhead
 	if m3p2Len < minMsg3Part2Len {
-		return 0, oops.
+		return 0, false, oops.
 			Code("MSG3_PART2_TOO_SMALL").
 			In("ntcp2").
 			With("m3p2Len", m3p2Len).
@@ -678,24 +709,31 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn) (uint16
 			Errorf("message 3 part 2 too small: %d < %d (minimum = BlockHeaderSize+flag+AEAD tag)", m3p2Len, minMsg3Part2Len)
 	}
 
-	// Read and MixHash Alice's cleartext padding after message 1.
-	// Per NTCP2 spec §4.1: "padding MUST be mixed into the handshake hash"
-	// even when padLen is 0 (no bytes to read, no MixHash needed).
+	// Read and MixHash Alice's cleartext padding after message 1. The
+	// SessionRequest section requires the padding to be included in the KDF for
+	// message 2 so tampering is detected; a padLen of 0 means no bytes to read.
 	if alicePadLen > 0 {
 		pad := make([]byte, alicePadLen)
 		if _, err := io.ReadFull(raw, pad); err != nil {
-			return 0, oops.Code("MSG1_PAD_READ_FAILED").In("ntcp2").
+			return 0, false, oops.Code("MSG1_PAD_READ_FAILED").In("ntcp2").
 				Wrapf(err, "failed to read %d cleartext padding bytes after message 1", alicePadLen)
 		}
 		nc.MixHashData(pad)
 	}
 
-	return m3p2Len, nil
+	// The SessionRequest section requires Bob to fail the connection if any
+	// incoming data remains after validating message 1 and reading the padding:
+	// Alice has no reason to send anything before Bob replies with message 2.
+	if err := probeNoMoreData(raw, hsDeadline); err != nil {
+		return 0, false, err
+	}
+
+	return m3p2Len, clockSkew, nil
 }
 
-func handleResponderMsg2(nc *noise.NoiseConn, raw net.Conn) error {
+func handleResponderMsg2(cfg *Config, nc *noise.NoiseConn, raw net.Conn) error {
 	// === Message 2 (Bob -> Alice) ============================================
-	opts2, bobPadLen, err := buildMessage2Options()
+	opts2, bobPadLen, err := buildMessage2Options(cfg)
 	if err != nil {
 		return err // already wrapped by buildMessage2Options
 	}
@@ -812,6 +850,14 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 			Wrapf(err, "failed to process NTCP2 message 3")
 	}
 
+	// The SessionConfirmed section restricts this frame to at most three blocks
+	// in a fixed order (RouterInfo, then Options, then Padding) and states it
+	// "must never contain any other block type". Reject violations rather than
+	// silently ignoring unexpected blocks.
+	if err := validateMsg3Part2Blocks(payload); err != nil {
+		return nil, err
+	}
+
 	// Return the decrypted message-3 part-2 plaintext to the caller. This is
 	// the I2NP block frame containing Alice's RouterInfo (block type 2) and
 	// any optional padding/options blocks. The router transport layer needs
@@ -833,11 +879,12 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 //	bytes 12-15: Reserved = 0
 //
 // The padLen value is randomized to match the i2pd/Java I2P padding distribution
-// (0-223 bytes) per the NTCP2 spec §4.3, preventing passive wire fingerprinting.
+// (0-223 bytes), matching the i2pd/Java distribution to prevent passive wire
+// fingerprinting.
 // The actual padding bytes are generated separately by the caller and sent
 // after the 64-byte AEAD frame.
-func buildMessage2Options() ([]byte, int, error) {
-	opts, padLen, err := buildOptionsBlock(false)
+func buildMessage2Options(cfg *Config) ([]byte, int, error) {
+	opts, padLen, err := buildOptionsBlock(cfg, false)
 	if err != nil {
 		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
 			Wrapf(err, "failed to generate random padding length for message 2")
@@ -860,11 +907,12 @@ func buildMessage2Options() ([]byte, int, error) {
 //	bytes 12-15: Reserved = 0
 //
 // The padLen value is randomized to match the i2pd/Java I2P padding distribution
-// (0-223 bytes) per the NTCP2 spec §4.3, preventing passive wire fingerprinting.
+// (0-223 bytes), matching the i2pd/Java distribution to prevent passive wire
+// fingerprinting.
 // The actual padding bytes are generated separately by the caller and sent
 // after the 64-byte AEAD frame.
-func buildMessage1Options(m3p2Len uint16) ([]byte, int, error) {
-	opts, padLen, err := buildOptionsBlock(true)
+func buildMessage1Options(cfg *Config, m3p2Len uint16) ([]byte, int, error) {
+	opts, padLen, err := buildOptionsBlock(cfg, true)
 	if err != nil {
 		return nil, 0, oops.Code("RAND_PAD_FAILED").In("ntcp2").
 			Wrapf(err, "failed to generate random padding length for message 1")
@@ -875,7 +923,7 @@ func buildMessage1Options(m3p2Len uint16) ([]byte, int, error) {
 	return opts, padLen, nil
 }
 
-func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
+func buildOptionsBlock(cfg *Config, withIDVer bool) ([]byte, int, error) {
 	padLen, err := randomNTCP2PaddingLength()
 	if err != nil {
 		return nil, 0, err
@@ -883,8 +931,10 @@ func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
 
 	opts := make([]byte, ntcp2OptionsSize)
 	if withIDVer {
-		opts[0] = ntcp2NetID
-		opts[1] = ntcp2Ver
+		// Use the same normalized accessor as the inbound validator so the
+		// value we advertise is the value we require of the peer.
+		opts[optsNetIDOffset] = cfg.networkID()
+		opts[optsVerOffset] = ntcp2Ver
 	}
 	binary.BigEndian.PutUint16(opts[2:4], uint16(padLen))
 	binary.BigEndian.PutUint32(opts[8:12], uint32(time.Now().Unix()))
@@ -893,9 +943,12 @@ func buildOptionsBlock(withIDVer bool) ([]byte, int, error) {
 }
 
 func randomNTCP2PaddingLength() (int, error) {
-	// Per NTCP2 spec §4.3 and i2pd/Java behavior, message options use a
-	// randomized cleartext padding length in [0, 223].
-	const ntcp2MaxPadLen = 223
+	// Randomized cleartext padding length in [0, 223]. The upper bound is not a
+	// spec number (the SessionRequest section leaves padding "Min/max guidelines
+	// TBD"); it is derived from the spec's NTCP/NTCP2 coexistence rule that
+	// message 1 including padding must be "287 bytes or less", and matches the
+	// i2pd/Java distribution (287 - 64 = 223).
+	const ntcp2MaxPadLen = maxMsg1OutboundPaddingBytes
 	return randomPaddingLength(ntcp2MaxPadLen)
 }
 
@@ -972,7 +1025,7 @@ func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
 // randomPaddingLength generates a cryptographically secure random integer in the
 // range [0, upper] inclusive using rejection sampling to avoid modulo bias.
 // This function is used to generate randomized handshake padding lengths that
-// match the i2pd/Java I2P distribution per NTCP2 spec §4.3.
+// match the i2pd/Java I2P distribution.
 //
 // Returns an error only if the underlying CSPRNG fails (extremely rare). If upper
 // is 0, always returns 0 without error.

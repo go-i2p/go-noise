@@ -34,7 +34,7 @@ func keyFromRouterAddress(options map[string]string, param, label string) ([]byt
 // Base64-encoded string representing the 32-byte ChaCha20 key used
 // for header encryption.
 //
-// Per SSU2 spec §Published Router Address: "i=(Base64 key) — The current
+// Per ssu2.rst "Published Router Info": "i=(Base64 key) — The current
 // introduction key for encrypting the headers for this RouterAddress.
 // Base 64 encoded using the standard I2P Base 64 alphabet. 32 bytes in
 // binary, 44 bytes as Base 64 encoded, big-endian ChaCha20 key."

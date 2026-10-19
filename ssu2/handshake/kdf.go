@@ -70,8 +70,7 @@ func DeriveHeaderKeys(sendCipher, recvCipher *noise.CipherState) (sendKHeader2, 
 		return nil, nil, oops.Wrapf(err, "failed to derive recv data-phase keys")
 	}
 
-	// Install k_data as the AEAD encryption key per SSU2 spec §KDF for
-	// data phase. The raw split keys (k_ab/k_ba) must NOT be used directly.
+	// Install k_data as the AEAD encryption key per ssu2.rst "KDF for data phase". The raw split keys (k_ab/k_ba) must NOT be used directly.
 	var sendKey, recvKey [32]byte
 	copy(sendKey[:], sendKData)
 	copy(recvKey[:], recvKData)

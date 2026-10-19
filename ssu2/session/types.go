@@ -116,12 +116,15 @@ const (
 	MACSize           = wire.MACSize
 	MaxPacketSizeIPv4 = wire.MaxPacketSizeIPv4
 	HeaderKeySize     = wire.HeaderKeySize
+	// MinPayloadSize is the ssu2.rst minimum plaintext payload size.
+	MinPayloadSize = wire.MinPayloadSize
 )
 
 var (
 	NewSSU2Block              = wire.NewSSU2Block
 	NewBlockRouter            = wire.NewBlockRouter
 	SerializeBlocks           = wire.SerializeBlocks
+	PadPayloadToMin           = wire.PadPayloadToMin
 	DeserializeBlocks         = wire.DeserializeBlocks
 	FindBlockByType           = wire.FindBlockByType
 	ExtractConnectionID       = wire.ExtractConnectionID

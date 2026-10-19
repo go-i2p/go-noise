@@ -69,8 +69,10 @@ import (
 	"github.com/samber/oops"
 )
 
-// maxNoiseMessageSize is the maximum Noise message size per the Noise spec (§12.3).
-// Each message on the wire is preceded by a 2-byte big-endian length prefix.
+// maxNoiseMessageSize is the maximum Noise message size per the Noise spec
+// §3 "Message format" ("All Noise messages are less than or equal to 65535 bytes
+// in length"). Each message on the wire is preceded by a 2-byte big-endian
+// length prefix, per §13 "Application responsibilities".
 // This limit applies to the ciphertext frame (encrypted data plus the 16-byte
 // AEAD tag), so the largest single Write of plaintext is
 // maxNoiseMessageSize - AEAD tag (16) = 65519 bytes.

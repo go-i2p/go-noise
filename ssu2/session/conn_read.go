@@ -303,11 +303,12 @@ func (h *SSU2Conn) decryptInboundPayload(packet *SSU2Packet) bool {
 		return true
 	}
 
-	// Per SSU2 spec: nonce is the packet number, AD is the 16-byte header.
-	// Bytes 14-15 must be zeroed before AEAD decryption because the sender
-	// encrypts with bytes 14-15 = 0 (they are set to the obfuscated length
-	// only AFTER encryption). Without this, the AD mismatch causes every
-	// data packet to fail AEAD verification.
+	// The AEAD nonce is the packet number and the associated data is the
+	// 16-byte short header. Bytes 14-15 are the "moreflags" field, which
+	// ssu2.rst (Messages, data message) defines as "2 bytes, unused, set to 0
+	// for future compatibility" -- SSU2 has no data-phase length-obfuscation
+	// field, so both peers use zero here. Zero them defensively so the AD
+	// matches what the sender encrypted.
 	binary.BigEndian.PutUint16(packet.Header[14:16], 0)
 	cipher.SetNonce(uint64(packet.PacketNumber))
 	decrypted, err := cipher.Decrypt(nil, packet.Header[:ShortHeaderSize], packet.Payload)
@@ -316,6 +317,19 @@ func (h *SSU2Conn) decryptInboundPayload(packet *SSU2Packet) bool {
 		return false
 	}
 	packet.Payload = decrypted
+
+	// ssu2.rst (Messages): "The minimum payload size is 8 bytes ... If the
+	// requirement is not met, a Padding block must be included." Now that the
+	// AEAD tag is stripped, the plaintext blocks must clear the floor; a peer
+	// that sends less is not following the spec.
+	if len(packet.Payload) < MinPayloadSize {
+		flog("decryptInboundPayload", logger.Fields{
+			"pktNum":     packet.PacketNumber,
+			"payloadLen": len(packet.Payload),
+			"minimum":    MinPayloadSize,
+		}).Warn("inbound payload below the SSU2 minimum payload size")
+		return false
+	}
 	return true
 }
 
@@ -350,7 +364,9 @@ func (h *SSU2Conn) keepaliveLoop() {
 
 			// Check if we need to send keepalive
 			if timeSinceActivity >= h.config.KeepaliveInterval {
-				// Send ACK-only packet as keepalive per spec §Keepalive.
+				// Send an ACK-only packet as keepalive. ssu2.rst has no
+				// dedicated keepalive section; ACKs are described under
+				// "Congestion Control".
 				h.sendImmediateACK()
 			}
 
@@ -508,8 +524,9 @@ func (h *SSU2Conn) handlePeerNextNonce(newNonce uint64) error {
 		return oops.Errorf("receive cipher not initialized")
 	}
 
-	// Derive new recv cipher key per SSU2 spec §NextNonce:
-	// newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+	// Derive new recv cipher key: newKey = HKDF(currentKey, ZEROLEN, "WrapCipherKey", 32).
+	// The ssu2.rst "NextNonce" section is "TODO" with contents "TBD", so this
+	// derivation follows the i2pd reference implementation, not the spec text.
 	newKey, err := deriveRekeyKey(h.recvCipher)
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive rekey for recv cipher")

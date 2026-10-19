@@ -98,7 +98,8 @@ type ListenerConfig struct {
 	PostHandshakeHook func(*conn.Conn) error
 
 	// AdditionalSymmetricKeyLabels specifies labels for Additional Symmetric
-	// Key (ASK) derivation at Split() time, per Noise spec §10.3. Each label
+	// Key (ASK) derivation at Split() time, per the go-i2p/noise fork's
+	// SplitWithASK (an I2P extension, not base Noise spec §10.3). Each label
 	// produces a 32-byte key derived from the chaining key. The derived keys
 	// are available via NoiseConn.AdditionalSymmetricKeys() after the
 	// handshake completes.

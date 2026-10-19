@@ -57,7 +57,7 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 	}
 
 	// Build the 16-byte short header before encrypting so it can be
-	// mixed into the handshake hash per SSU2 spec §KDF.
+	// mixed into the handshake hash per ssu2.rst "KDF for Session Confirmed part 2".
 	header := make([]byte, 16)
 	binary.BigEndian.PutUint64(header[0:8], connID)
 	binary.BigEndian.PutUint32(header[8:12], packetNumber)
@@ -135,7 +135,7 @@ func (h *HandshakeHandler) ProcessSessionConfirmed(packet *SSU2Packet) error {
 		return oops.Errorf("handshake not ready for SessionConfirmed: expected message index 2, got %d", h.handshakeState.MessageIndex())
 	}
 
-	// MixHash(header) per SSU2 spec §KDF — binds the short header into
+	// MixHash(header) per ssu2.rst "KDF for Session Confirmed part 2" — binds the short header into
 	// the handshake hash before processing the Noise message.
 	//
 	// Check frag field (byte 13): bits 7-4 = fragment number, bits 3-0 = total fragments.

@@ -48,7 +48,7 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 		return oops.Errorf("SessionCreated missing ephemeral key")
 	}
 
-	// MixHash(header) per SSU2 spec §KDF — binds the header into
+	// MixHash(header) per ssu2.rst "KDF for Session Created and Session Confirmed part 1" — binds the header into
 	// the handshake hash before processing the Noise message.
 	h.handshakeState.MixHash(packet.Header)
 
@@ -62,7 +62,7 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 	}
 
 	// After processing message 2 (← e, ee), derive "SessionConfirmed" from
-	// the intermediate chainKey per SSU2 spec §KDF for Session Created.
+	// the intermediate chainKey per ssu2.rst "KDF for Session Created and Session Confirmed part 1".
 	h.sessionConfirmedHeaderKey = deriveIntermediateHeaderKey(
 		h.handshakeState.ChainingKey(), "SessionConfirmed",
 	)

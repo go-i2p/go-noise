@@ -532,7 +532,7 @@ func TestStrictRouterInfoVerification_EdgeCases(t *testing.T) {
 // chi-squared goodness-of-fit test. This is a statistical test that may
 // occasionally fail due to randomness (p < 0.01 false-positive rate).
 func TestRandomPaddingLength_Distribution(t *testing.T) {
-	const maxPadLen = 223   // per NTCP2 spec §4.3
+	const maxPadLen = 223   // 287-byte NTCP coexistence cap minus 64-byte msg1
 	const numSamples = 5000 // enough samples for chi-squared test
 	const numBuckets = 10   // group [0, 223] into 10 buckets for chi-squared
 
@@ -595,8 +595,11 @@ func TestNTCP2HandshakePadding_Message1_Randomized(t *testing.T) {
 	seenNonZero := false
 	lengths := make(map[int]bool)
 
+	testCfg, err := NewNTCP2Config(data.Hash{}, true)
+	require.NoError(t, err)
+
 	for i := 0; i < numTrials; i++ {
-		opts, padLen, err := buildMessage1Options(m3p2Len)
+		opts, padLen, err := buildMessage1Options(testCfg, m3p2Len)
 		require.NoError(t, err, "buildMessage1Options should not fail")
 		require.NotNil(t, opts, "opts should not be nil")
 		require.Len(t, opts, ntcp2OptionsSize, "opts should be 16 bytes")
@@ -631,8 +634,11 @@ func TestNTCP2HandshakePadding_Message2_Randomized(t *testing.T) {
 	seenNonZero := false
 	lengths := make(map[int]bool)
 
+	testCfg, err := NewNTCP2Config(data.Hash{}, false)
+	require.NoError(t, err)
+
 	for i := 0; i < numTrials; i++ {
-		opts, padLen, err := buildMessage2Options()
+		opts, padLen, err := buildMessage2Options(testCfg)
 		require.NoError(t, err, "buildMessage2Options should not fail")
 		require.NotNil(t, opts, "opts should not be nil")
 		require.Len(t, opts, ntcp2OptionsSize, "opts should be 16 bytes")

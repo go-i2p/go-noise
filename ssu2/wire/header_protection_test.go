@@ -243,6 +243,37 @@ func TestHeaderProtector_GenerateMask_Deterministic(t *testing.T) {
 	}
 }
 
+// TestHeaderProtector_GenerateMask_CounterOne pins the header-mask ChaCha20
+// block counter to 1, matching i2pd. i2pd routes CreateHeaderMask through
+// i2p::crypto::ChaCha20, which sets iv[0] = htole32(1) (Crypto.cpp), so the
+// mask is the first 8 bytes of ChaCha20 keystream *block 1*, not block 0.
+//
+// The expected bytes are computed independently (pure ChaCha20 keystream for
+// key = 0x09*32, nonce = 00..0b, counter = 1). If generateMask regresses to the
+// default counter 0, it yields a0adadaf191641d2 instead and this test fails --
+// a Go-to-Go self-consistent but interop-breaking mask.
+func TestHeaderProtector_GenerateMask_CounterOne(t *testing.T) {
+	hp, err := NewHeaderProtector(fixedKey(1), fixedKey(2), HeaderTypeData)
+	if err != nil {
+		t.Fatalf("NewHeaderProtector error = %v", err)
+	}
+
+	key := bytes.Repeat([]byte{0x09}, HeaderKeySize)
+	nonce := make([]byte, 12)
+	for i := range nonce {
+		nonce[i] = byte(i)
+	}
+
+	want := []byte{0x84, 0xe7, 0x88, 0x9b, 0x47, 0x92, 0xe4, 0x5b}
+	got, err := hp.GenerateMask(key, nonce)
+	if err != nil {
+		t.Fatalf("GenerateMask error = %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("GenerateMask = %x, want %x (ChaCha20 counter must start at 1 to match i2pd)", got, want)
+	}
+}
+
 func TestHeaderProtector_UpdateKeys(t *testing.T) {
 	hp, err := NewHeaderProtector(fixedKey(1), fixedKey(2), HeaderTypeData)
 	if err != nil {

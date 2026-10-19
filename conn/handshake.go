@@ -500,7 +500,9 @@ func (nc *Conn) GetHandshakeHash() []byte {
 
 // MixHashData mixes additional data into the Noise symmetric hash state.
 // The NTCP2 spec requires this to authenticate cleartext padding bytes that
-// appear after AEAD frames in messages 1 and 2 (§4.4.1, §4.4.2). Call this
+// appear after AEAD frames in messages 1 and 2 (ntcp2.rst "Additions to the
+// Framework": "The cleartext padding is included in the handshake hash
+// (MixHash) calculation"). Call this
 // after reading and discarding cleartext padding, passing the raw padding
 // bytes so that the hash state stays in sync with the peer.
 //

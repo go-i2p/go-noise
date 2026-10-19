@@ -110,7 +110,7 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		FirstSightWindow:         30 * time.Second,
 		FirstSightMaxEntries:     50000,
 		MaxSessions:              65536,
-		DestroyTimeout:           11 * time.Second,  // Per spec §Termination: 11s (max RTO)
+		DestroyTimeout:           11 * time.Second,  // ssu2.rst "Session Termination" leaves the closing period TBD; 11s matches i2pd
 		MaxClockSkew:             120 * time.Second, // Per spec: ±120s skew tolerance
 		ReplayCacheTTL:           4 * time.Minute,
 		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize

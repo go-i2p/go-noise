@@ -199,7 +199,7 @@ func (h *DataHandler) verifyConditionalSignature(
 }
 
 // handleRelayRequest processes a RelayRequest block (Type 7).
-// Per SSU2 spec §Relay Request, signatures MUST be verified before acting.
+// Per ssu2.rst "RelayRequest", signatures MUST be verified before acting.
 func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayRequest(block)
@@ -227,7 +227,7 @@ func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 }
 
 // handleRelayResponse processes a RelayResponse block (Type 8).
-// Per SSU2 spec §Relay Response, signatures MUST be verified for
+// Per ssu2.rst "RelayResponse", signatures MUST be verified for
 // accepted (code 0) and Charlie-rejected (code >= 64) responses.
 func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 	flog("handleRelayResponse", logger.Fields{"dataLength": len(block.Data)}).Debug("Received RelayResponse block")
@@ -263,7 +263,7 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 }
 
 // handleRelayIntro processes a RelayIntro block (Type 9).
-// Per SSU2 spec §Relay Intro, signatures MUST be verified before acting.
+// Per ssu2.rst "RelayIntro", signatures MUST be verified before acting.
 func (h *DataHandler) handleRelayIntro(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayIntro(block)
@@ -315,7 +315,7 @@ func (h *DataHandler) handleRelayTag(block *SSU2Block) error {
 }
 
 // handlePeerTest processes a PeerTest block (Type 10).
-// Per SSU2 spec §Peer Test, signatures MUST be verified for messages 1-4.
+// Per ssu2.rst "Peer Test (Type 7)", signatures MUST be verified for messages 1-4.
 func (h *DataHandler) handlePeerTest(block *SSU2Block) error {
 	flog("handlePeerTest", logger.Fields{"dataLength": len(block.Data)}).Debug("Received PeerTest block")
 

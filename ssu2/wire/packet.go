@@ -69,7 +69,25 @@ const (
 
 // Size constraints from ssu2.rst
 const (
-	MinPacketSize     = 40   // Minimum valid packet size
+	MinPacketSize = 40 // Minimum valid packet size
+	// MinPayloadSize is the smallest plaintext block payload a message may
+	// carry. The Header Encryption KDF section states: "This KDF uses the last
+	// 24 bytes of the packet as the IV for the two ChaCha20 operations. As all
+	// packets end with a 16 byte MAC, this requires that all packet payloads are
+	// a minimum of 8 bytes." The per-message sections add: "The minimum payload
+	// size is 8 bytes ... If the requirement is not met, a Padding block must be
+	// included."
+	//
+	// This is a constraint on the plaintext blocks, not on SSU2Packet.Payload
+	// after AEAD encryption: encryption always adds a 16-byte tag, so an
+	// encrypted payload clears the floor automatically and a wire-layer check
+	// would be both redundant and unable to see the plaintext it is about.
+	//
+	// Enforcement lives in ssu2/session: encryptDataPayload pads outbound
+	// plaintext payloads up to this floor (via wire.PadPayloadToMin) before
+	// encryption, and decryptInboundPayload rejects inbound payloads that
+	// decrypt to less than this floor.
+	MinPayloadSize    = 8
 	MaxPacketSizeIPv4 = 1472 // 1500 Ethernet MTU - 20 IPv4 header - 8 UDP header
 	MaxPacketSizeIPv6 = 1452 // 1500 Ethernet MTU - 40 IPv6 header - 8 UDP header
 )

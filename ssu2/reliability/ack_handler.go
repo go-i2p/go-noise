@@ -11,6 +11,13 @@ import (
 )
 
 const (
+	// maxACKRangeCount is the largest value representable in the single-byte
+	// acnt, nack-count, and ack-count fields of an SSU2 ACK block. Per
+	// ssu2.rst "Ack" the acnt is "0-255" and each range is "1 byte nack
+	// count followed by 1 byte ack count, 0-255 each". Runs longer than this
+	// are carried over into additional ack-only or nack-only range pairs.
+	maxACKRangeCount = 255
+
 	// MaxNACKRangesPerACK is the maximum number of NACK/ACK range pairs
 	// allowed in a single ACK block. With 1280-byte MTU and SSU2 overhead,
 	// the realistic bound is ~150 ranges per packet, but we cap at 200 to
@@ -48,11 +55,18 @@ const (
 //
 // ACK Block Format (Type 12) per SSU2 spec:
 //   - Bytes 0-3: Through Packet Number (highest PN being acked, big-endian)
-//   - Byte 4:    acnt — number of consecutive packets acked at and below the
-//     Through PN, MINUS 1 (so 0 means only the Through PN itself)
-//   - Bytes 5+:  Optional ranges, each 2 bytes:
-//     Byte 0: nacks minus 1 (gap of non-received packets)
-//     Byte 1: acks minus 1  (run of received packets)
+//   - Byte 4:    acnt — number of packets acked consecutively *below* the
+//     Through PN (so 0 means only the Through PN itself), capped at 255
+//   - Bytes 5+:  Optional ranges, each 2 bytes of raw counts:
+//     Byte 0: nack count (gap of non-received packets), 0-255
+//     Byte 1: ack count  (run of received packets), 0-255
+//
+// Per ssu2.rst "Ack" the range counts are raw, not decremented: "Range
+// nack may be zero if acking more than 255 consecutive packets. Range ack may
+// be zero if nacking more than 255 consecutive packets. Range nack and ack may
+// not both be zero." The spec's worked example — "We want to ACK 10 9 8 6 5 2
+// 1 0, and NACK 7 4 3: Ack Through 10, acnt 2, range: 1 2 (nack 7, ack 6 5),
+// range: 2 3 (nack 4 3, ack 2 1 0)" — is encoded byte-for-byte by this format.
 //
 // Minimum size: 5 bytes (4-byte Through PN + 1-byte acnt)
 //
@@ -185,9 +199,33 @@ func (h *ACKHandler) GenerateACK() (*SSU2Block, error) {
 
 	sorted := SortDescDedupPackets(h.receivedPackets)
 	throughPN := sorted[0]
-	acnt := countConsecutiveFromTop(sorted) - 1
+	// consecutive counts the run at and below throughPN; acnt is the number of
+	// packets acked strictly below throughPN.
+	consecutive := countConsecutiveFromTop(sorted)
+	acnt := consecutive - 1
 
-	rangeBytes := buildACKRanges(sorted, int(acnt)+1, h.maxACKDataSize-5)
+	var rangeBytes []byte
+	// acnt is a single byte, so a run longer than 256 packets spills into
+	// ack-only ranges (nack count 0), which ssu2.rst permits: "Range nack may
+	// be zero if acking more than 255 consecutive packets."
+	if acnt > maxACKRangeCount {
+		remaining := acnt - maxACKRangeCount
+		acnt = maxACKRangeCount
+		for remaining > 0 {
+			chunk := remaining
+			if chunk > maxACKRangeCount {
+				chunk = maxACKRangeCount
+			}
+			var ok bool
+			rangeBytes, ok = appendACKRange(rangeBytes, 0, uint8(chunk), h.maxACKDataSize-5)
+			if !ok {
+				break
+			}
+			remaining -= chunk
+		}
+	}
+
+	rangeBytes = append(rangeBytes, buildACKRanges(sorted, consecutive, h.maxACKDataSize-5-len(rangeBytes))...)
 
 	data := make([]byte, 5+len(rangeBytes))
 	binary.BigEndian.PutUint32(data[0:4], throughPN)
@@ -216,23 +254,36 @@ func countConsecutiveFromTop(sorted []uint32) int {
 	return count
 }
 
-// buildACKRanges builds nack/ack range pairs for non-consecutive packets.
+// appendACKRange appends a single nack/ack range pair to out. It reports false
+// when the pair would not fit within maxBytes, leaving out unchanged.
+func appendACKRange(out []byte, nacks, acks uint8, maxBytes int) ([]byte, bool) {
+	if len(out)+2 > maxBytes {
+		return out, false
+	}
+	return append(out, nacks, acks), true
+}
+
+// buildACKRanges builds nack/ack range pairs for the packets below the initial
+// consecutive run. Each pair carries raw counts (0-255) as ssu2.rst specifies.
+// Gaps or ack runs longer than one byte spill into additional single-sided
+// ranges, which the spec permits: "Range nack may be zero if acking more than
+// 255 consecutive packets. Range ack may be zero if nacking more than 255
+// consecutive packets."
+//
+// start is the index into sorted (descending) of the first packet number not
+// already covered by the acnt field or by previously emitted ranges.
 func buildACKRanges(sorted []uint32, start, maxBytes int) []byte {
 	flog("buildACKRanges", logger.Fields{"start": start, "maxBytes": maxBytes, "sortedLen": len(sorted)}).Debug("buildACKRanges: building ACK range pairs")
 	var rangeBytes []byte
 	i := start
 	for i < len(sorted) {
-		if len(rangeBytes)+2 > maxBytes {
-			break
-		}
 		prevPN := sorted[i-1]
 		nextPN := sorted[i]
+		// sorted is descending and deduplicated, and i always follows the end
+		// of a run, so the gap is at least one packet.
 		nackCount := int(prevPN - nextPN - 1)
 		if nackCount < 1 {
 			nackCount = 1
-		}
-		if nackCount > 256 {
-			nackCount = 256
 		}
 
 		ackRun := 1
@@ -241,11 +292,45 @@ func buildACKRanges(sorted []uint32, start, maxBytes int) []byte {
 			ackRun++
 			j++
 		}
-		if ackRun > 256 {
-			ackRun = 256
+
+		// Spill an over-long gap into nack-only ranges (ack count 0).
+		for nackCount > maxACKRangeCount {
+			var ok bool
+			rangeBytes, ok = appendACKRange(rangeBytes, maxACKRangeCount, 0, maxBytes)
+			if !ok {
+				return rangeBytes
+			}
+			nackCount -= maxACKRangeCount
 		}
 
-		rangeBytes = append(rangeBytes, uint8(nackCount-1), uint8(ackRun-1))
+		if ackRun <= maxACKRangeCount {
+			var ok bool
+			rangeBytes, ok = appendACKRange(rangeBytes, uint8(nackCount), uint8(ackRun), maxBytes)
+			if !ok {
+				return rangeBytes
+			}
+			i = j
+			continue
+		}
+
+		// Over-long ack run: pair the gap with the first chunk, then spill the
+		// remainder into ack-only ranges (nack count 0).
+		var ok bool
+		rangeBytes, ok = appendACKRange(rangeBytes, uint8(nackCount), maxACKRangeCount, maxBytes)
+		if !ok {
+			return rangeBytes
+		}
+		for remaining := ackRun - maxACKRangeCount; remaining > 0; {
+			chunk := remaining
+			if chunk > maxACKRangeCount {
+				chunk = maxACKRangeCount
+			}
+			rangeBytes, ok = appendACKRange(rangeBytes, 0, uint8(chunk), maxBytes)
+			if !ok {
+				return rangeBytes
+			}
+			remaining -= chunk
+		}
 		i = j
 	}
 	return rangeBytes
@@ -304,9 +389,13 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 					rangeCount, MaxNACKRangesPerACK)
 		}
 
-		nacks := int64(data[offset]) + 1  // stored minus 1 per spec
-		acks := int64(data[offset+1]) + 1 // stored minus 1 per spec
+		nacks := int64(data[offset])  // raw nack count per ssu2.rst
+		acks := int64(data[offset+1]) // raw ack count per ssu2.rst
 		offset += 2
+
+		if nacks == 0 && acks == 0 {
+			return nil, oops.Errorf("ACK range with both nack and ack counts zero (forbidden by ssu2.rst)")
+		}
 
 		// Skip the gap (nacked packets) — check for underflow
 		if nacks > cursor {
@@ -325,9 +414,12 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 			ackedPackets = append(ackedPackets, uint32(cursor))
 			delete(h.pendingACKs, uint32(cursor))
 			cursor--
-			if cursor < 0 {
-				return nil, oops.Errorf("ACK cursor underflow in ack loop: cursor=%d", cursor)
-			}
+		}
+		// cursor reaches -1 once packet 0 has been acknowledged. No packet
+		// numbers remain below it, so any further ranges cannot be meaningful
+		// (matches ssu2.rst, where ranges stop once the lowest PN is covered).
+		if cursor < 0 {
+			break
 		}
 	}
 

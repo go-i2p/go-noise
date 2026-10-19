@@ -17,8 +17,9 @@ import (
 // WARNING: this modifier uses a custom wire format —
 // [4-byte big-endian length][data][padding] — that is NOT part of any I2P
 // specification. Do not use it in NTCP2 modifier chains or anywhere that
-// expects fixed-size protocol fields (for example, NTCP2 Message 1 is exactly
-// 64 bytes per spec §3.2). Substituting it for ntcp2.NTCP2PaddingModifier
+// expects fixed-size protocol fields (for example, NTCP2 Message 1 is at
+// least 64 bytes per ntcp2.rst "Version Detection": "Wait for at least 64
+// bytes (minimum NTCP2 message 1 size)"). Substituting it for ntcp2.NTCP2PaddingModifier
 // produces messages that other I2P peers cannot read, and the modifier layer
 // will not report an error.
 //

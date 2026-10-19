@@ -169,8 +169,9 @@ func (nc *Conn) encryptData(data []byte) ([]byte, error) {
 }
 
 // writeEncryptedData writes a length-prefixed encrypted frame to the
-// underlying connection and handles the response. Per Noise spec §12.3,
-// each message is preceded by a 2-byte big-endian length prefix.
+// underlying connection and handles the response. Per Noise spec §13
+// "Application responsibilities", each message is preceded by a 2-byte
+// big-endian length prefix.
 func (nc *Conn) writeEncryptedData(originalData, encryptedData []byte) (int, error) {
 	if err := nc.writeFramedMessage(encryptedData); err != nil {
 		return 0, oops.
@@ -201,8 +202,8 @@ func (nc *Conn) configureReadTimeout() error {
 }
 
 // readEncryptedData reads a length-prefixed encrypted frame from the
-// underlying connection. Per the Noise spec §12.3, each message is preceded
-// by a 2-byte big-endian length field. This method reads the length, then
+// underlying connection. Per the Noise spec §13 "Application responsibilities",
+// each message is preceded by a 2-byte big-endian length field. This method reads the length, then
 // reads exactly that many bytes of ciphertext before returning.
 func (nc *Conn) readEncryptedData(b []byte) (encryptedData []byte, encryptedLen int, err error) {
 	encryptedData, err = nc.readFramedMessage()
@@ -214,8 +215,9 @@ func (nc *Conn) readEncryptedData(b []byte) (encryptedData []byte, encryptedLen 
 }
 
 // writeFramedMessage writes a 2-byte big-endian length prefix followed by
-// the message data to the underlying connection. Per Noise spec §12.3:
-// "Applications should add a length field for each Noise message."
+// the message data to the underlying connection. Per Noise spec §13:
+// "applications are recommended to add a 16-bit big-endian length field prior
+// to each message."
 func (nc *Conn) writeFramedMessage(data []byte) error {
 	if len(data) > maxNoiseMessageSize {
 		return oops.

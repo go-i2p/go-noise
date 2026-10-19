@@ -58,7 +58,9 @@ type ConnConfig struct {
 
 	// AdditionalSymmetricKeyLabels names the labels used to derive
 	// Additional Symmetric Keys (ASKs) when the handshake splits into send
-	// and receive cipher states, per Noise spec §10.3. Each label produces a
+	// and receive cipher states, per the go-i2p/noise fork's SplitWithASK (an
+	// I2P extension; ASK is not part of base Noise spec §10.3, which is
+	// Zero-RTT). Each label produces a
 	// 32-byte key derived from the chaining key. The derived keys are
 	// available via Conn.AdditionalSymmetricKeys() after the handshake
 	// completes.

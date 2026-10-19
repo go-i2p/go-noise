@@ -131,7 +131,7 @@ func (hpm *HeaderProtectorManager) keysForIntroProtected() (k1, k2 []byte, err e
 }
 
 // keysForHolePunch returns keys for HolePunch packets.
-// Per spec §HolePunch: "Both header encryption keys are the receiver's intro key."
+// Per ssu2.rst "Header Encryption": "ALL other messages use the receiver's intro key for k_header_1."
 // The receiver is always the remote peer, so we always use remoteIntroKey.
 func (hpm *HeaderProtectorManager) keysForHolePunch() (k1, k2 []byte, err error) {
 	if len(hpm.remoteIntroKey) != HeaderKeySize {

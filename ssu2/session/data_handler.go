@@ -125,25 +125,22 @@ type DataHandlerCallbacks struct {
 	OnCongestion func(flags uint8) error
 
 	// VerifyPeerTestSignature is called to verify a PeerTest block's signature
-	// before dispatching to OnPeerTest. Per SSU2 spec §Peer Test, signatures
+	// before dispatching to OnPeerTest. Per ssu2.rst "Peer Test (Type 7)", signatures
 	// MUST be verified before acting on the message. If nil, blocks with
 	// mandatory signatures (messages 1-4) are rejected.
 	VerifyPeerTestSignature func(block *PeerTestBlock) error
 
 	// VerifyRelayRequestSignature is called to verify a RelayRequest block's
-	// signature before dispatching to OnRelayRequest. Per SSU2 spec §Relay
-	// Request, signatures MUST be verified. If nil, blocks are rejected.
+	// signature before dispatching to OnRelayRequest. Per ssu2.rst "RelayRequest", signatures MUST be verified. If nil, blocks are rejected.
 	VerifyRelayRequestSignature func(block *RelayRequestBlock) error
 
 	// VerifyRelayResponseSignature is called to verify a RelayResponse block's
-	// signature before dispatching to OnRelayResponse. Per SSU2 spec §Relay
-	// Response, signatures MUST be verified for code 0 and code >= 64.
+	// signature before dispatching to OnRelayResponse. Per ssu2.rst "RelayResponse", signatures MUST be verified for code 0 and code >= 64.
 	// If nil, signed responses are rejected.
 	VerifyRelayResponseSignature func(block *RelayResponseBlock) error
 
 	// VerifyRelayIntroSignature is called to verify a RelayIntro block's
-	// signature before dispatching to OnRelayIntro. Per SSU2 spec §Relay
-	// Intro, signatures MUST be verified. If nil, blocks are rejected.
+	// signature before dispatching to OnRelayIntro. Per ssu2.rst "RelayIntro", signatures MUST be verified. If nil, blocks are rejected.
 	VerifyRelayIntroSignature func(block *RelayIntroBlock) error
 }
 

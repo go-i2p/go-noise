@@ -59,7 +59,8 @@ const (
 	// sides to switch to the new key before the counter is exhausted.
 	//
 	// WARNING: NextNonce (block type 11) is based on an UNFINALIZED spec
-	// area (see SSU2 spec §3.7 "NextNonce") with size "TBD".
+	// area (see ssu2.rst "NextNonce", marked "TODO only if we rotate keys"
+	// with the block size listed as "TBD").
 	// This threshold and the rekey mechanism may need
 	// revision for interoperability when the spec is finalized.
 	// Only enabled via SSU2Config.EnableNextNonce (default: false).

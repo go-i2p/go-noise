@@ -44,7 +44,7 @@ const (
 
 // initNoiseIK initializes the Noise symmetric state for the IKelg2+hs2 handshake.
 // The protocol name is hashed (since it exceeds 32 bytes), then the null prologue
-// is mixed in (as required by the Noise spec §5.6 and the I2P ECIES-X25519-AEAD-Ratchet
+// is mixed in (as required by the Noise spec §6 "Prologue" and the I2P ECIES-X25519-AEAD-Ratchet
 // spec KDF section), and finally the responder's static key hash is mixed in per hs2.
 //
 // Initialization transcript:

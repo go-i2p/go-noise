@@ -8,7 +8,7 @@ import (
 	"github.com/samber/oops"
 )
 
-// Congestion block flag bits per SSU2 spec §Congestion block.
+// Congestion block flag bits per ssu2.rst "Congestion".
 const (
 	// CongestionFlagRequestACK requests the peer send an immediate ACK (bit 0).
 	CongestionFlagRequestACK uint8 = 1 << 0

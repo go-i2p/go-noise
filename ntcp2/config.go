@@ -147,6 +147,27 @@ type Config struct {
 	// incarnations to be delivered.
 	// Default: false (conservative, matches net.Listen behavior).
 	AllowReuseAddress bool
+
+	// NetworkID is the I2P network ID written into the "id" field of the
+	// message 1 options block and required of inbound message 1s. The main
+	// network value is 2; test networks use different values so that
+	// cross-network connections fail fast, per proposal 147.
+	//
+	// Zero (the struct-literal default) is treated as the main network, so this
+	// field only needs setting for test networks. See networkID.
+	// Default: 2.
+	NetworkID uint8
+
+	// MaxClockSkew is the largest tolerated difference between the local clock
+	// and the tsA/tsB timestamps in handshake messages 1 and 2. The spec's
+	// Clock Skew Guidelines section says a skew beyond +/- 60 seconds "is
+	// generally fatal".
+	//
+	// Zero (the struct-literal default) selects ClockSkewTolerance so timestamp
+	// validation is enabled for every configuration; set a negative value to
+	// disable it. See maxClockSkew.
+	// Default: ClockSkewTolerance (60 seconds).
+	MaxClockSkew time.Duration
 }
 
 // NewNTCP2Config creates a new Config with sensible defaults.
@@ -178,7 +199,51 @@ func NewNTCP2Config(bobRouterHash data.Hash, initiator bool) (*Config, error) {
 		FramePaddingEnabled:  true,
 		MinPaddingSize:       0,
 		MaxPaddingSize:       DefaultMaxPaddingSize,
+		NetworkID:            ntcp2NetID,
+		MaxClockSkew:         ClockSkewTolerance,
 	}, nil
+}
+
+// networkID returns the network ID for this configuration, falling back to the
+// main-network value when the field is unset. Both the options-block writer and
+// the inbound validator go through this accessor so they can never disagree
+// about which value is expected, including for configs built as struct literals
+// rather than with NewNTCP2Config.
+func (nc *Config) networkID() uint8 {
+	if nc == nil || nc.NetworkID == 0 {
+		return ntcp2NetID
+	}
+	return nc.NetworkID
+}
+
+// maxClockSkew returns the clock-skew tolerance applied to the tsA/tsB
+// handshake timestamps. An unset (zero) field selects the spec's 60-second
+// guidance so that timestamp validation is on by default for every config,
+// including struct literals. Set it to a negative value to disable validation.
+func (nc *Config) maxClockSkew() time.Duration {
+	if nc == nil || nc.MaxClockSkew == 0 {
+		return ClockSkewTolerance
+	}
+	if nc.MaxClockSkew < 0 {
+		return 0
+	}
+	return nc.MaxClockSkew
+}
+
+// WithNetworkID sets the I2P network ID written into, and required of, the
+// message 1 options block. Use the main-network default of 2 unless operating a
+// test network.
+func (nc *Config) WithNetworkID(id uint8) *Config {
+	nc.NetworkID = id
+	return nc
+}
+
+// WithMaxClockSkew sets the tolerated difference between the local clock and the
+// peer's handshake timestamps. Zero selects the 60-second default; a negative
+// value disables timestamp validation.
+func (nc *Config) WithMaxClockSkew(d time.Duration) *Config {
+	nc.MaxClockSkew = d
+	return nc
 }
 
 // WithPattern sets the Noise protocol pattern.
@@ -827,6 +892,8 @@ func (nc *Config) Clone() *Config {
 		FramePaddingEnabled:  nc.FramePaddingEnabled,
 		MinPaddingSize:       nc.MinPaddingSize,
 		MaxPaddingSize:       nc.MaxPaddingSize,
+		NetworkID:            nc.NetworkID,
+		MaxClockSkew:         nc.MaxClockSkew,
 		ReplayDetector:       nc.ReplayDetector, // Shared across clones for responder
 	}
 	clone.BobRouterHash = nc.BobRouterHash

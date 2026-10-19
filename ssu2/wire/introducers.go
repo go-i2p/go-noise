@@ -11,7 +11,7 @@ import (
 
 // SSU2 introducer publication in RouterAddress options.
 //
-// Per the I2P SSU2 specification (§Published Router Address) and the i2pd
+// Per the I2P SSU2 specification (ssu2.rst "Published Router Info") and the i2pd
 // reference implementation (RouterInfo.cpp), introducers are published in a
 // RouterAddress as a set of indexed options:
 //

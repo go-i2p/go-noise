@@ -261,14 +261,15 @@ func TestACKHandler_ProcessACK(t *testing.T) {
 		{
 			name: "with one nack/ack range",
 			createBlock: func() *SSU2Block {
-				// Through PN = 106, acnt = 1 (106, 105)
-				// Range: nacks=2 (gap of 2: 104,103), acks=3 (3 acked: 102,101,100)
-				// SSU2 spec: values stored minus 1
+				// Through PN = 106, acnt = 1 (acks 106, 105)
+				// Range: nacks=2 (gap of 2: 104,103), acks=3 (102,101,100)
+				// SSU2 spec: range values are raw counts, "1 byte nack count
+				// followed by 1 byte ack count, 0-255 each".
 				data := make([]byte, 7)
 				binary.BigEndian.PutUint32(data[0:4], 106)
-				data[4] = 1 // acnt (2-1=1)
-				data[5] = 1 // nacks minus 1 (2-1=1)
-				data[6] = 2 // acks minus 1 (3-1=2)
+				data[4] = 1 // acnt: one packet acked below through PN
+				data[5] = 2 // nack count
+				data[6] = 3 // ack count
 				return NewSSU2Block(BlockTypeACK, data)
 			},
 			wantPackets: []uint32{106, 105, 102, 101, 100},
@@ -568,14 +569,14 @@ func BenchmarkSortDescDedupPackets(b *testing.B) {
 // FuzzProcessACK fuzzes the ACK block parsing to detect cursor underflow and other
 // parsing bugs.
 func FuzzProcessACK(f *testing.F) {
-	// Seed with valid ACK block
+	// Seed with valid ACK block (range counts are raw per ssu2.rst)
 	seed := make([]byte, 9)
 	binary.BigEndian.PutUint32(seed[0:4], 100) // throughPN
 	seed[4] = 5                                // acnt (6 packets: 100-95)
-	seed[5] = 2                                // nacks-1
-	seed[6] = 3                                // acks-1
-	seed[7] = 1                                // nacks-1
-	seed[8] = 0                                // acks-1
+	seed[5] = 2                                // nack count
+	seed[6] = 3                                // ack count
+	seed[7] = 1                                // nack count
+	seed[8] = 0                                // ack count (single-sided nack range)
 	f.Add(seed)
 
 	// Seed with edge cases
