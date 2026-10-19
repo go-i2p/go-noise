@@ -181,14 +181,11 @@ func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, erro
 		return nil, nil, oops.Wrapf(err, "failed to process Noise IK New Session message")
 	}
 
-	// Unbound sessions are non-repliable: the initiator sent no static key,
-	// so there is no identity to key the session on and no NSR can be sent.
-	// Spec §1c: "Bob ratchets once when creating an unbound inbound session,
-	// and does not create a corresponding outbound session."
-	if result.isUnbound {
-		flog("decryptNewSession").Debug("Received unbound (N-pattern) New Session message — no session state stored")
-		return result.plaintext, nil, nil
-	}
+	// Freshness + replay checks apply to EVERY New Session message, bound or
+	// unbound. ecies.rst §1c/§1d require "Payload must contain a DateTime
+	// block" for the unbound/one-time formats too, and §"DateTime" requires
+	// "Bob must validate that the message is recent". Returning before these
+	// checks would let a captured unbound NS be replayed indefinitely.
 
 	// Spec §1b / replay-prevention: reject NS messages whose DateTime block
 	// is too old or too far in the future. A captured NS can otherwise be
@@ -200,6 +197,8 @@ func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, erro
 	// Spec §"DateTime": "Bob must implement a Bloom filter or other mechanism
 	// to prevent replay attacks, if the time is valid."
 	// Check the NS ephemeral key (first 32 bytes) against the replay cache.
+	// The ephemeral key is on the wire (Elligator2-encoded) for unbound
+	// messages as well, so this guard covers both variants.
 	if len(msg) >= 32 {
 		var ephKey [32]byte
 		copy(ephKey[:], msg[:32])
@@ -209,6 +208,17 @@ func (sm *SessionManager) decryptNewSession(msg []byte) ([]byte, *[32]byte, erro
 				ephKey[:8],
 			)
 		}
+	}
+
+	// Unbound sessions establish no replyable session: the initiator sent no
+	// static key, so there is no identity to key the session on and no NSR can
+	// be sent. Spec §1c: "Bob ratchets once when creating an unbound inbound
+	// session, and does not create a corresponding outbound session." The
+	// payload is still returned so the caller can process the (fresh,
+	// non-replayed) one-time message.
+	if result.isUnbound {
+		flog("decryptNewSession").Debug("Received unbound (N-pattern) New Session message — no session state stored")
+		return result.plaintext, nil, nil
 	}
 
 	if err := sm.initializeInboundRatchetState(result.initiatorStaticPub, result.keys, result.hs); err != nil {

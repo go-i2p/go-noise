@@ -203,6 +203,16 @@ func (h *DataHandler) verifyConditionalSignature(
 func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayRequest(block)
+	// Pass nil (not a no-op closure) when the verifier is unset so
+	// handleSignedRelayBlock fails closed instead of accepting unsigned blocks.
+	var verify func() error
+	if cbs.VerifyRelayRequestSignature != nil {
+		verify = func() error { return cbs.VerifyRelayRequestSignature(decoded) }
+	}
+	var dispatch func() error
+	if cbs.OnRelayRequest != nil {
+		dispatch = func() error { return cbs.OnRelayRequest(block) }
+	}
 	return h.handleSignedRelayBlock(
 		block, "RelayRequest",
 		func(b *SSU2Block) ([]byte, error) {
@@ -211,18 +221,8 @@ func (h *DataHandler) handleRelayRequest(block *SSU2Block) error {
 			}
 			return decoded.Signature, nil
 		},
-		func() error {
-			if cbs.VerifyRelayRequestSignature != nil {
-				return cbs.VerifyRelayRequestSignature(decoded)
-			}
-			return nil
-		},
-		func() error {
-			if cbs.OnRelayRequest != nil {
-				return cbs.OnRelayRequest(block)
-			}
-			return nil
-		},
+		verify,
+		dispatch,
 	)
 }
 
@@ -239,16 +239,18 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 		return oops.Wrapf(err, "failed to decode RelayResponse block")
 	}
 
+	// nil (not a no-op closure) when the verifier is unset, so the helper's
+	// fail-closed check can detect the missing verifier.
+	var verify func() error
+	if cbs.VerifyRelayResponseSignature != nil {
+		verify = func() error { return cbs.VerifyRelayResponseSignature(decoded) }
+	}
+
 	if err := h.verifyConditionalSignature(
 		decoded.Code == 0 || decoded.Code >= 64,
 		decoded.Signature,
 		fmt.Sprintf("RelayResponse (code %d) has no signature", decoded.Code),
-		func() error {
-			if cbs.VerifyRelayResponseSignature != nil {
-				return cbs.VerifyRelayResponseSignature(decoded)
-			}
-			return nil
-		},
+		verify,
 		fmt.Sprintf("RelayResponse (code %d) has signature but verifier callback is not configured", decoded.Code),
 		"RelayResponse signature verification failed",
 	); err != nil {
@@ -267,6 +269,16 @@ func (h *DataHandler) handleRelayResponse(block *SSU2Block) error {
 func (h *DataHandler) handleRelayIntro(block *SSU2Block) error {
 	cbs := h.getCallbacks()
 	decoded, decErr := DecodeRelayIntro(block)
+	// nil (not a no-op closure) when the verifier is unset so the helper
+	// fails closed instead of accepting unsigned blocks.
+	var verify func() error
+	if cbs.VerifyRelayIntroSignature != nil {
+		verify = func() error { return cbs.VerifyRelayIntroSignature(decoded) }
+	}
+	var dispatch func() error
+	if cbs.OnRelayIntro != nil {
+		dispatch = func() error { return cbs.OnRelayIntro(block) }
+	}
 	return h.handleSignedRelayBlock(
 		block, "RelayIntro",
 		func(b *SSU2Block) ([]byte, error) {
@@ -275,18 +287,8 @@ func (h *DataHandler) handleRelayIntro(block *SSU2Block) error {
 			}
 			return decoded.Signature, nil
 		},
-		func() error {
-			if cbs.VerifyRelayIntroSignature != nil {
-				return cbs.VerifyRelayIntroSignature(decoded)
-			}
-			return nil
-		},
-		func() error {
-			if cbs.OnRelayIntro != nil {
-				return cbs.OnRelayIntro(block)
-			}
-			return nil
-		},
+		verify,
+		dispatch,
 	)
 }
 
@@ -326,16 +328,18 @@ func (h *DataHandler) handlePeerTest(block *SSU2Block) error {
 		return oops.Wrapf(err, "failed to decode PeerTest block")
 	}
 
+	// nil (not a no-op closure) when the verifier is unset so the helper's
+	// fail-closed check can detect the missing verifier.
+	var verify func() error
+	if cbs.VerifyPeerTestSignature != nil {
+		verify = func() error { return cbs.VerifyPeerTestSignature(decoded) }
+	}
+
 	if err := h.verifyConditionalSignature(
 		decoded.MessageCode >= PeerTestRequest && decoded.MessageCode <= PeerTestResult,
 		decoded.Signature,
 		fmt.Sprintf("PeerTest message %d has no signature", decoded.MessageCode),
-		func() error {
-			if cbs.VerifyPeerTestSignature != nil {
-				return cbs.VerifyPeerTestSignature(decoded)
-			}
-			return nil
-		},
+		verify,
 		fmt.Sprintf("PeerTest message %d has signature but verifier callback is not configured", decoded.MessageCode),
 		fmt.Sprintf("PeerTest message %d signature verification failed", decoded.MessageCode),
 	); err != nil {

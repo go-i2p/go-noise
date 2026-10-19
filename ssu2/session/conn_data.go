@@ -70,11 +70,14 @@ func (h *SSU2Conn) wireDataCallbacks() {
 }
 
 // warnMissingSignatureVerifiers logs warnings for unset signature verifiers.
-// When a verifier is nil, the actual behaviour in
-// handlePeerTest / handleRelayRequest / handleRelayResponse / handleRelayIntro
-// is to SKIP verification and continue processing. This is intentional (the
-// router layer plugs in the verifier), but the risk is that blocks with forged
-// or missing signatures are silently accepted when no verifier is registered.
+//
+// Per ssu2.rst, PeerTest / RelayRequest / RelayResponse / RelayIntro
+// signatures MUST be verified before the block is acted on. The handlers are
+// therefore fail-closed: when a signature is present but no verifier callback
+// is registered, the block is rejected (VERIFIER_MISSING) rather than
+// processed. This warning is emitted early so an operator learns at session
+// setup — not on the first inbound signed block — that those features cannot
+// function until the router layer registers the verifiers.
 func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	if cbs.VerifyPeerTestSignature == nil {
 		flog("warnMissingSignatureVerifiers").Warn("PeerTest signature verifier not configured; signature verification will be SKIPPED for peer test messages")
