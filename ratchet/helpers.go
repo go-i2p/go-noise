@@ -3,6 +3,7 @@ package ratchet
 import (
 	"fmt"
 
+	"github.com/go-i2p/crypto/ratchet"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -45,10 +46,12 @@ const (
 	// Spec ref: ratchet.md §"Parameters" — ES tagset 0 size: tsmin=24.
 	tagWindowSize = 24
 
-	// MaxMessageNumber is the maximum AEAD message number per the spec.
-	// Each message in a session carries a counter; when the counter reaches
-	// this value, the session must be ratcheted to derive fresh keys.
-	MaxMessageNumber = 65535
+	// MaxMessageNumber is the maximum AEAD message number per the spec,
+	// inclusive: numbers 0..65535 are valid, so a tag set carries up to 65536
+	// messages, and only a counter beyond this value requires a DH ratchet.
+	// This aliases crypto/ratchet's constant rather than restating the value,
+	// so the two implementations cannot drift apart.
+	MaxMessageNumber = ratchet.MaxMessagesPerTagset
 
 	// recvWindowSize is the number of ES message counters we pre-derive keys for
 	// and accept out-of-order. Fixed at 128 per I2P spec ratchet.md §Existing Session.
