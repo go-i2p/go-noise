@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -514,14 +515,18 @@ func (h *SSU2Conn) handlePathResponseData(data []byte) error {
 
 // handleAddressBlock processes an Address block (Type 13) for passive NAT
 // detection. The block contains the sender's view of our IP and port.
-// Format: IP (4 or 16 bytes) + Port (2 bytes big-endian).
+//
+// Wire format per ssu2.rst "Address": port (2 bytes, big endian) followed by
+// the IP address (4 bytes IPv4 or 16 bytes IPv6, network byte order). Parsing
+// is delegated to wire.DecodeAddressBlock so there is exactly one decoder for
+// this block.
 func (h *SSU2Conn) handleAddressBlock(data []byte) error {
-	if len(data) != 6 && len(data) != 18 {
-		return oops.Errorf("Address block invalid length: %d (expected 6 or 18)", len(data))
+	blk, err := wire.DecodeAddressBlock(wire.NewSSU2Block(wire.BlockTypeAddress, data))
+	if err != nil {
+		return oops.Wrapf(err, "failed to decode Address block")
 	}
-	portOffset := len(data) - 2
-	ip := net.IP(data[:portOffset])
-	port := binary.BigEndian.Uint16(data[portOffset:])
+	ip := blk.IP
+	port := blk.Port
 
 	localAddr := h.LocalAddr()
 	if udp, ok := localAddr.(*net.UDPAddr); ok {

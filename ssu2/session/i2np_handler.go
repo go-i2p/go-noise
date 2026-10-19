@@ -415,7 +415,7 @@ func (h *DataHandler) handleRouterInfo(data []byte) error {
 }
 
 // handleAddress processes an Address block (Type 13).
-// Address format: IP (4 or 16 bytes) + Port (2 bytes)
+// Address format per ssu2.rst: Port (2 bytes, big endian) + IP (4 or 16 bytes).
 func (h *DataHandler) handleAddress(data []byte) error {
 	flog("handleAddress", logger.Fields{"dataLength": len(data)}).Debug("Received Address block")
 
