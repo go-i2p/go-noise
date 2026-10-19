@@ -20,9 +20,17 @@ func extractPeerRouterInfo(payload []byte) ([]byte, error) {
 		return nil, oops.Wrapf(err, "failed to deserialize SessionConfirmed blocks")
 	}
 	for _, block := range blocks {
-		if block.Type == BlockTypeRouterInfo && len(block.Data) > 0 {
-			return copyBytes(block.Data), nil
+		if block.Type != BlockTypeRouterInfo || len(block.Data) == 0 {
+			continue
 		}
+		// The block carries a mandatory flag+frag prefix; hand the caller the
+		// RouterInfo bytes themselves so downstream consumers (static-key
+		// binding, netdb storage) do not have to know about the prefix.
+		decoded, err := DecodeRouterInfoBlock(block)
+		if err != nil {
+			return nil, oops.Wrapf(err, "malformed RouterInfo block in SessionConfirmed")
+		}
+		return copyBytes(decoded.Data), nil
 	}
 	return nil, nil
 }

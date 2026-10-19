@@ -44,10 +44,17 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 		return nil, oops.Errorf("handshake not ready for SessionConfirmed: expected message index 2, got %d", h.handshakeState.MessageIndex())
 	}
 
-	// SessionConfirmed must contain initiator's RouterInfo per SSU2 spec
+	// SessionConfirmed must contain initiator's RouterInfo per SSU2 spec.
+	// The block requires the mandatory flag+frag prefix (see
+	// wire.EncodeRouterInfoBlock); flood is not requested and the RI is sent
+	// uncompressed, matching the NTCP2 handshake RI handling.
 	var blocks []*SSU2Block
 	if len(routerInfo) > 0 {
-		blocks = append(blocks, NewSSU2Block(BlockTypeRouterInfo, routerInfo))
+		riBlock, err := EncodeRouterInfoBlock(routerInfo, false, false)
+		if err != nil {
+			return nil, oops.Wrapf(err, "failed to encode RouterInfo block")
+		}
+		blocks = append(blocks, riBlock)
 	}
 
 	// Serialize blocks (may be empty)
@@ -231,7 +238,11 @@ func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte,
 	flog("serializeConfirmedPayload", logger.Fields{"routerInfoLen": len(routerInfo)}).Debug("Serializing RouterInfo block")
 	var blocks []*SSU2Block
 	if len(routerInfo) > 0 {
-		blocks = append(blocks, NewSSU2Block(BlockTypeRouterInfo, routerInfo))
+		riBlock, err := EncodeRouterInfoBlock(routerInfo, false, false)
+		if err != nil {
+			return nil, oops.Wrapf(err, "failed to encode RouterInfo block")
+		}
+		blocks = append(blocks, riBlock)
 	}
 	payload, err := SerializeBlocks(blocks)
 	if err != nil {

@@ -59,7 +59,9 @@ const (
 
 // Constructor and function aliases
 var (
-	NewSSU2Block      = wire.NewSSU2Block
-	SerializeBlocks   = wire.SerializeBlocks
-	DeserializeBlocks = wire.DeserializeBlocks
+	NewSSU2Block          = wire.NewSSU2Block
+	SerializeBlocks       = wire.SerializeBlocks
+	DeserializeBlocks     = wire.DeserializeBlocks
+	EncodeRouterInfoBlock = wire.EncodeRouterInfoBlock
+	DecodeRouterInfoBlock = wire.DecodeRouterInfoBlock
 )

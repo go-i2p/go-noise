@@ -209,7 +209,7 @@ func (h *DataHandler) initNonCriticalDispatch() {
 		BlockTypePathResponse:      func(block *SSU2Block) error { return h.handlePathResponse(block.Data) },
 		BlockTypeDateTime:          func(block *SSU2Block) error { return h.handleDateTime(block.Data) },
 		BlockTypeOptions:           func(block *SSU2Block) error { return h.handleOptions(block.Data) },
-		BlockTypeRouterInfo:        func(block *SSU2Block) error { return h.handleRouterInfo(block.Data) },
+		BlockTypeRouterInfo:        h.handleRouterInfo,
 		BlockTypeAddress:           func(block *SSU2Block) error { return h.handleAddress(block.Data) },
 		BlockTypeACK:               h.handleACK,
 		BlockTypeNextNonce:         func(block *SSU2Block) error { return h.handleNextNonce(block.Data) },

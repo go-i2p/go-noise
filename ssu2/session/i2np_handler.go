@@ -1,8 +1,11 @@
 package session
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/binary"
 	"fmt"
+	"io"
 
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -407,15 +410,37 @@ func (h *DataHandler) handleOptions(data []byte) error {
 }
 
 // handleRouterInfo processes a RouterInfo block (Type 2).
-func (h *DataHandler) handleRouterInfo(data []byte) error {
-	flog("handleRouterInfo", logger.Fields{"dataLength": len(data)}).Debug("Received RouterInfo block")
+//
+// Per ssu2.rst §"RouterInfo" the block carries a mandatory flag+frag prefix
+// and the RouterInfo may be gzip compressed (flag bit 1). The prefix is
+// stripped and the payload is decompressed when needed before handing the raw
+// RouterInfo bytes to the callback, so consumers receive exactly what they
+// would from an I2NP DatabaseStore.
+func (h *DataHandler) handleRouterInfo(block *SSU2Block) error {
+	flog("handleRouterInfo", logger.Fields{"dataLength": len(block.Data)}).Debug("Received RouterInfo block")
 
 	cbs := h.getCallbacks()
-	if cbs.OnRouterInfo != nil {
-		return cbs.OnRouterInfo(data)
+	if cbs.OnRouterInfo == nil {
+		return nil
 	}
 
-	return nil
+	decoded, err := DecodeRouterInfoBlock(block)
+	if err != nil {
+		h.incrementStat(&h.stats.MessagesDropped)
+		return oops.Wrapf(err, "malformed RouterInfo block")
+	}
+
+	riBytes := decoded.Data
+	if decoded.Compressed {
+		decompressed, err := gzipDecompress(riBytes)
+		if err != nil {
+			h.incrementStat(&h.stats.MessagesDropped)
+			return oops.Wrapf(err, "failed to gunzip RouterInfo block")
+		}
+		riBytes = decompressed
+	}
+
+	return cbs.OnRouterInfo(riBytes)
 }
 
 // handleAddress processes an Address block (Type 13).
@@ -440,4 +465,28 @@ func (h *DataHandler) handleACK(block *SSU2Block) error {
 
 	// ACK blocks are typically handled by the ack_handler component
 	return nil
+}
+
+// gzipDecompress inflates a gzip-compressed payload. SSU2 RouterInfo blocks
+// may optionally be gzip compressed (flag bit 1) per ssu2.rst §"RouterInfo".
+// The output is capped to a sane multiple of the compressed size to keep a
+// hostile "zip bomb" from exhausting memory.
+func gzipDecompress(compressed []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to create gzip reader")
+	}
+	defer reader.Close()
+
+	const maxInflated = 1 << 20 // 1 MiB, well above any real RouterInfo
+	limited := io.LimitReader(reader, maxInflated+1)
+
+	out, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to gunzip payload")
+	}
+	if len(out) > maxInflated {
+		return nil, oops.Errorf("gunzipped payload exceeds %d bytes", maxInflated)
+	}
+	return out, nil
 }

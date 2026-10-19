@@ -122,6 +122,8 @@ const (
 
 var (
 	NewSSU2Block              = wire.NewSSU2Block
+	DecodeRouterInfoBlock     = wire.DecodeRouterInfoBlock
+	EncodeRouterInfoBlock     = wire.EncodeRouterInfoBlock
 	NewBlockRouter            = wire.NewBlockRouter
 	SerializeBlocks           = wire.SerializeBlocks
 	PadPayloadToMin           = wire.PadPayloadToMin

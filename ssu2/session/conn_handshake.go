@@ -368,14 +368,10 @@ func (h *SSU2Conn) installBothHeaderKeys() error {
 // sendSessionConfirmed creates and sends SessionConfirmed fragments.
 func (h *SSU2Conn) sendSessionConfirmed() error {
 	flog("sendSessionConfirmed", logger.Fields{"remoteConnectionID": h.remoteConnectionID.Load()}).Debug("Creating and sending SessionConfirmed fragments")
-	// Use LocalRouterInfo if provided; fall back to RouterHash for backward compatibility.
-	// Note: passing RouterHash instead of a full RouterInfo will fail strict static key verification.
+	// ssu2.rst §"RouterInfo" requires Alice to send her full RouterInfo in the
+	// Session Confirmed. A 32-byte RouterHash is not a RouterInfo, so there is
+	// no fallback: send the block only when the local RouterInfo is available.
 	routerInfoBytes := h.config.LocalRouterInfo
-	if len(routerInfoBytes) == 0 {
-		// Legacy fallback: transmit RouterHash (32 bytes) instead of full RouterInfo.
-		// This maintains backward compatibility but will not pass verifyPeerRouterInfoStaticKey.
-		routerInfoBytes = h.config.RouterHash[:]
-	}
 	fragments, err := h.handshakeHandler.CreateSessionConfirmedFragments(h.remoteConnectionID.Load(), 0, routerInfoBytes)
 	if err != nil {
 		return oops.Wrapf(err, "failed to create SessionConfirmed")

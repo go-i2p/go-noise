@@ -21,9 +21,9 @@ import (
 //
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type Session struct {
-	mu               sync.Mutex
-	RemotePublicKey  [32]byte
-	DHRatchet        *ratchet.DHRatchet
+	mu              sync.Mutex
+	RemotePublicKey [32]byte
+	DHRatchet       *ratchet.DHRatchet
 	// sendRootKey and recvRootKey are the per-direction "next root key"
 	// values maintained by the DH Ratchet KDF. The spec keeps an independent
 	// nextRootKey for the inbound and outbound directions (ecies.rst
@@ -31,8 +31,8 @@ type Session struct {
 	// this direction"). Before each PerformRatchet call the Session selects
 	// the appropriate direction's root key via DHRatchet.SetRootKey and
 	// stores the returned nextRootKey back here.
-	sendRootKey [32]byte
-	recvRootKey [32]byte
+	sendRootKey      [32]byte
+	recvRootKey      [32]byte
 	SymmetricRatchet *ratchet.SymmetricRatchet // sending chain
 	TagRatchet       *ratchet.TagRatchet       // sending tags
 	// RecvSymmetricRatchet is the receiving chain ratchet.

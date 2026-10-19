@@ -1640,18 +1640,47 @@ func TestDataHandler_MetadataBlockCallbacks(t *testing.T) {
 	})
 
 	t.Run("RouterInfo callback", func(t *testing.T) {
-		testData := make([]byte, 100)
-		block := NewSSU2Block(BlockTypeRouterInfo, testData)
+		// RouterInfo blocks carry a mandatory flag+frag prefix (ssu2.rst
+		// §"RouterInfo"); the handler strips it before invoking the callback,
+		// so the callback must receive exactly the RouterInfo bytes.
+		routerInfo := make([]byte, 100)
+		block, err := EncodeRouterInfoBlock(routerInfo, false, false)
+		require.NoError(t, err)
 		payload, _ := SerializeBlocks([]*SSU2Block{block})
 		packet := &SSU2Packet{
 			MessageType: MessageTypeData,
 			Payload:     payload,
 		}
 
-		_, err := handler.ProcessDataPacket(packet)
+		_, err = handler.ProcessDataPacket(packet)
 		assert.NoError(t, err)
 		assert.True(t, routerInfoCalled)
-		assert.Equal(t, testData, routerInfoData)
+		assert.Equal(t, routerInfo, routerInfoData)
+	})
+
+	t.Run("RouterInfo callback rejects missing prefix", func(t *testing.T) {
+		// A type-2 block too short to contain flag+frag is malformed. RouterInfo
+		// is a non-critical block, so processing continues, but the malformed
+		// bytes must never reach the callback (callers store them verbatim).
+		var called bool
+		negative := NewDataHandler(100)
+		negative.SetCallbacks(DataHandlerCallbacks{
+			OnRouterInfo: func(data []byte) error {
+				called = true
+				return nil
+			},
+		})
+
+		block := NewSSU2Block(BlockTypeRouterInfo, make([]byte, 2))
+		payload, _ := SerializeBlocks([]*SSU2Block{block})
+		packet := &SSU2Packet{
+			MessageType: MessageTypeData,
+			Payload:     payload,
+		}
+
+		_, err := negative.ProcessDataPacket(packet)
+		assert.NoError(t, err)
+		assert.False(t, called, "malformed RouterInfo block must not reach the callback")
 	})
 
 	t.Run("Address callback", func(t *testing.T) {
