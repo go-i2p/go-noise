@@ -7,17 +7,18 @@ package ratchet
 //
 //   - elg2: Ephemeral public keys are Elligator2-encoded to be
 //     indistinguishable from random bytes on the wire.
-//   - hs2: The responder's static public key pre-message uses Hash(s)
-//     instead of the raw key, allowing initiators to start a handshake
-//     knowing only the responder's identity hash.
+//   - hs2: An extra MixHash() is applied before the second handshake message
+//     (the New Session Reply) to mix in the session tag value, per ecies.rst
+//     §"KDF for Initial ChainKey". The pre-message MixHash of the responder's
+//     static key uses the RAW key (h = SHA256(h || bpk)), exactly as in
+//     ecies.rst §"KDF for Flags/Static Key Section" and in the canonical
+//     github.com/go-i2p/crypto/ecies implementation.
 //
 // Wire format for New Session (IK message 1):
 //
 //	[Elligator2(ephemeral_pub)(32)] + [EncryptAndHash(static_pub)(48)] + [EncryptAndHash(payload)(N+16)]
 
 import (
-	"crypto/sha256"
-
 	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/elligator2"
 	"github.com/go-i2p/logger"
@@ -43,16 +44,25 @@ const (
 )
 
 // initNoiseIK initializes the Noise symmetric state for the IKelg2+hs2 handshake.
-// The protocol name is hashed (since it exceeds 32 bytes), then the null prologue
-// is mixed in (as required by the Noise spec §6 "Prologue" and the I2P ECIES-X25519-AEAD-Ratchet
-// spec KDF section), and finally the responder's static key hash is mixed in per hs2.
+// The protocol name is hashed (since it exceeds 32 bytes), the null prologue is
+// mixed in, and then the responder's static public key is mixed in RAW.
 //
-// Initialization transcript:
+// Initialization transcript (ecies.rst §"KDF for Initial ChainKey" and
+// §"KDF for Flags/Static Key Section Encrypted Contents"):
 //
-//	h = SHA-256(protocol_name)           InitializeSymmetric
+//	h = SHA-256(protocol_name)      InitializeSymmetric
 //	ck = h
-//	h = SHA-256(h || "")                 MixHash(null prologue)  — required by spec
-//	h = SHA-256(h || SHA-256(rs))        MixHash(Hash(rs))       — hs2 pre-message
+//	h = SHA-256(h || "")            MixHash(null prologue)
+//	h = SHA-256(h || bpk)           MixHash(bpk) — raw static key, NOT Hash(bpk)
+//
+// The "+hs2" token does NOT mean "hash the static key". Per ecies.rst the
+// protocol name is modified "to indicate that MixHash() is called before the
+// second message to mix in the tag value" — that extra MixHash(tag) is applied
+// in writeNoiseIKMessage2/readNoiseIKMessage2 (see noise_ik_nsr.go), matching
+// the canonical implementation in github.com/go-i2p/crypto/ecies (utils.go
+// deriveOneTimeKey uses h = SHA256(h || bpk)). The same hsN convention is used
+// by NTCP2 (+hs2+hs3 = MixHash of message-1/message-2 padding) and SSU2
+// (+hs1+hs2+hs3 = MixHash of each handshake header).
 func initNoiseIK(responderStaticPub [32]byte) *noise.SymmetricState {
 	flog("initNoiseIK").Debug("Initializing Noise IKelg2+hs2 symmetric state")
 	ns := &noise.SymmetricState{}
@@ -66,9 +76,8 @@ func initNoiseIK(responderStaticPub [32]byte) *noise.SymmetricState {
 	// (Java I2P, i2pd) which apply this step correctly.
 	ns.MixHash([]byte{})
 
-	// hs2 pre-message: MixHash(Hash(rs)) per the I2P ECIES-X25519-AEAD-Ratchet spec.
-	rsHash := sha256.Sum256(responderStaticPub[:])
-	ns.MixHash(rsHash[:])
+	// Pre-message: MixHash(bpk) with the raw responder static public key.
+	ns.MixHash(responderStaticPub[:])
 
 	return ns
 }
@@ -199,7 +208,7 @@ func writeNoiseIKMessage1Unbound(
 ) ([]byte, *sessionKeys, error) {
 	flog("writeNoiseIKMessage1Unbound", logger.Fields{"payload_len": len(payload)}).Debug("Constructing unbound Noise N New Session message")
 	// Same IK initializer as the bound variant: identical protocol name, null
-	// prologue MixHash, and Hash(rs) pre-message. Spec §1f: "we use the same
+	// prologue MixHash, and raw rs pre-message. Spec §1f: "we use the same
 	// initializer for both the IK pattern (bound sessions) and for N pattern
 	// (unbound sessions)."
 	ns := initNoiseIK(responderStaticPub)

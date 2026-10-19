@@ -273,16 +273,21 @@ func TestNoiseIKState_ProtocolName(t *testing.T) {
 }
 
 // TestInitNoiseIK_NullPrologue verifies the exact handshake transcript for
-// initNoiseIK, pinning the spec-required null-prologue step.
+// initNoiseIK, pinning the spec-required null-prologue step and the RAW
+// static-key pre-message.
 //
-// The I2P ECIES-X25519-AEAD-Ratchet spec mandates this three-step sequence:
+// The I2P ECIES-X25519-AEAD-Ratchet spec (ecies.rst §"KDF for Initial
+// ChainKey" + §"KDF for Flags/Static Key Section") mandates this sequence:
 //
-//	h0 = SHA-256(protocolName)           InitializeSymmetric
-//	h1 = SHA-256(h0 || "")               MixHash(null prologue)
-//	h2 = SHA-256(h1 || SHA-256(respPub)) MixHash(Hash(rs)) — hs2
+//	h0 = SHA-256(protocolName)        InitializeSymmetric
+//	h1 = SHA-256(h0 || "")            MixHash(null prologue)
+//	h2 = SHA-256(h1 || respPub)       MixHash(bpk) — raw key, NOT SHA-256(bpk)
 //
-// If any step is reordered or omitted, the test will fail with a mismatch,
-// signaling an interoperability break with conformant I2P routers.
+// The "+hs2" token refers to the extra MixHash(tag) applied before the second
+// message (see noise_ik_nsr.go), not to hashing the static key. This matches
+// github.com/go-i2p/crypto/ecies deriveOneTimeKey. If any step is reordered,
+// omitted, or the static key is hashed, the test fails, signaling an
+// interoperability break with conformant I2P routers.
 func TestInitNoiseIK_NullPrologue(t *testing.T) {
 	var respPub [32]byte
 	_, err := rand.Read(respPub[:])
@@ -296,11 +301,11 @@ func TestInitNoiseIK_NullPrologue(t *testing.T) {
 	// Step 2: MixHash(null prologue) — h1 = SHA-256(h0 || "")
 	h1 := sha256.Sum256(h0[:])
 
-	// Step 3: MixHash(Hash(rs)) per hs2 — h2 = SHA-256(h1 || SHA-256(respPub))
-	rsHash := sha256.Sum256(respPub[:])
+	// Step 3: MixHash(bpk) with the raw responder static key —
+	// h2 = SHA-256(h1 || respPub). NOT SHA-256(respPub).
 	hasher := sha256.New()
 	hasher.Write(h1[:])
-	hasher.Write(rsHash[:])
+	hasher.Write(respPub[:])
 	var expectedH [32]byte
 	copy(expectedH[:], hasher.Sum(nil))
 
