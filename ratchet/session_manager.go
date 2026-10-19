@@ -62,7 +62,7 @@ type SessionManager struct {
 
 	// nsReplayCache tracks recently-seen NS ephemeral keys (first 32 bytes of the
 	// NS message) to prevent replay attacks within the freshness window.
-	// Spec ref: ratchet.md §"DateTime" — "Bob must implement a Bloom filter or
+	// Spec ref: ecies.rst §"DateTime" — "Bob must implement a Bloom filter or
 	// other mechanism to prevent replay attacks, if the time is valid."
 	nsReplayCache *replaycache.TTLCache
 }

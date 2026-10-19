@@ -14,7 +14,7 @@ import (
 // followed by TagAndKeyGenKeys, producing the root key, session tag chain key,
 // and symmetric key chain key for one direction.
 //
-// Spec ref: ratchet.md §"DH Ratchet KDF" + §"Tag and Key Generation" —
+// Spec ref: ecies.rst §"DH Ratchet KDF" + §"Tag and Key Generation" —
 //
 //	// DH_INITIALIZE(rootKey, k):
 //	keydata = HKDF(rootKey, k, "KDFDHRatchetStep", 64)
@@ -44,7 +44,7 @@ func deriveDirectionalTagSet(rootKey [32]byte, k [32]byte) (nextRootKey, sessTag
 // deriveSessionKeysFromSecret performs the spec's split() operation on the
 // final Noise handshake chain key, producing the directional keys k_ab and k_ba.
 //
-// Spec ref: ratchet.md §"Data Phase" —
+// Spec ref: ecies.rst §"Data Phase" —
 //
 //	keydata = HKDF(chainKey, ZEROLEN, "", 64)
 //	k_ab = keydata[0:32]  (initiator → responder)
@@ -179,7 +179,7 @@ func generateAndTrackSessionTag(session *Session) ([8]byte, error) {
 //	sessTag_ck = keydata[0:32]
 //	symmKey_ck = keydata[32:64]
 //
-// Spec ref: ratchet.md §"DH INITIALIZATION KDF".
+// Spec ref: ecies.rst §"DH INITIALIZATION KDF".
 func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte, err error) {
 	flog("deriveTagAndSymKeysFromChainKey").Debug("deriving tag and symmetric keys via TagAndKeyGenKeys")
 	keydata, err := kdf.StandardHKDF(chainKey[:], nil, []byte(hkdfInfoTagAndKeyGenKeys), 64)
@@ -195,7 +195,7 @@ func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte
 // and applies the resulting chain key to that direction's symmetric and tag
 // ratchets.
 //
-// Per the spec's DH Ratchet KDF (ratchet.md §"DH Ratchet KDF"), each direction
+// Per the spec's DH Ratchet KDF (ecies.rst §"DH Ratchet KDF"), each direction
 // maintains its own nextRootKey: "rootKey = nextRootKey // from previous
 // tagset in this direction". The conformant DHRatchet.PerformRatchet performs
 // the X25519 DH, derives tagsetKey = HKDF(sharedSecret, ZEROLEN,

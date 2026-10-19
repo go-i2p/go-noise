@@ -341,7 +341,7 @@ func TestSendTagPollution_RecvWindowStillWorks(t *testing.T) {
 // recvKeyCache. The next attempt to decrypt the same wire-frame finds no key
 // for the counter and fails with "no counter in recv window", preventing replay.
 //
-// Spec ref: ratchet.md §"Existing Session" — each message key is consumed once.
+// Spec ref: ecies.rst §"Existing Session" — each message key is consumed once.
 func TestESReplayRejection(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	bobDestHash := mustBootstrapSession(t, alice, bob)
@@ -363,7 +363,7 @@ func TestESReplayRejection(t *testing.T) {
 // TestESBeforeNSRRejected verifies that the initiator cannot send Existing
 // Session messages before it has received the New Session Reply.
 //
-// Spec ref: ratchet.md §1g — "Alice must receive one of Bob's NSR messages
+// Spec ref: ecies.rst §1g — "Alice must receive one of Bob's NSR messages
 // before sending Existing Session messages."
 func TestESBeforeNSRRejected(t *testing.T) {
 	alice, bob, bobDestHash, sessionHash := mustSendNS(t)
@@ -395,7 +395,7 @@ func TestESBeforeNSRRejected(t *testing.T) {
 // live session (resetting its ratchet chain). An old NS has a stale timestamp
 // that falls outside the asymmetric freshness window.
 //
-// Spec ref: ratchet.md §1b — DateTime block required; freshness prevents replay.
+// Spec ref: ecies.rst §1b — DateTime block required; freshness prevents replay.
 func TestNSDateTimeFreshnessRejected(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 

@@ -26,7 +26,7 @@ type Session struct {
 	DHRatchet        *ratchet.DHRatchet
 	// sendRootKey and recvRootKey are the per-direction "next root key"
 	// values maintained by the DH Ratchet KDF. The spec keeps an independent
-	// nextRootKey for the inbound and outbound directions (ratchet.md
+	// nextRootKey for the inbound and outbound directions (ecies.rst
 	// §"DH Ratchet KDF": "rootKey = nextRootKey // from previous tagset in
 	// this direction"). Before each PerformRatchet call the Session selects
 	// the appropriate direction's root key via DHRatchet.SetRootKey and
@@ -43,7 +43,7 @@ type Session struct {
 	MessageCounter uint32
 	// recvWindowBase is the lowest ES message counter we will still accept.
 	// It advances as leading counters are consumed.
-	// Spec ref: ratchet.md §"Existing Session" — ≤128-message receive window.
+	// Spec ref: ecies.rst §"Existing Session" — ≤128-message receive window.
 	recvWindowBase uint32
 	// recvFillMark is the next counter for which we have NOT yet pre-derived a
 	// message key.  Keys for [recvWindowBase, recvFillMark) live in recvKeyCache.
@@ -72,7 +72,7 @@ type Session struct {
 
 	// sendKeyID is the current send-direction DH ratchet key ID.
 	// Incremented each time we generate a new forward key.
-	// Spec ref: ratchet.md §"Key and Tag Set IDs".
+	// Spec ref: ecies.rst §"Key and Tag Set IDs".
 	sendKeyID uint16
 	// recvKeyID is the current receive-direction DH ratchet key ID.
 	// Updated when we receive a NextKey block from the peer.
@@ -93,14 +93,14 @@ type Session struct {
 
 	// pendingAcks holds Ack blocks to include in the next outgoing ES message.
 	// These are queued when an AckRequest block is received from the peer.
-	// Spec ref: ratchet.md §"Ack" and §"Ack Request".
+	// Spec ref: ecies.rst §"Ack" and §"Ack Request".
 	pendingAcks []PayloadBlock
 	// lastAckedEntries records the most recently received Ack entries from the peer.
 	// Callers can inspect this to confirm message delivery.
 	lastAckedEntries []AckEntry
 
 	// awaitingFirstES is set to true on the responder (Bob) after sending an NSR.
-	// The spec (ratchet.md §"Notes" after §1g) states:
+	// The spec (ecies.rst §"Notes" after §1g) states:
 	//   "Bob must receive an ES message from Alice before sending ES messages."
 	// While this flag is true, encryptExistingSession will reject outbound ES.
 	// It is cleared when the first inbound ES message is successfully decrypted.
@@ -111,7 +111,7 @@ type Session struct {
 // The isInitiator flag determines key direction: the initiator sends on k_ab
 // and receives on k_ba; the responder sends on k_ba and receives on k_ab.
 //
-// Spec ref: ratchet.md §"Data Phase" — after split() produces k_ab and k_ba,
+// Spec ref: ecies.rst §"Data Phase" — after split() produces k_ab and k_ba,
 // each direction gets its own DH_INITIALIZE + TagAndKeyGenKeys:
 //
 //	tagset_ab = DH_INITIALIZE(chainKey, k_ab)
@@ -136,7 +136,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 	}
 	// The recv-direction nextRootKey is the KDF input for the first DH ratchet
 	// step in the receive direction. The spec maintains an independent
-	// nextRootKey per direction (ratchet.md §"DH Ratchet KDF"), so both are
+	// nextRootKey per direction (ecies.rst §"DH Ratchet KDF"), so both are
 	// stored on the Session.
 	recvRootKey, recvTagCK, recvSymCK, err := deriveDirectionalTagSet(keys.chainKey, recvK)
 	if err != nil {
@@ -164,7 +164,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 		LastUsed:             time.Now(),
 		MessageCounter:       1,
 		// recvWindowBase starts at 1: message 0 is the NS handshake, not an ES ratchet message.
-		// Spec ref: ratchet.md §"Existing Session message" — first ES counter is 1.
+		// Spec ref: ecies.rst §"Existing Session message" — first ES counter is 1.
 		recvWindowBase:     1,
 		recvFillMark:       1,
 		recvKeyCache:       make(map[uint32][32]byte),
@@ -178,7 +178,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 // outgoing Existing Session message. The returned blocks are removed from the
 // session's pending queue.
 //
-// Spec ref: ratchet.md §"Ack" — after receiving an AckRequest block, the
+// Spec ref: ecies.rst §"Ack" — after receiving an AckRequest block, the
 // recipient should include an Ack block in the next outgoing message.
 //
 // Must be called with session.mu held.

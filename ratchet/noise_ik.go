@@ -89,7 +89,7 @@ func resumeNoiseHandshakeState(ns *noise.SymmetricState, hs *noiseHandshakeState
 }
 
 // mixKeyCKOnly updates only the chaining key via a single-output HKDF.
-// Per I2P ratchet.md §1g, the "ee" handshake token in the NSR uses:
+// Per I2P ecies.rst §1g, the "ee" handshake token in the NSR uses:
 //
 //	ck = HKDF(chainKey, DH(e, re), "", 32)
 //
@@ -201,7 +201,7 @@ func writeNoiseIKMessage1(
 //   - No Token ss: no second DH, no new MixKey — the nonce counter is NOT reset
 //   - Payload is encrypted with n=1 (one above the flags section)
 //
-// Spec ref: ratchet.md §1c, §1f "KDF for Payload Section (without Alice static key)"
+// Spec ref: ecies.rst §1c, §1f "KDF for Payload Section (without Alice static key)"
 func writeNoiseIKMessage1Unbound(
 	responderStaticPub [32]byte,
 	payload []byte,

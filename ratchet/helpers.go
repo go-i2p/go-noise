@@ -34,16 +34,16 @@ const (
 
 	// hkdfInfoDHRatchetStep is the HKDF info string for the DH initialization KDF.
 	// Used to derive directional chain keys from a root key.
-	// Spec ref: ratchet.md §"DH INITIALIZATION KDF" — HKDF(rootKey, k, "KDFDHRatchetStep", 64).
+	// Spec ref: ecies.rst §"DH INITIALIZATION KDF" — HKDF(rootKey, k, "KDFDHRatchetStep", 64).
 	hkdfInfoDHRatchetStep = "KDFDHRatchetStep"
 
 	// hkdfInfoTagAndKeyGenKeys is the HKDF info string for deriving session tag
 	// and symmetric key chain keys from a chain key after DH ratchet.
-	// Spec ref: ratchet.md §"DH INITIALIZATION KDF" — HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64).
+	// Spec ref: ecies.rst §"DH INITIALIZATION KDF" — HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64).
 	hkdfInfoTagAndKeyGenKeys = "TagAndKeyGenKeys"
 
 	// tagWindowSize is the number of pre-generated tags per session.
-	// Spec ref: ratchet.md §"Parameters" — ES tagset 0 size: tsmin=24.
+	// Spec ref: ecies.rst §"Parameters" — ES tagset 0 size: tsmin=24.
 	tagWindowSize = 24
 
 	// MaxMessageNumber is the maximum AEAD message number per the spec,
@@ -54,7 +54,7 @@ const (
 	MaxMessageNumber = ratchet.MaxMessagesPerTagset
 
 	// recvWindowSize is the number of ES message counters we pre-derive keys for
-	// and accept out-of-order. Fixed at 128 per I2P spec ratchet.md §Existing Session.
+	// and accept out-of-order. Fixed at 128 per I2P spec ecies.rst §Existing Session.
 	recvWindowSize = 128
 )
 

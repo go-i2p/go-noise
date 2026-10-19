@@ -9,11 +9,11 @@ import (
 
 const (
 	// defaultNSMaxPastAge is the maximum acceptable age of the DateTime block
-	// in a New Session message. Default: 5 minutes per ratchet.md §"Parameters".
+	// in a New Session message. Default: 5 minutes per ecies.rst §"Parameters".
 	defaultNSMaxPastAge = 5 * time.Minute
 
 	// defaultNSMaxFutureAge is the maximum acceptable forward skew of the DateTime
-	// block in a New Session message. Default: 2 minutes per ratchet.md §"Parameters".
+	// block in a New Session message. Default: 2 minutes per ecies.rst §"Parameters".
 	defaultNSMaxFutureAge = 2 * time.Minute
 
 	// nsReplayCacheMaxSize is the maximum number of NS ephemeral keys tracked
@@ -51,12 +51,12 @@ func WithNSMaxFutureAge(d time.Duration) SessionManagerOption {
 }
 
 // validateNSDateTimeFreshness parses the decrypted NS payload, locates the
-// required DateTime block (first block per ratchet.md §1b), and verifies that
+// required DateTime block (first block per ecies.rst §1b), and verifies that
 // its timestamp is within the asymmetric freshness window:
 //   - Past: at most nsMaxPastAge ago (default 5 minutes)
 //   - Future: at most nsMaxFutureAge ahead (default 2 minutes)
 //
-// Spec ref: ratchet.md §"Parameters" — max clock skew: −5 minutes to +2 minutes.
+// Spec ref: ecies.rst §"Parameters" — max clock skew: −5 minutes to +2 minutes.
 func (sm *SessionManager) validateNSDateTimeFreshness(payload []byte) error {
 	flog("validateNSDateTimeFreshness", logger.Fields{"payload_len": len(payload)}).Debug("Validating NS DateTime freshness")
 	blocks, err := ParsePayload(payload)

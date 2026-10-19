@@ -684,7 +684,7 @@ func TestWireFormat_NextKey_FlagEncoding(t *testing.T) {
 }
 
 // ============================================================================
-// ValidateNewSessionPayload — spec compliance (ratchet.md §1b)
+// ValidateNewSessionPayload — spec compliance (ecies.rst §1b)
 // ============================================================================
 
 // TestValidateNewSessionPayload_AcceptsValidPayload verifies that a payload
@@ -719,7 +719,7 @@ func TestValidateNewSessionPayload_RejectsNilPayload(t *testing.T) {
 }
 
 // TestValidateNewSessionPayload_RejectsNonDateTimeFirstBlock verifies that a
-// payload whose first block is not BlockDateTime is rejected.  Per ratchet.md §1b
+// payload whose first block is not BlockDateTime is rejected.  Per ecies.rst §1b
 // the DateTime block MUST be the first block in a New Session payload.
 func TestValidateNewSessionPayload_RejectsNonDateTimeFirstBlock(t *testing.T) {
 	// Build raw bytes: Padding block (type=0xFE, size=2) then DateTime block.
@@ -743,7 +743,7 @@ func TestBuildNSPayload_ContainsDateTimeFirstBlock(t *testing.T) {
 	require.NoError(t, parseErr, "BuildNSPayload output must be parseable")
 	require.NotEmpty(t, blocks, "BuildNSPayload must produce at least one block")
 	assert.Equal(t, BlockDateTime, blocks[0].Type,
-		"first block must be BlockDateTime per ratchet.md §1b")
+		"first block must be BlockDateTime per ecies.rst §1b")
 }
 
 // TestBuildNSPayload_RoundTrip verifies that a payload created with BuildNSPayload

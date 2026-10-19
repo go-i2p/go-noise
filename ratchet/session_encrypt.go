@@ -53,7 +53,7 @@ func (sm *SessionManager) EncryptGarlicMessage(
 }
 
 // encryptNewSession creates a new session and encrypts using the Noise IK handshake.
-// The payload must begin with a DateTime block per ratchet.md §1b; ValidateNewSessionPayload
+// The payload must begin with a DateTime block per ecies.rst §1b; ValidateNewSessionPayload
 // is called here to surface non-compliant payloads immediately rather than silently
 // producing an interoperability-breaking message.
 func (sm *SessionManager) encryptNewSession(
@@ -144,7 +144,7 @@ func (sm *SessionManager) encryptExistingSession(
 	// decryptIncomingNSR, so a non-nil value here means NSR has not arrived yet.
 	if session.isInitiator && session.handshakeState != nil {
 		return nil, oops.Errorf(
-			"spec violation (ratchet.md §1g): initiator must receive New Session Reply before sending Existing Session messages",
+			"spec violation (ecies.rst §1g): initiator must receive New Session Reply before sending Existing Session messages",
 		)
 	}
 
@@ -154,7 +154,7 @@ func (sm *SessionManager) encryptExistingSession(
 	// and cleared when the first inbound ES is decrypted for this session.
 	if !session.isInitiator && session.awaitingFirstES {
 		return nil, oops.Errorf(
-			"spec violation (ratchet.md §Notes): responder must receive an ES message from initiator before sending ES",
+			"spec violation (ecies.rst §Notes): responder must receive an ES message from initiator before sending ES",
 		)
 	}
 

@@ -133,5 +133,13 @@ The test suite includes 46+ tests covering:
 
 ## Specification
 
-For the full I2P ECIES-X25519-AEAD-Ratchet specification, see
-[`ratchet.md`](ratchet.md) or the [official spec](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst).
+For the full I2P ECIES-X25519-AEAD-Ratchet specification, see the official spec:
+[ecies.rst](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst)
+(`lastupdated: 2025-06`, `accuratefor: 0.9.67`). The original proposal is
+[proposal 144](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/proposals/144-ecies-x25519-aead-ratchet.rst),
+but `ecies.rst` is the design of record and is what the code citations refer to.
+
+> Do not vendor a copy of the spec into this package. A previously checked-in
+> copy (`ratchet.md`) had been edited away from the official text (notably the
+> `hs2` pre-message), and code citations anchored to it propagated the error.
+> Cite `ecies.rst` sections directly instead.

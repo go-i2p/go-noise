@@ -64,7 +64,7 @@ func attemptDHRatchetRotation(session *Session) error {
 func performDHRatchetStep(session *Session) error {
 	// Refuse the step if the send key ID is already at the maximum.
 	// The session must be replaced once all tag sets are exhausted.
-	// Spec ref: ratchet.md §"Key and Tag Set IDs".
+	// Spec ref: ecies.rst §"Key and Tag Set IDs".
 	if session.sendKeyID >= MaxKeyID {
 		return oops.Errorf(
 			"send key ID %d has reached maximum %d, session must be replaced",

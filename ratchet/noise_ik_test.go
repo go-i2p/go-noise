@@ -156,7 +156,7 @@ func TestNoiseHKDF1_MatchesFirstOutputOfHKDF2(t *testing.T) {
 
 // TestNoiseIKState_MixKeyCKOnly verifies that mixKeyCKOnly updates only the
 // chaining key (ck) and does NOT update the cipher key (k), nonce (n), or
-// hasKey flag. Per I2P ratchet.md §1g, the "ee" handshake token uses a
+// hasKey flag. Per I2P ecies.rst §1g, the "ee" handshake token uses a
 // single-output HKDF that only advances the chaining key.
 func TestNoiseIKState_MixKeyCKOnly(t *testing.T) {
 	ns := initNoiseIKWithMixedKey(t)
@@ -186,7 +186,7 @@ func TestNoiseIKState_MixKeyCKOnly(t *testing.T) {
 }
 
 // TestNSR_EE_DoesNotSetCipherKey verifies that the "ee" step in the NSR
-// handshake does not set a cipher key, matching the I2P ratchet.md §1g spec.
+// handshake does not set a cipher key, matching the I2P ecies.rst §1g spec.
 // The cipher key should only be set by the subsequent "se" step.
 func TestNSR_EE_DoesNotSetCipherKey(t *testing.T) {
 	ns := initFreshNoiseIK(t)

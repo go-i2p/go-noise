@@ -10,7 +10,7 @@ package ratchet
 // The responder (Bob) writes message 2. The initiator (Alice) reads message 2.
 // Both sides retain handshake state (h, ck) from message 1 to continue the handshake.
 //
-// Spec ref: ratchet.md §"1g) New Session Reply format"
+// Spec ref: ecies.rst §"1g) New Session Reply format"
 
 import (
 	"github.com/go-i2p/crypto/chacha20poly1305"
@@ -33,11 +33,11 @@ const (
 	nsrHeaderSize = 8 + 32 + 16
 
 	// hkdfInfoSessionReplyTags is the info string for deriving the NSR reply tagset key.
-	// Spec ref: ratchet.md §"KDF for Reply TagSet".
+	// Spec ref: ecies.rst §"KDF for Reply TagSet".
 	hkdfInfoSessionReplyTags = "SessionReplyTags"
 
 	// hkdfInfoAttachPayloadKDF is the info string for deriving the NSR payload encryption key.
-	// Spec ref: ratchet.md §"KDF for Payload Section Encrypted Contents".
+	// Spec ref: ecies.rst §"KDF for Payload Section Encrypted Contents".
 	hkdfInfoAttachPayloadKDF = "AttachPayloadKDF"
 )
 
@@ -152,7 +152,7 @@ func writeNoiseIKMessage2(
 	ns.MixHash(ephPubBytes)
 
 	// "ee" pattern: DH(besk, aepk)
-	// Per I2P ratchet.md §1g, "ee" uses single-output HKDF: only ck is updated.
+	// Per I2P ecies.rst §1g, "ee" uses single-output HKDF: only ck is updated.
 	// The cipher key (k) is not modified until the subsequent "se" step.
 	sharedEE, err := curve25519.SharedKey(ephPrivBytes, hs.remoteEphPub[:])
 	if err != nil {
@@ -235,7 +235,7 @@ func readNoiseIKMessage2(
 	ns.MixHash(ephPubBytes)
 
 	// "ee" pattern: DH(aesk, bepk)
-	// Per I2P ratchet.md §1g, "ee" uses single-output HKDF: only ck is updated.
+	// Per I2P ecies.rst §1g, "ee" uses single-output HKDF: only ck is updated.
 	// The cipher key (k) is not modified until the subsequent "se" step.
 	sharedEE, err := curve25519.SharedKey(hs.localEphPriv, ephPubBytes)
 	if err != nil {
@@ -303,7 +303,7 @@ func deriveNSRPayloadCipher(ns *noise.SymmetricState) (*chacha20poly1305.AEAD, [
 }
 
 // encryptNSRPayload performs the split() and payload encryption for NSR.
-// Spec ref: ratchet.md §"KDF for Payload Section Encrypted Contents".
+// Spec ref: ecies.rst §"KDF for Payload Section Encrypted Contents".
 func encryptNSRPayload(ns *noise.SymmetricState, payload []byte) ([]byte, *nsrSessionKeys, error) {
 	flog("encryptNSRPayload", logger.Fields{"payload_len": len(payload)}).Debug("Encrypting NSR payload")
 	aead, kAB, kBA, err := deriveNSRPayloadCipher(ns)

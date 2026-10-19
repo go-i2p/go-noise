@@ -464,7 +464,7 @@ func TestGetPublicKey_DifferentManagers(t *testing.T) {
 
 // TestPerformDHRatchetStep_IncrementsSendKeyID verifies that the session's
 // sendKeyID is incremented after a successful DH ratchet step.
-// Spec ref: ratchet.md §"Key and Tag Set IDs" — tag set ID advances when
+// Spec ref: ecies.rst §"Key and Tag Set IDs" — tag set ID advances when
 // the sender issues a new forward key.
 func TestPerformDHRatchetStep_IncrementsSendKeyID(t *testing.T) {
 	session := createTestSession(t, true)
@@ -513,7 +513,7 @@ func TestPerformDHRatchetStep_ConsecutiveRotations_KeyIDsAdvance(t *testing.T) {
 
 // TestPerformDHRatchetStep_MaxKeyID_ReturnsError verifies that a DH ratchet
 // step is refused when sendKeyID has reached MaxKeyID, preventing key-set ID
-// overflow. Spec ref: ratchet.md §"Key and Tag Set IDs".
+// overflow. Spec ref: ecies.rst §"Key and Tag Set IDs".
 func TestPerformDHRatchetStep_MaxKeyID_ReturnsError(t *testing.T) {
 	session := createTestSession(t, true)
 	session.sendKeyID = MaxKeyID

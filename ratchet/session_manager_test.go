@@ -99,7 +99,7 @@ func createLinkedManagers(t testing.TB) (sender, receiver *SessionManager) {
 
 // mustCompleteNSR completes the NSR handshake after the sender has sent an NS message
 // that the receiver has already decrypted (returning sessionHash). After this call,
-// the sender (initiator) can send Existing Session messages per ratchet.md §1g.
+// the sender (initiator) can send Existing Session messages per ecies.rst §1g.
 func mustCompleteNSR(t testing.TB, sender, receiver *SessionManager, sessionHash [32]byte) {
 	t.Helper()
 	nsrEnc, err := receiver.EncryptNewSessionReply(sessionHash, []byte("nsr"))
@@ -262,7 +262,7 @@ func TestGenerateSessionManager(t *testing.T) {
 func TestNewSessionEncryptDecrypt(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
 
-	// NS payload must begin with a DateTime block per spec (ratchet.md §1b).
+	// NS payload must begin with a DateTime block per spec (ecies.rst §1b).
 	plaintext := mustBuildNSPayload(t, []byte("hello, garlic world!"))
 	var destHash [32]byte
 	copy(destHash[:], receiver.ourPublicKey[:])
@@ -1480,7 +1480,7 @@ func TestDecryptGarlicMessage_ReturnsSessionHashForNewSession(t *testing.T) {
 	initiator, responder := createLinkedManagers(t)
 
 	destHash := types.SHA256(responder.ourPublicKey[:])
-	// NS payload must begin with DateTime block per spec (ratchet.md §1b).
+	// NS payload must begin with DateTime block per spec (ecies.rst §1b).
 	nsPayload := mustBuildNSPayload(t, []byte("new session payload"))
 
 	// Encrypt NS
@@ -1532,7 +1532,7 @@ func TestNSNSRESFlow_EndToEnd(t *testing.T) {
 
 	// ── Step 1: Alice → Bob: New Session ──────────────────────────────────
 	aliceToBobHash := types.SHA256(bob.ourPublicKey[:])
-	// NS payload must begin with DateTime block per spec (ratchet.md §1b).
+	// NS payload must begin with DateTime block per spec (ecies.rst §1b).
 	nsPayload := mustBuildNSPayload(t, []byte("Hello Bob, session request"))
 
 	nsMsg, err := alice.EncryptGarlicMessage(aliceToBobHash, bob.ourPublicKey, nsPayload)
@@ -1819,7 +1819,7 @@ func TestEncryptUnboundGarlicMessage_IsNonRepliable(t *testing.T) {
 // TestEncryptGarlicMessage_RejectsNSPayloadWithoutDateTime verifies that
 // EncryptGarlicMessage returns an error when the caller attempts to send a New
 // Session message whose payload does not begin with a DateTime block,
-// enforcing ratchet.md §1b.
+// enforcing ecies.rst §1b.
 func TestEncryptGarlicMessage_RejectsNSPayloadWithoutDateTime(t *testing.T) {
 	sender := createTestSessionManager(t)
 	receiver := createTestSessionManager(t)

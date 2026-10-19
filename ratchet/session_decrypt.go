@@ -342,7 +342,7 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 	securemem.SecureZero(nsrKeys.keyBA[:])
 
 	// Each direction gets its own DH_INITIALIZE(chainKey, k) + TagAndKeyGenKeys.
-	// Spec ref: ratchet.md §"Data Phase" — tagset_ab/ba = DH_INITIALIZE(chainKey, k_ab/k_ba).
+	// Spec ref: ecies.rst §"Data Phase" — tagset_ab/ba = DH_INITIALIZE(chainKey, k_ab/k_ba).
 	_, sendTagKey, sendSymKey, err := deriveDirectionalTagSet(chainKey, sendKey)
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive NSR send-direction ratchet keys")
@@ -387,7 +387,7 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 // by trying the exact counter first, avoiding the window scan. A nil hint
 // falls back to the full window scan for robustness.
 //
-// Spec ref: ratchet.md §"Existing Session" — "Maintain handling of out-of-order
+// Spec ref: ecies.rst §"Existing Session" — "Maintain handling of out-of-order
 // messages", window ≤128.
 func (sm *SessionManager) decryptExistingSession(
 	session *Session,
@@ -508,21 +508,21 @@ func scanWindowDecrypt(
 // control blocks that require session-level side effects:
 //
 //   - BlockTermination: signals session teardown. The session is removed from
-//     sm.sessions and sm.tagIndex. Per ratchet.md §"Unencrypted data", a
+//     sm.sessions and sm.tagIndex. Per ecies.rst §"Unencrypted data", a
 //     Termination block in an ES message means the peer is closing the session.
 //
 //   - BlockMessageNumber: carries the PN value (previous tag set message count).
-//     Per ratchet.md §"Message Numbers", on receiving a MessageNumber block the
+//     Per ecies.rst §"Message Numbers", on receiving a MessageNumber block the
 //     recipient should trim pre-derived keys beyond PN from the previous tag set
 //     to bound memory.
 //
 //   - BlockAckRequest: the peer is requesting acknowledgment. An Ack block is
 //     queued for inclusion in the next outgoing ES message.
-//     Spec ref: ratchet.md §"Ack Request".
+//     Spec ref: ecies.rst §"Ack Request".
 //
 //   - BlockAck: the peer is acknowledging previously received messages. The
 //     ack entries are stored on the session for caller inspection.
-//     Spec ref: ratchet.md §"Ack".
+//     Spec ref: ecies.rst §"Ack".
 //
 // This function is called from DecryptGarlicMessage after decryptExistingSession
 // returns successfully, with neither sm.mu nor session.mu held.
@@ -564,7 +564,7 @@ func (sm *SessionManager) processDecryptedESBlocks(session *Session, plaintext [
 // The ack acknowledges the current recv window state: it reports the recv key ID
 // and the highest consumed message counter.
 //
-// Spec ref: ratchet.md §"Ack Request" — on receiving request, queue an Ack response.
+// Spec ref: ecies.rst §"Ack Request" — on receiving request, queue an Ack response.
 func (sm *SessionManager) processAckRequest(session *Session) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -590,7 +590,7 @@ func (sm *SessionManager) processAckRequest(session *Session) {
 
 // processAck records Ack entries received from the peer.
 //
-// Spec ref: ratchet.md §"Ack" — acknowledgment of received messages.
+// Spec ref: ecies.rst §"Ack" — acknowledgment of received messages.
 func (sm *SessionManager) processAck(session *Session, block PayloadBlock) {
 	acks, err := block.Acks()
 	if err != nil {

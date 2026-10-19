@@ -83,7 +83,7 @@ func (pb *PayloadBuilder) Build() ([]byte, error) {
 
 // validate checks block ordering rules per the spec.
 // It also rejects BlockOptions (type 5), which is unimplemented in the I2P
-// ECIES spec (ratchet.md §"Unencrypted data") and would produce
+// ECIES spec (ecies.rst §"Unencrypted data") and would produce
 // non-interoperable messages if transmitted.
 func (pb *PayloadBuilder) validate() error {
 	flog("PayloadBuilder.validate", logger.Fields{"block_count": len(pb.blocks)}).Debug("Validating payload block ordering")
@@ -119,7 +119,7 @@ func (pb *PayloadBuilder) collectBlockPositions() (int, int, error) {
 		case BlockOptions:
 			return -1, -1, oops.Errorf(
 				"BlockOptions (type %d) is unimplemented in the I2P ECIES spec "+
-					"and must not appear in outgoing messages (ratchet.md §\"Unencrypted data\")",
+					"and must not appear in outgoing messages (ecies.rst §\"Unencrypted data\")",
 				BlockOptions,
 			)
 		case BlockPadding:
@@ -194,18 +194,18 @@ func ExistingSessionPayloadBuilder() *PayloadBuilder {
 func ValidateNewSessionPayload(payload []byte) error {
 	flog("ValidateNewSessionPayload", logger.Fields{"payload_len": len(payload)}).Debug("Validating New Session payload")
 	if len(payload) == 0 {
-		return oops.Errorf("new session payload must not be empty: spec requires a DateTime block as the first block (ratchet.md §1b)")
+		return oops.Errorf("new session payload must not be empty: spec requires a DateTime block as the first block (ecies.rst §1b)")
 	}
 	blocks, err := ParsePayload(payload)
 	if err != nil {
 		return oops.Wrapf(err, "new session payload is malformed")
 	}
 	if len(blocks) == 0 {
-		return oops.Errorf("new session payload contains no blocks: spec requires a DateTime block as the first block (ratchet.md §1b)")
+		return oops.Errorf("new session payload contains no blocks: spec requires a DateTime block as the first block (ecies.rst §1b)")
 	}
 	if blocks[0].Type != BlockDateTime {
 		return oops.Errorf(
-			"new session payload first block is type %d, want BlockDateTime (type 0): spec requires DateTime as first block (ratchet.md §1b)",
+			"new session payload first block is type %d, want BlockDateTime (type 0): spec requires DateTime as first block (ecies.rst §1b)",
 			blocks[0].Type,
 		)
 	}
@@ -269,7 +269,7 @@ func ParsePayload(data []byte) ([]PayloadBlock, error) {
 		if blockType == BlockOptions {
 			flog("ParsePayload").Warn("received BlockOptions (type 5) in payload: " +
 				"this block type is unimplemented in the I2P ECIES spec " +
-				"and indicates a non-conformant peer (ratchet.md §\"Unencrypted data\")")
+				"and indicates a non-conformant peer (ecies.rst §\"Unencrypted data\")")
 		}
 
 		blocks = append(blocks, PayloadBlock{

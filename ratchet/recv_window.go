@@ -12,7 +12,7 @@ import (
 // Must be called with session.mu held.
 // Returns an error if RecvSymmetricRatchet is nil rather than silently falling back to
 // the send-direction SymmetricRatchet, which would permanently desynchronise outgoing crypto.
-// Spec ref: ratchet.md §"Existing Session" — symmetric ratchet advances once per message.
+// Spec ref: ecies.rst §"Existing Session" — symmetric ratchet advances once per message.
 func fillRecvKeyCache(session *Session, upTo uint32) error {
 	flog("fillRecvKeyCache", logger.Fields{"up_to": upTo, "fill_mark": session.recvFillMark}).Debug("pre-deriving recv message keys")
 	recvRatchet := session.RecvSymmetricRatchet
@@ -54,7 +54,7 @@ func resetRecvWindow(session *Session) {
 
 // trimRecvWindowByPN removes pre-derived message keys from the receive window
 // that are above the PN (previous tag set message count) value received in a
-// MessageNumber block. Per ratchet.md §"Message Numbers", when a peer signals
+// MessageNumber block. Per ecies.rst §"Message Numbers", when a peer signals
 // PN it indicates the last message counter used in the previous tag set. Keys
 // for counters beyond PN in that range will never arrive, so they can be
 // deleted to bound memory usage.
