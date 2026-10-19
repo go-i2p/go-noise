@@ -30,7 +30,10 @@ The package implements three main areas:
 - **Hash**: SHA-256
 - **Modifiers**:
   - `elg2`: Elligator2 encoding of ephemeral public keys (indistinguishable from random)
-  - `hs2`: Hash pre-message for responder's static key (`Hash(s)` instead of raw key)
+  - `hs2`: An extra `MixHash()` before the second handshake message (the New
+    Session Reply) to mix in the session tag value. The responder's static key
+    pre-message uses the RAW key (`h = SHA256(h || bpk)`), per `ecies.rst`
+    §"KDF for Flags/Static Key Section" — `hs2` does **not** mean `Hash(s)`.
 
 ## Interfaces
 
