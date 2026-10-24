@@ -2,7 +2,7 @@ package server
 
 import (
 	"container/list"
-	"crypto/rand"
+	"github.com/go-i2p/crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"

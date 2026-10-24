@@ -2,7 +2,7 @@ package ssu2
 
 import (
 	"bytes"
-	"crypto/rand"
+	"github.com/go-i2p/crypto/rand"
 	"testing"
 
 	"github.com/go-i2p/go-noise/handshake"
