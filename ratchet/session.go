@@ -54,6 +54,9 @@ type Session struct {
 	recvKeyCache map[uint32][32]byte
 	// pendingTags tracks tags we expect to receive (tag window).
 	pendingTags [][8]byte
+	// usedTags tracks the number of tags consumed in the current tagset.
+	// Used to compute the dynamic target tag window size.
+	usedTags uint32
 	// dhRatchetCounter tracks messages since last DH ratchet rotation.
 	dhRatchetCounter uint32
 	// consecutiveDHFailures tracks how many DH ratchet steps have failed in a row.
@@ -168,7 +171,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 		recvWindowBase:     1,
 		recvFillMark:       1,
 		recvKeyCache:       make(map[uint32][32]byte),
-		pendingTags:        make([][8]byte, 0, tagWindowSize),
+		pendingTags:        make([][8]byte, 0, tagWindowMin),
 		pendingNextKeys:    nil,
 		nextRecvTagCounter: 1,
 	}, nil

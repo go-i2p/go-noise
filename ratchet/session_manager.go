@@ -52,6 +52,10 @@ type SessionManager struct {
 	ourPrivateKey  [32]byte
 	ourPublicKey   [32]byte
 	sessionTimeout time.Duration
+	// pendingSessionTimeout is the expiry for sessions that have not yet
+	// completed the NS/NSR handshake. Spec: "NSR tagset timeout (receiver) =
+	// 3 minutes". Java: SESSION_PENDING_DURATION_MS = 3 min.
+	pendingSessionTimeout time.Duration
 	ctx            context.Context
 	cancel         context.CancelFunc
 
@@ -201,10 +205,15 @@ func (sm *SessionManager) ProcessIncomingDHRatchet(sessionTag [8]byte, newRemote
 	return nil
 }
 
-// tagReplenishThreshold is the minimum number of pending tags remaining after
-// which replenishment is triggered. Checked after releasing sm.mu so that the
-// HKDF derivation does not block the global write lock.
-const tagReplenishThreshold = tagWindowSize / 2
+// tagReplenishThreshold computes the minimum number of pending tags remaining
+// after which replenishment is triggered. The threshold is half the current
+// target window size, so it grows with the window.
+//
+// Java I2P (RatchetTagSet.addTags): replenishment is triggered when
+// remaining < lookAhead/2, where lookAhead is the dynamic target.
+func tagReplenishThreshold(usedTags uint32) int {
+	return targetTagWindowSize(usedTags) / 2
+}
 
 // replenishTagWindowOutsideLock, installGeneratedTagsLocked,
 // and generateTagWindow are tag management methods retained in this file for orchestration.
@@ -229,12 +238,14 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 	for attempt := 0; attempt < maxReplenishAttempts; attempt++ {
 		// Phase 1: derive tags under session lock only — sm.mu is NOT held here.
 		session.mu.Lock()
-		stillNeeded := tagWindowSize - len(session.pendingTags)
+		usedTags := session.usedTags
+		target := targetTagWindowSize(usedTags)
+		stillNeeded := target - len(session.pendingTags)
 		if stillNeeded <= 0 {
 			session.mu.Unlock()
 			return // already full; another goroutine may have replenished already
 		}
-		newTags, err := generateTagsOutsideLock(session)
+		newTags, err := generateTagsOutsideLock(session, stillNeeded)
 		session.mu.Unlock()
 
 		if err != nil {
@@ -253,7 +264,9 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 		sm.mu.Lock()
 		session.mu.Lock()
 		sm.installGeneratedTagsLocked(session, newTags)
-		remaining := tagWindowSize - len(session.pendingTags)
+		usedTags = session.usedTags
+		target = targetTagWindowSize(usedTags)
+		remaining := target - len(session.pendingTags)
 		session.mu.Unlock()
 		sm.mu.Unlock()
 
@@ -265,7 +278,9 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 
 	// All attempts exhausted: check final state and warn if still under-sized.
 	session.mu.Lock()
-	finalRemaining := tagWindowSize - len(session.pendingTags)
+	finalUsed := session.usedTags
+	finalTarget := targetTagWindowSize(finalUsed)
+	finalRemaining := finalTarget - len(session.pendingTags)
 	session.mu.Unlock()
 
 	if finalRemaining > 0 {
@@ -285,22 +300,20 @@ type tagWithCounter struct {
 	counter uint32
 }
 
-// generateTagsOutsideLock advances session.RecvTagRatchet to produce the tags
-// needed to refill the window up to tagWindowSize. The caller must hold
-// session.mu but must NOT hold sm.mu; the HKDF derivations run here.
-// Returns the new tags with their associated counters, which are not yet
-// registered in sm.tagIndex or sm.tagCounterIndex.
-func generateTagsOutsideLock(session *Session) ([]tagWithCounter, error) {
-	flog("generateTagsOutsideLock", logger.Fields{"pending_count": len(session.pendingTags), "window_size": tagWindowSize}).Debug("Generating tags outside lock")
+// generateTagsOutsideLock advances session.RecvTagRatchet to produce the given
+// number of tags. The caller must hold session.mu but must NOT hold sm.mu; the
+// HKDF derivations run here. Returns the new tags with their associated
+// counters, which are not yet registered in sm.tagIndex or sm.tagCounterIndex.
+func generateTagsOutsideLock(session *Session, count int) ([]tagWithCounter, error) {
+	flog("generateTagsOutsideLock", logger.Fields{"pending_count": len(session.pendingTags), "count": count}).Debug("Generating tags outside lock")
 	if session.RecvTagRatchet == nil {
 		return nil, oops.Errorf("RecvTagRatchet is nil for session — cannot replenish incoming tag window")
 	}
-	needed := tagWindowSize - len(session.pendingTags)
-	if needed <= 0 {
+	if count <= 0 {
 		return nil, nil
 	}
-	newTags := make([]tagWithCounter, 0, needed)
-	for i := 0; i < needed; i++ {
+	newTags := make([]tagWithCounter, 0, count)
+	for i := 0; i < count; i++ {
 		tag, err := session.RecvTagRatchet.GenerateNextTag()
 		if err != nil {
 			return newTags, oops.Wrapf(err, "failed to generate session tag at index %d", i)
@@ -317,8 +330,9 @@ func generateTagsOutsideLock(session *Session) ([]tagWithCounter, error) {
 // different session are logged and skipped.  Must be called with both
 // sm.mu (write) and session.mu held.
 func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags []tagWithCounter) {
+	target := targetTagWindowSize(session.usedTags)
 	for _, tc := range newTags {
-		if len(session.pendingTags) >= tagWindowSize {
+		if len(session.pendingTags) >= target {
 			// Another goroutine may have already replenished; stop early.
 			break
 		}
@@ -345,7 +359,8 @@ func (sm *SessionManager) generateTagWindow(session *Session) error {
 	if tagRatchet == nil {
 		return oops.Errorf("RecvTagRatchet is nil for session — cannot populate incoming tag index")
 	}
-	for len(session.pendingTags) < tagWindowSize {
+	target := targetTagWindowSize(session.usedTags)
+	for len(session.pendingTags) < target {
 		tag, err := tagRatchet.GenerateNextTag()
 		if err != nil {
 			return oops.Wrapf(err, "failed to generate session tag")

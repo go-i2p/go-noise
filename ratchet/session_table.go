@@ -132,7 +132,7 @@ func (sm *SessionManager) validateAndConsumeTagFromSession(session *Session, tag
 		return false, false
 	}
 	sm.removeTagFromPendingList(tag, session)
-	return true, len(session.pendingTags) < tagReplenishThreshold
+	return true, len(session.pendingTags) < tagReplenishThreshold(session.usedTags)
 }
 
 func (sm *SessionManager) isSessionValid(session *Session) bool {
