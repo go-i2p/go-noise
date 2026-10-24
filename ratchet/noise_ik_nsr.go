@@ -275,6 +275,24 @@ func readNoiseIKMessage2(
 // encryption or decryption by performing the split() operation and payload key
 // derivation. This consolidates the common key derivation logic shared by
 // encryptNSRPayload and decryptNSRPayload.
+//
+// Spec note (ecies.rst §"KDF for Payload Section Encrypted Contents"): the
+// spec text describes a Noise "ss" pattern (sharedSecret = DH(ask, bpk);
+// keydata = HKDF(chainKey, sharedSecret, "", 64); k = keydata[32:63]). That
+// text is erroneous and contradicts both the spec's own intro line ("This is
+// like the first Existing Session message, post-split, but without a separate
+// tag") and the reference implementation (Java I2P ECIESAEADEngine.java,
+// encryptNewSessionReply / decryptNewSessionReply, which use
+// SplitKeys.k_ba + HKDF(k_ba, ZEROLEN, "AttachPayloadKDF", 32) with
+// AEAD AD = handshake hash). The correct construction — used here and in
+// Java I2P — is the post-split form:
+//
+//	keydata     = HKDF(chainKey, ZEROLEN, "", 64)
+//	k_ab        = keydata[0:32]
+//	k_ba        = keydata[32:64]
+//	payloadKey  = HKDF(k_ba, ZEROLEN, "AttachPayloadKDF", 32)
+//
+// with AEAD nonce 0 and associated data = handshake hash h.
 func deriveNSRPayloadCipher(ns *noise.SymmetricState) (*chacha20poly1305.AEAD, [32]byte, [32]byte, error) {
 	flog("deriveNSRPayloadCipher").Debug("Deriving NSR payload cipher via split() and HKDF")
 	// split(): keydata = HKDF(chainKey, ZEROLEN, "", 64)

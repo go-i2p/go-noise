@@ -11,6 +11,68 @@ import (
 // nowFunc returns the current time. It is a variable so tests can override it.
 var nowFunc = time.Now
 
+// payloadMessageType identifies which ECIES message a payload is being built
+// for, so the builder can enforce the spec's per-message-type block allowlist
+// (ecies.rst §"Block Ordering Rules").
+type payloadMessageType int
+
+const (
+	// messageTypeUnspecified is used by the generic [NewPayloadBuilder], which
+	// does not enforce a per-message-type allowlist.
+	messageTypeUnspecified payloadMessageType = iota
+	messageTypeNewSession
+	messageTypeNewSessionReply
+	messageTypeExistingSession
+)
+
+// String returns a human-readable name for the message type, used in error
+// messages.
+func (mt payloadMessageType) String() string {
+	switch mt {
+	case messageTypeNewSession:
+		return "New Session"
+	case messageTypeNewSessionReply:
+		return "New Session Reply"
+	case messageTypeExistingSession:
+		return "Existing Session"
+	default:
+		return "unspecified"
+	}
+}
+
+// allowedBlocksForMessageType returns the set of block types the spec permits
+// in a payload of the given message type (ecies.rst §"Block Ordering Rules").
+//
+//   - New Session: DateTime (required, first), GarlicClove, Options, Padding.
+//   - New Session Reply: GarlicClove, Options, Padding.
+//   - Existing Session: DateTime, Termination, Options, MessageNumber, NextKey,
+//     Ack, AckRequest, GarlicClove, Padding.
+//
+// BlockOptions is listed because the spec allows it, but it is additionally
+// rejected on send by [PayloadBuilder.validate] (see R-004: the block is
+// unimplemented in the I2P ECIES spec).
+func allowedBlocksForMessageType(mt payloadMessageType) map[BlockType]bool {
+	switch mt {
+	case messageTypeNewSession:
+		return map[BlockType]bool{
+			BlockDateTime: true, BlockGarlicClove: true,
+			BlockOptions: true, BlockPadding: true,
+		}
+	case messageTypeNewSessionReply:
+		return map[BlockType]bool{
+			BlockGarlicClove: true, BlockOptions: true, BlockPadding: true,
+		}
+	case messageTypeExistingSession:
+		return map[BlockType]bool{
+			BlockDateTime: true, BlockTermination: true, BlockOptions: true,
+			BlockMessageNumber: true, BlockNextKey: true, BlockAck: true,
+			BlockAckRequest: true, BlockGarlicClove: true, BlockPadding: true,
+		}
+	default:
+		return nil
+	}
+}
+
 // PayloadBuilder constructs a spec-compliant payload from a sequence of
 // [PayloadBlock]s.
 //
@@ -29,18 +91,27 @@ var nowFunc = time.Now
 //
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type PayloadBuilder struct {
-	blocks []PayloadBlock
+	blocks       []PayloadBlock
+	messageType  payloadMessageType
+	allowlist    map[BlockType]bool
 }
 
-func newSessionPayloadBuilder(includeDateTime bool) *PayloadBuilder {
+// newSessionPayloadBuilder creates a builder for a New Session or Existing
+// Session payload. When includeDateTime is true a DateTime block is added
+// first (required for New Session).
+func newSessionPayloadBuilder(includeDateTime bool, mt payloadMessageType) *PayloadBuilder {
 	pb := NewPayloadBuilder()
+	pb.messageType = mt
+	pb.allowlist = allowedBlocksForMessageType(mt)
 	if includeDateTime {
 		pb.AddBlock(NewDateTimeBlock(nowFunc()))
 	}
 	return pb
 }
 
-// NewPayloadBuilder creates an empty [PayloadBuilder].
+// NewPayloadBuilder creates an empty [PayloadBuilder] that does not enforce a
+// per-message-type block allowlist. Use the message-type-specific
+// constructors for full validation.
 func NewPayloadBuilder() *PayloadBuilder {
 	return &PayloadBuilder{}
 }
@@ -84,11 +155,16 @@ func (pb *PayloadBuilder) Build() ([]byte, error) {
 // validate checks block ordering rules per the spec.
 // It also rejects BlockOptions (type 5), which is unimplemented in the I2P
 // ECIES spec (ecies.rst §"Unencrypted data") and would produce
-// non-interoperable messages if transmitted.
+// non-interoperable messages if transmitted, and enforces the per-message-type
+// block allowlist (ecies.rst §"Block Ordering Rules").
 func (pb *PayloadBuilder) validate() error {
 	flog("PayloadBuilder.validate", logger.Fields{"block_count": len(pb.blocks)}).Debug("Validating payload block ordering")
 	if len(pb.blocks) == 0 {
 		return nil // empty payload is allowed
+	}
+
+	if err := pb.checkBlockAllowlist(); err != nil {
+		return err
 	}
 
 	paddingIdx, terminationIdx, err := pb.collectBlockPositions()
@@ -102,10 +178,33 @@ func (pb *PayloadBuilder) validate() error {
 	return pb.checkTerminationPosition(terminationIdx, paddingIdx)
 }
 
+// checkBlockAllowlist enforces the spec's per-message-type block allowlist
+// (ecies.rst §"Block Ordering Rules"). It is a no-op for the generic builder
+// ([NewPayloadBuilder]), which has no message type.
+func (pb *PayloadBuilder) checkBlockAllowlist() error {
+	if pb.allowlist == nil {
+		return nil
+	}
+	for _, b := range pb.blocks {
+		if !pb.allowlist[b.Type] {
+			return oops.Errorf(
+				"block type %d is not allowed in a %s payload (ecies.rst §\"Block Ordering Rules\")",
+				b.Type, pb.messageType,
+			)
+		}
+	}
+	return nil
+}
+
+// maxNextKeyBlocks is the maximum number of NextKey blocks allowed in a single
+// frame, per the spec's Block Ordering Rules (ecies.rst §"Block Ordering
+// Rules": "Up to two Next Key blocks in a single frame").
+const maxNextKeyBlocks = 2
+
 // collectBlockPositions scans the payload blocks and collects the indices of
 // padding and termination blocks. It also validates that BlockOptions blocks
-// (which are unimplemented in the I2P ECIES spec) and multiple padding blocks
-// do not appear.
+// (which are unimplemented in the I2P ECIES spec), multiple padding blocks,
+// and more than two NextKey blocks do not appear.
 //
 // Returns the padding block index, termination block index (or -1 if not present),
 // and an error if validation fails. Indices are -1 if the block type was not found.
@@ -113,6 +212,7 @@ func (pb *PayloadBuilder) collectBlockPositions() (int, int, error) {
 	paddingCount := 0
 	paddingIdx := -1
 	terminationIdx := -1
+	nextKeyCount := 0
 
 	for i, b := range pb.blocks {
 		switch b.Type {
@@ -130,6 +230,14 @@ func (pb *PayloadBuilder) collectBlockPositions() (int, int, error) {
 			paddingIdx = i
 		case BlockTermination:
 			terminationIdx = i
+		case BlockNextKey:
+			nextKeyCount++
+			if nextKeyCount > maxNextKeyBlocks {
+				return -1, -1, oops.Errorf(
+					"more than %d NextKey blocks in a single frame (found %d): spec allows up to two (ecies.rst §\"Block Ordering Rules\")",
+					maxNextKeyBlocks, nextKeyCount,
+				)
+			}
 		}
 	}
 
@@ -170,14 +278,15 @@ func (pb *PayloadBuilder) checkTerminationPosition(terminationIdx, paddingIdx in
 //
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 func NewSessionPayloadBuilder() *PayloadBuilder {
-	return newSessionPayloadBuilder(true)
+	return newSessionPayloadBuilder(true, messageTypeNewSession)
 }
 
 // ExistingSessionPayloadBuilder creates an empty [PayloadBuilder] for
-// Existing Session messages, which have no required blocks and allow all
-// block types.
+// Existing Session messages, which have no required blocks and allow the
+// Existing Session block types (DateTime, Termination, Options,
+// MessageNumber, NextKey, Ack, AckRequest, GarlicClove, Padding).
 func ExistingSessionPayloadBuilder() *PayloadBuilder {
-	return newSessionPayloadBuilder(false)
+	return newSessionPayloadBuilder(false, messageTypeExistingSession)
 }
 
 // ValidateNewSessionPayload checks that payload is a valid New Session body:

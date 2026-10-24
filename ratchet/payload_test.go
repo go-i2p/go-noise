@@ -427,6 +427,68 @@ func TestNewSessionPayloadBuilder(t *testing.T) {
 	assert.Equal(t, BlockGarlicClove, blocks[1].Type)
 }
 
+func TestPayloadBuilder_MaxTwoNextKeyBlocks(t *testing.T) {
+	// Spec: "Up to two Next Key blocks in a single frame" (ecies.rst §"Block
+	// Ordering Rules"). Two NextKey blocks are allowed; three are rejected.
+	two := ExistingSessionPayloadBuilder().
+		AddBlock(NewNextKeyBlock(1, &[32]byte{1}, false, false)).
+		AddBlock(NewNextKeyBlock(2, &[32]byte{2}, false, false))
+	if _, err := two.Build(); err != nil {
+		t.Fatalf("two NextKey blocks should be allowed, got error: %v", err)
+	}
+
+	three := ExistingSessionPayloadBuilder().
+		AddBlock(NewNextKeyBlock(1, &[32]byte{1}, false, false)).
+		AddBlock(NewNextKeyBlock(2, &[32]byte{2}, false, false)).
+		AddBlock(NewNextKeyBlock(3, &[32]byte{3}, false, false))
+	if _, err := three.Build(); err == nil {
+		t.Fatal("three NextKey blocks should be rejected, got nil error")
+	}
+}
+
+func TestPayloadBuilder_NewSessionAllowlist(t *testing.T) {
+	// Spec: New Session payloads may contain only DateTime (required, first),
+	// GarlicClove, Options, and Padding (ecies.rst §"Block Ordering Rules").
+	// Blocks allowed in Existing Session (NextKey, Ack, AckRequest,
+	// MessageNumber, Termination) must be rejected in a New Session payload.
+	disallowed := []PayloadBlock{
+		NewNextKeyBlock(1, &[32]byte{1}, false, false),
+		NewAckBlock([]AckEntry{{TagSetID: 1, N: 1}}),
+		NewAckRequestBlock(1),
+		NewMessageNumberBlock(1),
+		NewTerminationBlock(0, nil),
+	}
+	for i, block := range disallowed {
+		b := NewSessionPayloadBuilder().AddBlock(block)
+		if _, err := b.Build(); err == nil {
+			t.Errorf("case %d: block type %d should be rejected in a New Session payload, got nil error", i, block.Type)
+		}
+	}
+
+	// Allowed blocks (DateTime + GarlicClove + Padding) must build fine.
+	ok := NewSessionPayloadBuilder().
+		AddBlock(NewGarlicCloveBlock([]byte("garlic")))
+	if _, err := ok.Build(); err != nil {
+		t.Fatalf("allowed New Session blocks should build, got error: %v", err)
+	}
+}
+
+func TestPayloadBuilder_ExistingSessionAllowlist(t *testing.T) {
+	// Spec: Existing Session payloads may contain DateTime, Termination,
+	// Options, MessageNumber, NextKey, Ack, AckRequest, GarlicClove, and
+	// Padding (ecies.rst §"Block Ordering Rules"). All of these must build.
+	b := ExistingSessionPayloadBuilder().
+		AddBlock(NewDateTimeBlock(time.Now())).
+		AddBlock(NewMessageNumberBlock(1)).
+		AddBlock(NewNextKeyBlock(1, &[32]byte{1}, false, false)).
+		AddBlock(NewAckBlock([]AckEntry{{TagSetID: 1, N: 1}})).
+		AddBlock(NewAckRequestBlock(1)).
+		AddBlock(NewGarlicCloveBlock([]byte("garlic")))
+	if _, err := b.Build(); err != nil {
+		t.Fatalf("allowed Existing Session blocks should build, got error: %v", err)
+	}
+}
+
 func TestExistingSessionPayloadBuilder(t *testing.T) {
 	pb := ExistingSessionPayloadBuilder().
 		AddBlock(NewGarlicCloveBlock([]byte("clove data"))).
