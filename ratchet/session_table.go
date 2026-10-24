@@ -136,7 +136,7 @@ func (sm *SessionManager) validateAndConsumeTagFromSession(session *Session, tag
 }
 
 func (sm *SessionManager) isSessionValid(session *Session) bool {
-	return time.Since(session.LastUsed) <= sm.sessionTimeout
+	return time.Since(session.LastUsed) <= sm.sessionExpiry(session)
 }
 
 func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session) {

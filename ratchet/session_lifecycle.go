@@ -23,7 +23,7 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 
 		// Snapshot session state under its lock
 		session.mu.Lock()
-		if time.Since(session.LastUsed) > sm.sessionTimeout {
+		if time.Since(session.LastUsed) > sm.sessionExpiry(session) {
 			expired = true
 			tags = session.pendingTags
 			nsrTag = session.nsrTag

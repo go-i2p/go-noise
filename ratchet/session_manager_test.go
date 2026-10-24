@@ -530,6 +530,7 @@ func TestCreateSession_DirectionalKeyIsolation(t *testing.T) {
 func TestCleanupExpiredSessions(t *testing.T) {
 	sm := createTestSessionManager(t)
 	sm.sessionTimeout = 50 * time.Millisecond
+	sm.pendingSessionTimeout = 50 * time.Millisecond
 
 	// Manually create a session
 	var hash [32]byte
@@ -1363,6 +1364,7 @@ func TestFindSessionByTagReturnsFalseForUnknown(t *testing.T) {
 func TestFindSessionByTagReturnsFalseForExpiredSession(t *testing.T) {
 	sender, receiver, destHash := mustEstablishNS(t)
 	receiver.sessionTimeout = 1 * time.Millisecond // very short timeout
+	receiver.pendingSessionTimeout = 1 * time.Millisecond
 
 	// Note: NS was already sent and decrypted by mustEstablishNS.
 	_ = sender
@@ -1956,6 +1958,7 @@ func TestReplenishTagWindowOutsideLock_ReplenishesCorrectly(t *testing.T) {
 func TestConcurrentEncryptWithCleanup(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
 	sender.sessionTimeout = 200 * time.Millisecond
+	sender.pendingSessionTimeout = 200 * time.Millisecond
 
 	destHash := mustBootstrapSession(t, sender, receiver)
 
@@ -2396,6 +2399,7 @@ func TestTagCounterIndex_CleanedOnClose(t *testing.T) {
 func TestCleanupExpiredSessions_RemovesNSRTag(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	alice.sessionTimeout = 1 * time.Millisecond // very short timeout for test
+	alice.pendingSessionTimeout = 1 * time.Millisecond
 
 	destHash := types.SHA256(bob.ourPublicKey[:])
 
@@ -2455,6 +2459,7 @@ func TestCleanupExpiredSessions_RemovesNSRTag(t *testing.T) {
 func TestCleanupExpiredSessions_ConcurrentWithPartialNSR(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	alice.sessionTimeout = 50 * time.Millisecond
+	alice.pendingSessionTimeout = 50 * time.Millisecond
 
 	destHash := types.SHA256(bob.ourPublicKey[:])
 
@@ -2562,6 +2567,7 @@ func TestDecryptExistingSession_ForgedTag_FallsThrough(t *testing.T) {
 func TestConcurrentDecryptWithCleanup(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	bob.sessionTimeout = 200 * time.Millisecond
+	bob.pendingSessionTimeout = 200 * time.Millisecond
 
 	// Establish a full session: NS → NSR → first ES (to clear awaitingFirstES).
 	destHash := mustBootstrapSession(t, alice, bob)

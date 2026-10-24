@@ -85,6 +85,25 @@ type SessionManager struct {
 //
 // Parameters:
 //   - privateKey: the 32-byte X25519 private key to use for this manager.
+// sessionExpiry returns the appropriate timeout for the given session based
+// on its handshake state. Pending sessions (NSR not yet exchanged) use the
+// shorter nsrPendingTimeout (3 min); established sessions use sessionTimeout
+// (10 min, the receiver ES tagset timeout).
+//
+// Spec: "NSR tagset timeout (receiver) = 3 minutes", "ES tagset timeout
+// (receiver) = 10 minutes". Java: SESSION_PENDING_DURATION_MS = 3 min,
+// SESSION_LIFETIME_MAX_MS = 10 min.
+func (sm *SessionManager) sessionExpiry(session *Session) time.Duration {
+	if session.handshakeState != nil {
+		return sm.pendingSessionTimeout
+	}
+	return sm.sessionTimeout
+}
+
+// NewSessionManager creates a new session manager.
+//
+// Parameters:
+//   - privateKey: the 32-byte Curve25519 private key for this endpoint
 //   - opts: optional [SessionManagerOption] values to customize behavior
 //     (for example, [WithNSMaxPastAge]).
 func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*SessionManager, error) {
@@ -112,6 +131,7 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 		ourPrivateKey:   privateKey,
 		ourPublicKey:    publicKey,
 		sessionTimeout:  10 * time.Minute,
+		pendingSessionTimeout: nsrPendingTimeout,
 		nsMaxPastAge:    defaultNSMaxPastAge,
 		nsMaxFutureAge:  defaultNSMaxFutureAge,
 		ctx:             ctx,
