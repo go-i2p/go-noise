@@ -1,13 +1,13 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -154,22 +154,25 @@ func TestRelay6StepProcess(t *testing.T) {
 	require.NoError(t, err)
 
 	// The block must be non-nil and signed with the resolver's keypair so
-	// the coordinator's real signature verification succeeds.
+	// the coordinator's real signature verification succeeds. The Hole Punch
+	// carries the identical signed Relay Response block that Bob forwards to
+	// Alice, signed by Charlie over the Relay Response signed data (which
+	// includes the introducer's (Bob's) router hash).
 	hpTimestamp := uint32(time.Now().Unix())
-	hpSignature, err := SignRelayRequest(alice.hpSignPriv, relayTestBobHash, relayTestCharlieHash,
-		relayIntro.Nonce, aliceRelayTag, hpTimestamp, ssu2ProtocolVersion,
-		uint16(alice.addr.Port), alice.addr.IP)
+	hpSignature, err := SignRelayResponse(alice.hpSignPriv, relayTestBobHash,
+		relayIntro.Nonce, hpTimestamp, ssu2ProtocolVersion,
+		uint16(charlie.addr.Port), charlie.addr.IP)
 	require.NoError(t, err)
-	dummyBlock := &RelayIntroBlock{
-		Flag:            0,
-		AliceRouterHash: alice.routerHash[:],
-		Nonce:           relayIntro.Nonce,
-		AliceRelayTag:   aliceRelayTag,
-		Timestamp:       hpTimestamp,
-		Version:         2,
-		AlicePort:       uint16(alice.addr.Port),
-		AliceIP:         alice.addr.IP,
-		Signature:       hpSignature,
+	dummyBlock := &RelayResponseBlock{
+		Flag:        0,
+		Code:        0,
+		Nonce:       relayIntro.Nonce,
+		Timestamp:   hpTimestamp,
+		Version:     ssu2ProtocolVersion,
+		CharliePort: uint16(charlie.addr.Port),
+		CharlieIP:   charlie.addr.IP,
+		Signature:   hpSignature,
+		Token:       make([]byte, 8),
 	}
 	// Charlie's hole punch message (simulated through state updates)
 	err = alice.holePunchCoord.HandleHolePunch(sessionID, charlie.addr, dummyBlock)
@@ -278,7 +281,7 @@ func TestRelayResponseEncoding(t *testing.T) {
 				Version:     2,
 				CharliePort: 9000,
 				CharlieIP:   net.IPv4(10, 0, 0, 1).To4(),
-				Signature:   makeSignedData(),
+				Signature:   makeTestSignature(),
 				Token:       make([]byte, 8),
 			},
 			wantErr: false,
@@ -606,8 +609,8 @@ type relayTestPeer struct {
 	holePunchCoord *HolePunchCoordinator
 	// hpSignPriv/hpSignPub are the keypair the hole-punch resolver returns as
 	// the signer identity; tests sign RelayIntro blocks with hpSignPriv.
-	hpSignPriv ed25519.PrivateKey
-	hpSignPub  ed25519.PublicKey
+	hpSignPriv ed25519.Ed25519PrivateKey
+	hpSignPub  ed25519.Ed25519PublicKey
 }
 
 // relayTestBobHash and relayTestCharlieHash are the fixed peer identities the
@@ -646,9 +649,10 @@ func setupRelayTestPeer(t *testing.T, name string) *relayTestPeer {
 
 	// Create relay components
 	relayMgr := NewRelayManager(listener)
-	hpPub, hpPriv, err := ed25519.GenerateKey(nil)
+	hpPubPtr, hpPrivPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
-	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.PublicKey, bool) {
+	hpPub, hpPriv := *hpPubPtr, *hpPrivPtr
+	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.Ed25519PublicKey, bool) {
 		return HolePunchVerifyContext{BobHash: relayTestBobHash, CharlieHash: relayTestCharlieHash}, hpPub, true
 	})
 	require.NoError(t, err)

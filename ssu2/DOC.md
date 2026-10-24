@@ -771,7 +771,7 @@ required; it returns an error if any of them is missing.
 #### func (*Coordinator) BuildCallbacks
 
 ```go
-func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.PublicKey) DataHandlerCallbacks
+func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey) DataHandlerCallbacks
 ```
 BuildCallbacks returns DataHandlerCallbacks bound to a single SSU2 session with
 the given peer (identified by its router hash and authenticated Ed25519 signing
@@ -835,7 +835,7 @@ type CoordinatorConfig struct {
 	// when the local router is Alice (signs peer-test and relay requests) or
 	// Charlie (signs peer-test and relay responses). It is never used when
 	// acting purely as Bob, because Bob never signs.
-	SigningKey ed25519.PrivateKey
+	SigningKey ed25519.Ed25519PrivateKey
 
 	// KeyResolver resolves a remote router hash to its signing public key. It
 	// is used to verify forwarded signatures whose signer is not the
@@ -1141,7 +1141,7 @@ type PathValidator = path.PathValidator
 #### type PeerKeyResolver
 
 ```go
-type PeerKeyResolver func(routerHash data.Hash) (ed25519.PublicKey, bool)
+type PeerKeyResolver func(routerHash data.Hash) (ed25519.Ed25519PublicKey, bool)
 ```
 
 PeerKeyResolver looks up a peer's Ed25519 signing public key from its router

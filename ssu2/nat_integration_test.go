@@ -1,13 +1,13 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -448,9 +448,10 @@ func setupPeer(t *testing.T, name string) *testPeer {
 
 	// Create NAT traversal components
 	relayMgr := NewRelayManager(listener)
-	testPub, _, err := ed25519.GenerateKey(nil)
+	testPubPtr, _, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
-	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.PublicKey, bool) {
+	testPub := *testPubPtr
+	holePunchCoord, err := NewHolePunchCoordinator(relayMgr, func(_ HolePunchVerifyInfo) (HolePunchVerifyContext, ed25519.Ed25519PublicKey, bool) {
 		return HolePunchVerifyContext{}, testPub, true
 	})
 	require.NoError(t, err)

@@ -1,13 +1,12 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,8 +68,9 @@ func TestBuildPeerTestSignedDataIPv6(t *testing.T) {
 }
 
 func TestSignAndVerifyPeerTestMsg1(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pubPtr, privPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	pub, priv := *pubPtr, *privPtr
 
 	bobHash := generateRandomHash()
 	now := uint32(time.Now().Unix())
@@ -81,7 +81,7 @@ func TestSignAndVerifyPeerTestMsg1(t *testing.T) {
 		9000, net.IPv4(10, 0, 0, 1),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, ed25519.SignatureSize, len(sig))
+	assert.Equal(t, ed25519SignatureSize, len(sig))
 
 	valid, err := VerifyPeerTestSignature(
 		pub, sig, bobHash, nil,
@@ -93,8 +93,9 @@ func TestSignAndVerifyPeerTestMsg1(t *testing.T) {
 }
 
 func TestSignAndVerifyPeerTestMsg3(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pubPtr, privPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	pub, priv := *pubPtr, *privPtr
 
 	bobHash := generateRandomHash()
 	aliceHash := generateRandomHash()
@@ -117,8 +118,10 @@ func TestSignAndVerifyPeerTestMsg3(t *testing.T) {
 }
 
 func TestVerifyPeerTestWrongKey(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	_, privPtr, _ := ed25519.GenerateEd25519KeyPair()
+	priv := *privPtr
+	otherPubPtr, _, _ := ed25519.GenerateEd25519KeyPair()
+	otherPub := *otherPubPtr
 
 	bobHash := generateRandomHash()
 
@@ -137,7 +140,8 @@ func TestVerifyPeerTestWrongKey(t *testing.T) {
 }
 
 func TestVerifyPeerTestMismatchedAliceHash(t *testing.T) {
-	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	pubPtr, privPtr, _ := ed25519.GenerateEd25519KeyPair()
+	pub, priv := *pubPtr, *privPtr
 
 	bobHash := generateRandomHash()
 	aliceHash := generateRandomHash()

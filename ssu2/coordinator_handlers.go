@@ -1,7 +1,7 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/go-i2p/crypto/rand"
 	"encoding/binary"
 	"net"
@@ -19,7 +19,7 @@ import (
 //
 // remoteKey may be nil if the peer's signing key is not yet known; in that case
 // any verification whose signer is the directly-connected peer fails closed.
-func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.PublicKey) DataHandlerCallbacks {
+func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey) DataHandlerCallbacks {
 	return DataHandlerCallbacks{
 		VerifyPeerTestSignature: func(b *PeerTestBlock) error {
 			return c.verifyPeerTest(remoteHash, remoteKey, b)
@@ -50,13 +50,13 @@ func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.Pub
 
 // ─── Signature verification ────────────────────────────────────────────────
 
-func (c *Coordinator) verifyPeerTest(remoteHash data.Hash, remoteKey ed25519.PublicKey, b *PeerTestBlock) error {
+func (c *Coordinator) verifyPeerTest(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey, b *PeerTestBlock) error {
 	if b == nil {
 		return oops.Code("ssu2_peertest_verify").Errorf("nil block")
 	}
 	var bobHash data.Hash
 	var aliceHashPtr *data.Hash
-	var signerKey ed25519.PublicKey
+	var signerKey ed25519.Ed25519PublicKey
 	var ok bool
 
 	switch b.MessageCode {
@@ -104,7 +104,7 @@ func (c *Coordinator) verifyPeerTest(remoteHash data.Hash, remoteKey ed25519.Pub
 	return nil
 }
 
-func (c *Coordinator) verifyRelayRequest(remoteHash data.Hash, remoteKey ed25519.PublicKey, b *RelayRequestBlock) error {
+func (c *Coordinator) verifyRelayRequest(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey, b *RelayRequestBlock) error {
 	if b == nil {
 		return oops.Code("ssu2_relayreq_verify").Errorf("nil block")
 	}
@@ -126,7 +126,7 @@ func (c *Coordinator) verifyRelayRequest(remoteHash data.Hash, remoteKey ed25519
 	return nil
 }
 
-func (c *Coordinator) verifyRelayIntro(remoteHash data.Hash, remoteKey ed25519.PublicKey, b *RelayIntroBlock) error {
+func (c *Coordinator) verifyRelayIntro(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey, b *RelayIntroBlock) error {
 	if b == nil {
 		return oops.Code("ssu2_relayintro_verify").Errorf("nil block")
 	}
@@ -151,7 +151,7 @@ func (c *Coordinator) verifyRelayIntro(remoteHash data.Hash, remoteKey ed25519.P
 	return nil
 }
 
-func (c *Coordinator) verifyRelayResponse(remoteHash data.Hash, remoteKey ed25519.PublicKey, b *RelayResponseBlock) error {
+func (c *Coordinator) verifyRelayResponse(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey, b *RelayResponseBlock) error {
 	if b == nil {
 		return oops.Code("ssu2_relayresp_verify").Errorf("nil block")
 	}
@@ -163,7 +163,7 @@ func (c *Coordinator) verifyRelayResponse(remoteHash data.Hash, remoteKey ed2551
 	role, _ := c.lookupRole(b.Nonce)
 
 	var bobHash data.Hash
-	var signerKey ed25519.PublicKey
+	var signerKey ed25519.Ed25519PublicKey
 	var ok bool
 
 	switch role {

@@ -1,7 +1,6 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
 	"net"
@@ -9,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +19,7 @@ import (
 type testRouter struct {
 	name string
 	hash data.Hash
-	pub  ed25519.PublicKey
+	pub  ed25519.Ed25519PublicKey
 	c    *Coordinator
 }
 
@@ -39,7 +39,7 @@ func newTestNet() *testNet {
 func (n *testNet) register(r *testRouter) { n.routers[r.hash] = r }
 
 // dispatch routes a SendTarget from src to its destination router.
-func (n *testNet) dispatch(srcHash data.Hash, srcPub ed25519.PublicKey, t SendTarget) error {
+func (n *testNet) dispatch(srcHash data.Hash, srcPub ed25519.Ed25519PublicKey, t SendTarget) error {
 	dst, ok := n.routers[t.RouterHash]
 	if !ok {
 		return fmt.Errorf("no route to %x", t.RouterHash[:4])
@@ -109,7 +109,7 @@ func (n *testNet) deliverBlock(dst *testRouter, cb DataHandlerCallbacks, blk *SS
 	}
 }
 
-func mkRouterHash(pub ed25519.PublicKey) data.Hash {
+func mkRouterHash(pub ed25519.Ed25519PublicKey) data.Hash {
 	return data.Hash(sha256.Sum256(pub))
 }
 
@@ -117,11 +117,12 @@ func mkRouterHash(pub ed25519.PublicKey) data.Hash {
 // into the given net.
 func makeTestRouter(t *testing.T, n *testNet, name string, ext *net.UDPAddr, cfgMut func(*CoordinatorConfig)) *testRouter {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(nil)
+	pubPtr, privPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	pub, priv := *pubPtr, *privPtr
 	hash := mkRouterHash(pub)
 
-	keyring := func(h data.Hash) (ed25519.PublicKey, bool) {
+	keyring := func(h data.Hash) (ed25519.Ed25519PublicKey, bool) {
 		n.mu.Lock()
 		r, ok := n.routers[h]
 		n.mu.Unlock()
@@ -240,8 +241,9 @@ func TestCoordinatorIntroducerOptionsRoundTrip(t *testing.T) {
 	bob := makeTestRouter(t, tn, "Bob", bobExt, nil)
 
 	charlieExt := udp("192.0.2.30", 23000)
-	charliePub, _, err := ed25519.GenerateKey(nil)
+	charliePubPtr, _, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	charliePub := *charliePubPtr
 	charlieHash := mkRouterHash(charliePub)
 	const relayTag = uint32(99)
 

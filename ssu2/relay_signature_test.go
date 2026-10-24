@@ -1,16 +1,18 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ed25519SignatureSize is the fixed length of an Ed25519 signature.
+const ed25519SignatureSize = 64
 
 func TestBuildRelayRequestSignedData(t *testing.T) {
 	var bobHash data.Hash
@@ -60,8 +62,9 @@ func TestBuildRelayRequestSignedDataInvalidHash(t *testing.T) {
 }
 
 func TestSignAndVerifyRelayRequest(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pubPtr, privPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	pub, priv := *pubPtr, *privPtr
 
 	bobHash := generateRandomHash()
 	charlieHash := generateRandomHash()
@@ -73,7 +76,7 @@ func TestSignAndVerifyRelayRequest(t *testing.T) {
 		net.IPv4(10, 0, 0, 1),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, ed25519.SignatureSize, len(sig))
+	assert.Equal(t, ed25519SignatureSize, len(sig))
 
 	valid, err := VerifyRelayRequestSignature(
 		pub, sig, bobHash, charlieHash,
@@ -85,8 +88,10 @@ func TestSignAndVerifyRelayRequest(t *testing.T) {
 }
 
 func TestVerifyRelayRequestWrongKey(t *testing.T) {
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	_, privPtr, _ := ed25519.GenerateEd25519KeyPair()
+	priv := *privPtr
+	otherPubPtr, _, _ := ed25519.GenerateEd25519KeyPair()
+	otherPub := *otherPubPtr
 
 	bobHash := generateRandomHash()
 	charlieHash := generateRandomHash()
@@ -131,8 +136,9 @@ func TestBuildRelayResponseSignedDataNoAddress(t *testing.T) {
 }
 
 func TestSignAndVerifyRelayResponse(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	pubPtr, privPtr, err := ed25519.GenerateEd25519KeyPair()
 	require.NoError(t, err)
+	pub, priv := *pubPtr, *privPtr
 
 	bobHash := generateRandomHash()
 	now := uint32(time.Now().Unix())
@@ -143,7 +149,7 @@ func TestSignAndVerifyRelayResponse(t *testing.T) {
 		net.IPv4(10, 0, 0, 1),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, ed25519.SignatureSize, len(sig))
+	assert.Equal(t, ed25519SignatureSize, len(sig))
 
 	valid, err := VerifyRelayResponseSignature(
 		pub, sig, bobHash,

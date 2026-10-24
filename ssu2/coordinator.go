@@ -1,7 +1,7 @@
 package ssu2
 
 import (
-	"crypto/ed25519"
+	"github.com/go-i2p/crypto/ed25519"
 	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
@@ -27,7 +27,7 @@ const relayTokenLen = 8
 // is unknown; in that case verification fails closed (the signature is
 // rejected). The router backs this with its network database; go-noise never
 // resolves identities itself.
-type PeerKeyResolver func(routerHash data.Hash) (ed25519.PublicKey, bool)
+type PeerKeyResolver func(routerHash data.Hash) (ed25519.Ed25519PublicKey, bool)
 
 // SendTarget describes a set of outbound SSU2 blocks and where they must be
 // delivered. RouterHash identifies a known peer (the common case); Addr is set
@@ -79,7 +79,7 @@ type CoordinatorConfig struct {
 	// when the local router is Alice (signs peer-test and relay requests) or
 	// Charlie (signs peer-test and relay responses). It is never used when
 	// acting purely as Bob, because Bob never signs.
-	SigningKey ed25519.PrivateKey
+	SigningKey ed25519.Ed25519PrivateKey
 
 	// KeyResolver resolves a remote router hash to its signing public key. It
 	// is used to verify forwarded signatures whose signer is not the
@@ -274,7 +274,7 @@ func (c *Coordinator) IntroducerOptions() (map[string]string, error) {
 // directly-connected peer's hash, the peer's key is preferred (it was
 // authenticated by the handshake). Otherwise the configured KeyResolver is
 // consulted.
-func (c *Coordinator) resolveKey(hash, peerHash data.Hash, peerKey ed25519.PublicKey) (ed25519.PublicKey, bool) {
+func (c *Coordinator) resolveKey(hash, peerHash data.Hash, peerKey ed25519.Ed25519PublicKey) (ed25519.Ed25519PublicKey, bool) {
 	if hash == peerHash && peerKey != nil {
 		return peerKey, true
 	}
