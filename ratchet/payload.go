@@ -212,9 +212,14 @@ func NewGarlicCloveBlock(cloveData []byte) PayloadBlock {
 
 // NewPaddingBlock creates a Padding block of the specified size.
 // The padding content is zeroed (it will be encrypted before transmission).
+// Per the spec, padding size is 0-15 bytes; values outside this range are
+// clamped to the nearest valid bound.
 func NewPaddingBlock(size int) PayloadBlock {
 	if size < 0 {
 		size = 0
+	}
+	if size > maxPaddingSize {
+		size = maxPaddingSize
 	}
 	return PayloadBlock{Type: BlockPadding, Data: make([]byte, size)}
 }

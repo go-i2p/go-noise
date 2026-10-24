@@ -197,13 +197,19 @@ func TestNewGarlicCloveBlock(t *testing.T) {
 }
 
 func TestNewPaddingBlock(t *testing.T) {
-	b := NewPaddingBlock(16)
+	b := NewPaddingBlock(15)
 	assert.Equal(t, BlockPadding, b.Type)
-	assert.Len(t, b.Data, 16)
+	assert.Len(t, b.Data, 15)
 	// Padding is all zeros
 	for _, v := range b.Data {
 		assert.Equal(t, byte(0), v)
 	}
+}
+
+func TestNewPaddingBlock_ExceedsMax(t *testing.T) {
+	b := NewPaddingBlock(16)
+	assert.Equal(t, BlockPadding, b.Type)
+	assert.Len(t, b.Data, maxPaddingSize)
 }
 
 func TestNewPaddingBlock_NegativeSize(t *testing.T) {

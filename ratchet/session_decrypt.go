@@ -253,6 +253,20 @@ func (sm *SessionManager) initializeInboundRatchetState(remotePubKey [32]byte, k
 	// peers via LRU churn.
 	sm.enforcePerPeerQuotaLocked(remotePubKey)
 
+	// Spec: "Replace session if NS received after: 3 minutes"
+	// Java: RatchetSKM.addSession() — for inbound sessions, if an old session
+	// exists and it was established more than SESSION_REPLACE_AGE ago, replace
+	// it ("He restarted with same key, or something went wrong. Start over.").
+	// If the old session is still fresh, the new NS is discarded.
+	if oldSession, exists := sm.sessions[sessionHash]; exists {
+		if time.Since(oldSession.Established) > sessionReplaceAge {
+			sm.cleanupSessionIndexesLocked(oldSession, sessionHash)
+		} else {
+			// Existing session is still fresh — discard the new one.
+			return nil
+		}
+	}
+
 	sm.sessions[sessionHash] = session
 
 	if err := sm.generateTagWindow(session); err != nil {

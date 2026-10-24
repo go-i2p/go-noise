@@ -2767,3 +2767,99 @@ func TestNSRTagRegistration_ErrorPropagation(t *testing.T) {
 	assert.Equal(t, 1, sessionCount, "session should be stored")
 	assert.Equal(t, 1, nsrTagCount, "NSR tag should be registered for initiator session")
 }
+
+// TestInboundSessionReplacement_LateNS verifies that when a New Session message
+// is received for a peer whose existing inbound session was established more
+// than sessionReplaceAge (3 minutes) ago, the old session is replaced.
+// Spec: "Replace session if NS received after: 3 minutes"
+// Java: RatchetSKM.addSession() — "He restarted with same key, or something went wrong. Start over."
+func TestInboundSessionReplacement_LateNS(t *testing.T) {
+	initiator, responder := createLinkedManagers(t)
+
+	destHash := types.SHA256(responder.ourPublicKey[:])
+	nsPayload := mustBuildNSPayload(t, []byte("first session"))
+
+	// First NS — creates the inbound session on the responder.
+	nsMsg1, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, nsPayload)
+	require.NoError(t, err)
+	_, _, sessionHash, err := responder.DecryptGarlicMessage(nsMsg1)
+	require.NoError(t, err)
+	require.NotNil(t, sessionHash)
+
+	// Capture the original session pointer.
+	responder.mu.RLock()
+	originalSession := responder.sessions[*sessionHash]
+	responder.mu.RUnlock()
+	require.NotNil(t, originalSession)
+
+	// Backdate the session's Established field to be older than sessionReplaceAge.
+	responder.mu.Lock()
+	originalSession.Established = time.Now().Add(-sessionReplaceAge - time.Minute)
+	responder.mu.Unlock()
+
+	// Simulate initiator restart: a fresh session manager with the same static key.
+	// This is the real-world scenario: the initiator crashed and restarted, so it
+	// has no outbound session and sends a new NS with the same static key.
+	restartedInitiator, err := NewSessionManager(initiator.ourPrivateKey)
+	require.NoError(t, err)
+
+	nsPayload2 := mustBuildNSPayload(t, []byte("second session"))
+	nsMsg2, err := restartedInitiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, nsPayload2)
+	require.NoError(t, err)
+	_, _, sessionHash2, err := responder.DecryptGarlicMessage(nsMsg2)
+	require.NoError(t, err)
+	require.NotNil(t, sessionHash2)
+	assert.Equal(t, *sessionHash, *sessionHash2, "same initiator → same session hash")
+
+	// The session should have been replaced (different pointer).
+	responder.mu.RLock()
+	newSession := responder.sessions[*sessionHash]
+	responder.mu.RUnlock()
+	require.NotNil(t, newSession)
+	assert.NotSame(t, originalSession, newSession,
+		"old session (established > sessionReplaceAge ago) should be replaced")
+}
+
+// TestInboundSessionReplacement_FreshNS verifies that when a New Session message
+// is received for a peer whose existing inbound session is still fresh
+// (established less than sessionReplaceAge ago), the new NS is discarded and
+// the existing session is preserved.
+func TestInboundSessionReplacement_FreshNS(t *testing.T) {
+	initiator, responder := createLinkedManagers(t)
+
+	destHash := types.SHA256(responder.ourPublicKey[:])
+	nsPayload := mustBuildNSPayload(t, []byte("first session"))
+
+	// First NS — creates the inbound session on the responder.
+	nsMsg1, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, nsPayload)
+	require.NoError(t, err)
+	_, _, sessionHash, err := responder.DecryptGarlicMessage(nsMsg1)
+	require.NoError(t, err)
+	require.NotNil(t, sessionHash)
+
+	// Capture the original session pointer.
+	responder.mu.RLock()
+	originalSession := responder.sessions[*sessionHash]
+	responder.mu.RUnlock()
+	require.NotNil(t, originalSession)
+
+	// Simulate initiator restart: a fresh session manager with the same static key.
+	restartedInitiator, err := NewSessionManager(initiator.ourPrivateKey)
+	require.NoError(t, err)
+
+	// Second NS from the same initiator — should be discarded (session is fresh).
+	nsPayload2 := mustBuildNSPayload(t, []byte("second session"))
+	nsMsg2, err := restartedInitiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, nsPayload2)
+	require.NoError(t, err)
+	_, _, sessionHash2, err := responder.DecryptGarlicMessage(nsMsg2)
+	require.NoError(t, err)
+	require.NotNil(t, sessionHash2)
+
+	// The session should NOT have been replaced (same pointer).
+	responder.mu.RLock()
+	currentSession := responder.sessions[*sessionHash]
+	responder.mu.RUnlock()
+	require.NotNil(t, currentSession)
+	assert.Same(t, originalSession, currentSession,
+		"fresh session (established < sessionReplaceAge ago) should be preserved")
+}

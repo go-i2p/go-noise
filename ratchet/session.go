@@ -40,6 +40,10 @@ type Session struct {
 	// RecvTagRatchet is the receiving tag ratchet.
 	RecvTagRatchet *ratchet.TagRatchet
 	LastUsed       time.Time
+	// Established records when the session was first created.
+	// Used for the "replace session if NS received after N minutes" rule.
+	// Spec ref: ecies.md §"Parameters" — "Replace session if NS received after: 3 minutes".
+	Established    time.Time
 	MessageCounter uint32
 	// recvWindowBase is the lowest ES message counter we will still accept.
 	// It advances as leading counters are consumed.
@@ -165,6 +169,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 		RecvSymmetricRatchet: recvSymRatchet,
 		RecvTagRatchet:       recvTagRatchet,
 		LastUsed:             time.Now(),
+		Established:          time.Now(),
 		MessageCounter:       1,
 		// recvWindowBase starts at 1: message 0 is the NS handshake, not an ES ratchet message.
 		// Spec ref: ecies.rst §"Existing Session message" — first ES counter is 1.
