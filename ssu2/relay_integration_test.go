@@ -472,14 +472,16 @@ func TestRelayFlowWithErrors(t *testing.T) {
 	})
 
 	t.Run("relay_response_failure_codes", func(t *testing.T) {
-		// Test various failure status codes
+		// Test various failure status codes. Codes 1-63 are Bob rejections
+		// (no signature); codes >= 64 are Charlie rejections and carry the
+		// Charlie endpoint plus a 64-byte Ed25519 signature.
 		failureCodes := []uint8{
-			1,  // Generic failure
-			64, // Bob does not know Charlie
-			65, // Bob is firewalled
-			66, // Charlie is firewalled
-			69, // Charlie signature verification failed
-			70, // Charlie is already connected to Alice
+			1,  // Generic failure (Bob rejection)
+			64, // Charlie rejection: Bob does not know Charlie
+			65, // Charlie rejection: Bob is firewalled
+			66, // Charlie rejection: Charlie is firewalled
+			69, // Charlie rejection: Charlie signature verification failed
+			70, // Charlie rejection: Charlie is already connected to Alice
 		}
 
 		for _, code := range failureCodes {
@@ -487,6 +489,13 @@ func TestRelayFlowWithErrors(t *testing.T) {
 				Flag:  0,
 				Code:  code,
 				Nonce: 12345,
+			}
+			if code >= 64 {
+				response.Timestamp = 1700000000
+				response.Version = ssu2ProtocolVersion
+				response.CharliePort = 9000
+				response.CharlieIP = net.IPv4(10, 0, 0, 1).To4()
+				response.Signature = makeTestSignature()
 			}
 
 			block, err := EncodeRelayResponse(response)

@@ -12,9 +12,9 @@ import (
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/cryptorand"
+	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
-	"golang.org/x/crypto/curve25519"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
 )
@@ -1032,10 +1032,15 @@ func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
 	if len(riBytes) == 0 {
 		return nil
 	}
-	pub, err := curve25519.X25519(staticPriv, curve25519.Basepoint)
+	priv, err := curve25519.NewCurve25519PrivateKey(staticPriv)
+	if err != nil {
+		return oops.Wrapf(err, "failed to create Curve25519 private key")
+	}
+	pubKey, err := priv.Public()
 	if err != nil {
 		return oops.Wrapf(err, "failed to derive Curve25519 public key from static private key")
 	}
+	pub := pubKey.Bytes()
 	pubB64 := i2pbase64.EncodeToString(pub)
 	if bytes.Contains(riBytes, []byte(pubB64)) {
 		return nil

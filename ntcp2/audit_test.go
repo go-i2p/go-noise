@@ -10,9 +10,9 @@ import (
 
 	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/crypto/curve25519"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/curve25519"
 )
 
 // ── Close() tests for all three modifiers ────────────────────────────
@@ -457,9 +457,12 @@ func TestRouterInfoVerification_MatchingKey(t *testing.T) {
 	}
 
 	// Derive the public key exactly as verifyLocalRouterInfoMatchesStaticKey does
-	// (golang.org/x/crypto/curve25519)
-	pub, err := curve25519.X25519(staticPriv, curve25519.Basepoint)
+	// (github.com/go-i2p/crypto/curve25519)
+	privKey, err := curve25519.NewCurve25519PrivateKey(staticPriv)
 	require.NoError(t, err)
+	pubKey, err := privKey.Public()
+	require.NoError(t, err)
+	pub := pubKey.Bytes()
 
 	// Encode to base64 exactly as the code does (github.com/go-i2p/common/base64)
 	pubB64 := i2pbase64.EncodeToString(pub)

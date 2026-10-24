@@ -4,9 +4,9 @@ import (
 	"encoding/binary"
 	"sync"
 
+	"github.com/go-i2p/crypto/chacha20"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
-	"golang.org/x/crypto/chacha20"
 )
 
 // HeaderType indicates the type of SSU2 packet for header protection purposes.
@@ -300,17 +300,14 @@ func (hp *HeaderProtector) getHeaderSize() int {
 // interoperability while remaining self-consistent within Go-to-Go tests.
 func (hp *HeaderProtector) generateMask(key, nonce []byte) ([]byte, error) {
 	flog("generateMask").Debug("Generating 8-byte XOR mask via ChaCha20")
-	cipher, err := chacha20.NewUnauthenticatedCipher(key, nonce)
+	// Skip the first 64-byte block, matching i2pd's ChaCha20 helper;
+	// StreamEncrypt sets the counter to 1 internally.
+	// Generate mask by encrypting zeros
+	zeros := make([]byte, 8)
+	mask, err := chacha20.StreamEncrypt(key, nonce, zeros)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to initialize ChaCha20 cipher")
 	}
-	// Skip the first 64-byte block, matching i2pd's ChaCha20 helper.
-	cipher.SetCounter(1)
-
-	// Generate mask by encrypting zeros
-	zeros := make([]byte, 8)
-	mask := make([]byte, 8)
-	cipher.XORKeyStream(mask, zeros)
 
 	return mask, nil
 }
@@ -328,21 +325,23 @@ func (hp *HeaderProtector) encryptLongHeaderExtension(packet []byte) error {
 	}
 
 	// SSU2 spec: ChaCha20.encrypt(k_header_2, n=1, packet[16:63])
-	nonce := make([]byte, 12) // all-zero nonce; counter set to 1 below
-	cipher, err := chacha20.NewUnauthenticatedCipher(hp.kHeader2, nonce)
-	if err != nil {
-		return oops.Wrapf(err, "failed to initialize ChaCha20 for header extension")
-	}
-	// SSU2 spec requires n=1 (counter position 1, skipping the first 64 bytes)
-	cipher.SetCounter(1)
+	nonce := make([]byte, 12) // all-zero nonce; counter set to 1 by StreamEncrypt
 
 	// For packets with ephemeral keys, encrypt 48 bytes (header[16:64])
 	hasEphemeral := hp.headerType == HeaderTypeSessionRequest ||
 		hp.headerType == HeaderTypeSessionCreated
 	if hasEphemeral && len(packet) >= LongHeaderSize+EphemeralKeySize {
-		cipher.XORKeyStream(packet[16:64], packet[16:64])
+		out, err := chacha20.StreamEncrypt(hp.kHeader2, nonce, packet[16:64])
+		if err != nil {
+			return oops.Wrapf(err, "failed to initialize ChaCha20 for header extension")
+		}
+		copy(packet[16:64], out)
 	} else {
-		cipher.XORKeyStream(packet[16:32], packet[16:32])
+		out, err := chacha20.StreamEncrypt(hp.kHeader2, nonce, packet[16:32])
+		if err != nil {
+			return oops.Wrapf(err, "failed to initialize ChaCha20 for header extension")
+		}
+		copy(packet[16:32], out)
 	}
 
 	return nil

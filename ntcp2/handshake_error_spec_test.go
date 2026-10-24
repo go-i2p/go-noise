@@ -5,7 +5,7 @@ import (
 	"time"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
-	"golang.org/x/crypto/curve25519"
+	"github.com/go-i2p/crypto/curve25519"
 
 	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
@@ -125,8 +125,11 @@ func TestFallbackReplayDetectorIsSharedAndProtective(t *testing.T) {
 func TestValidatePeerRouterInfoStaticKey(t *testing.T) {
 	staticPriv := make([]byte, StaticKeySize)
 	staticPriv[0] = 0x08
-	peerStatic, err := curve25519.X25519(staticPriv, curve25519.Basepoint)
+	privKey, err := curve25519.NewCurve25519PrivateKey(staticPriv)
 	require.NoError(t, err)
+	pubKey, err := privKey.Public()
+	require.NoError(t, err)
+	peerStatic := pubKey.Bytes()
 
 	ri := []byte("router.identity&host=1.2.3.4&port=8887&s=" + i2pbase64.EncodeToString(peerStatic) + "&v=2")
 	frame := routerInfoFrame(t, ri)

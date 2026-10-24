@@ -3,11 +3,11 @@ package wire
 import (
 	"sync"
 
+	"github.com/go-i2p/crypto/chacha20"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
-	"golang.org/x/crypto/chacha20"
 )
 
 // ChaChaObfuscationModifier implements SSU2's ChaCha20-based obfuscation.
@@ -124,7 +124,9 @@ func (com *ChaChaObfuscationModifier) applyChacha(data []byte) ([]byte, error) {
 			Errorf("ChaChaObfuscationModifier has been closed")
 	}
 
-	cipher, err := chacha20.NewUnauthenticatedCipher(com.introKey, chachaNonce)
+	// SSU2 spec requires n=1 (counter position 1, skipping the first 64 bytes);
+	// StreamEncrypt sets the counter to 1 internally.
+	result, err := chacha20.StreamEncrypt(com.introKey, chachaNonce, data)
 	if err != nil {
 		return nil, oops.
 			Code("CHACHA20_CIPHER_CREATION_FAILED").
@@ -132,12 +134,6 @@ func (com *ChaChaObfuscationModifier) applyChacha(data []byte) ([]byte, error) {
 			With("modifier_name", com.name).
 			Wrap(err)
 	}
-	// SSU2 spec requires n=1 (counter position 1, skipping the first 64 bytes)
-	cipher.SetCounter(1)
-
-	result := make([]byte, len(data))
-	copy(result, data)
-	cipher.XORKeyStream(result, result)
 	return result, nil
 }
 

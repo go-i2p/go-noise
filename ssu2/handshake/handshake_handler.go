@@ -1,16 +1,16 @@
 package handshake
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"encoding/binary"
 	"time"
 
+	"github.com/go-i2p/crypto/curve25519"
+	"github.com/go-i2p/crypto/rand"
 	"github.com/go-i2p/go-noise/internal/cryptorand"
 	"github.com/go-i2p/go-noise/mod/replaycache"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
-	"golang.org/x/crypto/curve25519"
 )
 
 // SSU2ProtocolName is the Noise protocol name for SSU2, as defined in the
@@ -659,9 +659,13 @@ func (h *HandshakeHandler) ReconfigureReplayCache(ttl time.Duration) {
 // Returns an error rather than panicking on invalid input, so that an internal
 // programmer error cannot crash the host process.
 func derivePublicKey(priv []byte) ([]byte, error) {
-	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
+	privKey, err := curve25519.NewCurve25519PrivateKey(priv)
+	if err != nil {
+		return nil, oops.Wrapf(err, "create Curve25519 private key")
+	}
+	pubKey, err := privKey.Public()
 	if err != nil {
 		return nil, oops.Wrapf(err, "derive public key from private scalar")
 	}
-	return pub, nil
+	return pubKey.Bytes(), nil
 }

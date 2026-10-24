@@ -9,18 +9,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/rand"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/crypto/curve25519"
 )
 
 // mustDerivePublic derives the X25519 static public key from a private static
 // key, mirroring the handshake package's internal derivation.
 func mustDerivePublic(t *testing.T, priv []byte) []byte {
 	t.Helper()
-	pub, err := curve25519.X25519(priv, curve25519.Basepoint)
+	privKey, err := curve25519.NewCurve25519PrivateKey(priv)
 	require.NoError(t, err)
-	return pub
+	pubKey, err := privKey.Public()
+	require.NoError(t, err)
+	return pubKey.Bytes()
 }
 
 func randomKey(t *testing.T) []byte {
