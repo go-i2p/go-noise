@@ -30,7 +30,7 @@ func TestSendSessionConfirmedACK_FirstResponderPacketIsPN0(t *testing.T) {
 		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9001},
 		config,
 		false,
-		make([]byte, 32),
+		testLocalStaticKey(t),
 		config.RemoteStaticKey,
 	)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestHandleReadyDataPacket_AcksPeerPacketZero(t *testing.T) {
 		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9005},
 		config,
 		true,
-		make([]byte, 32),
+		testLocalStaticKey(t),
 		config.RemoteStaticKey,
 	)
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestProcessHandshakePacket_RecordsOnlySessionConfirmed(t *testing.T) {
 		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9009},
 		config,
 		true,
-		make([]byte, 32),
+		testLocalStaticKey(t),
 		config.RemoteStaticKey,
 	)
 	require.NoError(t, err)

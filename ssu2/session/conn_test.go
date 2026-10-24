@@ -31,6 +31,16 @@ func createTestConfig(t *testing.T) *SSU2Config {
 	return config
 }
 
+// testLocalStaticKey returns a valid, non-zero 32-byte Curve25519 private key
+// suitable for use as a local static key. go-i2p's NewCurve25519PrivateKey
+// rejects all-zero keys, so tests must not pass make([]byte, 32) here.
+func testLocalStaticKey(t *testing.T) []byte {
+	t.Helper()
+	kp, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	return kp.Private
+}
+
 // mockPacketConn implements net.PacketConn for testing.
 type mockPacketConn struct {
 	readChan     chan mockPacket

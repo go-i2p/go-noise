@@ -16,3 +16,12 @@ func generateRandomHash() data.Hash {
 func hashPtr(h data.Hash) *data.Hash {
 	return &h
 }
+
+// testStaticKey returns a valid, non-zero 32-byte Curve25519 private key for
+// testing. go-i2p's NewCurve25519PrivateKey rejects all-zero keys, so tests
+// must not pass make([]byte, 32) as a local static key.
+func testStaticKey() []byte {
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	return key
+}

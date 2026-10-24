@@ -460,7 +460,7 @@ func createMockSSU2Conn(t *testing.T, connID uint64) *SSU2Conn {
 		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5555},
 		config,
 		true,
-		make([]byte, 32),
+		testLocalStaticKey(t),
 		config.RemoteStaticKey,
 	)
 	require.NoError(t, err)
