@@ -152,6 +152,13 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 			"elapsed_ms": time.Since(hsStart).Milliseconds(),
 			"err":        err.Error(),
 		}).Warn("NTCP2 handshake failed")
+		// ntcp2.rst §"Session Request" / §"Session Created": on any AEAD, DH,
+		// replay or key-validation failure the peer "must halt further message
+		// processing and close the connection without responding. This should be
+		// an abnormal close (TCP RST)", with a random junk read first for probing
+		// resistance. sendTCPRST marks the socket closed, so the deferred
+		// graceful close in AcceptWithHandshake becomes a no-op.
+		c.closeHandshakeError(err, raw)
 		return err
 	}
 
@@ -537,11 +544,15 @@ func sendInitiatorMsg3(cfg *Config, nc *noise.NoiseConn, riBytes []byte, m3p2Len
 // at most once per process rather than on every inbound handshake.
 var missingReplayWarnOnce sync.Once
 
-// warnMissingReplayDetector logs a one-time warning that the responder is
-// running without NTCP2 message-1 replay protection.
+// warnMissingReplayDetector logs a one-time warning that the responder is using
+// the shared process-wide replay cache instead of one supplied by the operator.
+// Protection itself is never disabled: ntcp2.rst makes the duplicate-handshake
+// cache mandatory, so a fallback is installed whenever Config.ReplayDetector is
+// nil. The warning matters because the fallback is shared across every such
+// responder in the process rather than scoped to one listener.
 func warnMissingReplayDetector() {
 	missingReplayWarnOnce.Do(func() {
-		flog("performResponderHandshake").Warn("no ReplayDetector configured: NTCP2 message-1 replay protection is DISABLED; set one via WithReplayDetector")
+		flog("performResponderHandshake").Warn("no ReplayDetector configured: using the shared default replay cache; set one via WithReplayDetector to scope it per listener")
 	})
 }
 
@@ -598,6 +609,17 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time
 		"payload_len": len(payload),
 	}).Debug("NTCP2 responder: msg3 done, handshake complete")
 
+	// ntcp2.rst §"Session Confirmed": "Bob must verify that Alice's static key
+	// received in the first frame matches the static key in the Router Info.
+	// Bob must first search the Router Info for a NTCP or NTCP2 Router Address
+	// with a matching version (v) option." The same bullet list requires an
+	// abnormal close on "RI ... or key validation failure", so a mismatch is
+	// reported with the PEER_ROUTER_INFO_KEY_MISMATCH code that the handshake
+	// error path turns into a probing-resistant RST.
+	if err := validatePeerRouterInfoStaticKey(nc.PeerStatic(), payload); err != nil {
+		return nil, err
+	}
+
 	return payload, nil
 }
 
@@ -628,28 +650,31 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn, hsDeadl
 	dumpInboundMsg1IfEnabled(cfg, raw, buf1, aliceOpts, nil)
 
 	// Replay detection: check if the ephemeral key X has been seen before.
-	// Per the I2P NTCP2 spec, Bob must maintain a cache of previously-used
-	// ephemeral keys (the first 32 bytes of message 1, the AES-obfuscated X)
-	// and reject duplicates within the freshness window (±ClockSkewTolerance).
-	// The encrypted-but-deterministic form is sufficient as a replay key
-	// because the same plaintext X always produces the same ciphertext when
-	// obfuscated with the same RH_B and IV.
-	if cfg.ReplayDetector != nil {
-		var ephemeralKey [32]byte
-		copy(ephemeralKey[:], buf1[:32])
-		if cfg.ReplayDetector.CheckAndAdd(ephemeralKey) {
-			return 0, false, oops.
-				Code("MSG1_REPLAY").
-				In("ntcp2").
-				With("remote", raw.RemoteAddr().String()).
-				Errorf("replay detected: ephemeral key has been seen before within TTL window")
-		}
-	} else {
-		// Replay protection is opt-in. A responder with no ReplayDetector
-		// silently accepts replayed message-1 ephemerals, contrary to the NTCP2
-		// spec's requirement. Warn once so operators notice the missing
-		// protection rather than running unprotected without any signal.
+	// ntcp2.rst §"Session Request": "Bob must maintain a local cache of
+	// previously-used handshake values and reject duplicates, to prevent replay
+	// attacks. Values in the cache must have a lifetime of at least 2*D", where
+	// D is the clock-skew maximum. The cache key is the first 32 bytes of
+	// message 1 (the AES-obfuscated X), which the spec explicitly allows: "the
+	// cache values are implementation-dependent, however the 32-byte X value
+	// (or its encrypted equivalent) may be used". The encrypted form is
+	// deterministic for a given RH_B/IV, so a replay is detected even though we
+	// never decrypt X before this point.
+	//
+	// Protection is mandatory, so a responder with no configured detector falls
+	// back to a shared process-wide cache rather than running unprotected.
+	detector := cfg.ReplayDetector
+	if detector == nil {
+		detector = fallbackReplayDetector(cfg.maxClockSkew())
 		warnMissingReplayDetector()
+	}
+	var ephemeralKey [32]byte
+	copy(ephemeralKey[:], buf1[:32])
+	if detector.CheckAndAdd(ephemeralKey) {
+		return 0, false, oops.
+			Code("MSG1_REPLAY").
+			In("ntcp2").
+			With("remote", raw.RemoteAddr().String()).
+			Errorf("replay detected: ephemeral key has been seen before within TTL window")
 	}
 
 	// Validate Alice's options block: network ID, protocol version and the tsA
@@ -870,7 +895,8 @@ func handleResponderMsg3(nc *noise.NoiseConn, raw net.Conn, m3p2Len uint16) ([]b
 // AEAD payload in NTCP2 message 2 (Bob -> Alice), and returns the options
 // and a randomly-generated padding length in the range [0, 223].
 //
-// Wire layout (all fields big-endian) — spec: https://spec.i2p.net/ntcp2#options:
+// Wire layout (all fields big-endian) — spec: ntcp2.rst §"Session Request",
+// "Options" block:
 //
 //	bytes 0-1  : Reserved = 0   (NOT id/ver — those fields are message 1 only)
 //	bytes 2-3  : padLen         (cleartext padding length, randomized 0-223)
@@ -1020,6 +1046,83 @@ func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
 		Errorf("derived public key from live NTCP2 static private key does not " +
 			"appear in serialized LocalRouterInfo (no NTCP2 address publishes " +
 			"this key as its `s=` option)")
+}
+
+// validatePeerRouterInfoStaticKey enforces the responder half of the NTCP2
+// static-key/RouterInfo cross-check.
+//
+// ntcp2.rst §"Session Confirmed": "Bob must verify that Alice's static key
+// received in the first frame matches the static key in the Router Info." The
+// key arrives in message 3 part 1 (EncryptedS) and is published in the
+// RouterInfo carried in message 3 part 2 as the `s=` option of a
+// published/unpublished NTCP or NTCP2 RouterAddress, "Base 64 encoded using the
+// standard I2P Base 64 alphabet, 32 bytes in binary, little-endian X25519 public
+// key" (§"Published Router Info").
+//
+// A mismatch means the RouterInfo does not belong to the router that completed
+// the Noise handshake, so it must be rejected rather than stored: the router
+// transport layer hands PeerRouterInfoBytes() to the netdb, and accepting a
+// mismatched pair would let a peer register a router identity it cannot prove.
+//
+// peerStatic is the key the Noise handshake proved (Conn.PeerStatic). It is a
+// no-op when the payload has no RouterInfo block or peerStatic is not a full
+// key, so it never fires on a partially-performed handshake.
+func validatePeerRouterInfoStaticKey(peerStatic, msg3Payload []byte) error {
+	if len(msg3Payload) == 0 {
+		return nil
+	}
+	if len(peerStatic) != StaticKeySize {
+		return nil
+	}
+
+	riBytes := extractRouterInfoBlock(msg3Payload)
+	if len(riBytes) == 0 {
+		return nil
+	}
+
+	// The RouterInfo may advertise several RouterAddresses (NTCP, SSU, NTCP2,
+	// ...). The spec's check is scoped to NTCP/NTCP2 addresses with a matching
+	// version option, but every `s=` value in the document is the same Noise
+	// static key for the router (§"Published Router Info": "all must contain the
+	// same static key and iv"), so a match on any base64-encoded occurrence of
+	// the peer's key is sufficient and avoids re-parsing the RouterInfo format
+	// here.
+	if bytes.Contains(riBytes, []byte(i2pbase64.EncodeToString(peerStatic))) {
+		return nil
+	}
+
+	return oops.
+		Code("PEER_ROUTER_INFO_KEY_MISMATCH").
+		In("ntcp2").
+		With("peer_static_key_b64", i2pbase64.EncodeToString(peerStatic)).
+		With("ri_bytes_len", len(riBytes)).
+		Errorf("message 3 RouterInfo does not advertise the static key received in the handshake")
+}
+
+// extractRouterInfoBlock returns the RouterInfo block data (block type 2) from
+// a message-3 part-2 block frame, with the leading flag byte removed, or nil if
+// no RouterInfo block is present. See Conn.PeerRouterInfoBytes for the block
+// framing.
+func extractRouterInfoBlock(frame []byte) []byte {
+	const blockHeader = 3 // type (1) + size (2)
+	const riFlag = 1
+	for off := 0; off+blockHeader <= len(frame); {
+		blockType := frame[off]
+		blockSize := int(frame[off+1])<<8 | int(frame[off+2])
+		dataStart := off + blockHeader
+		dataEnd := dataStart + blockSize
+		if dataEnd > len(frame) {
+			return nil // malformed: declared size overruns the frame
+		}
+		if blockType == routerInfoBlockType {
+			if blockSize < riFlag {
+				return nil
+			}
+			return frame[dataStart+riFlag : dataEnd]
+		}
+		off = dataEnd
+	}
+	return nil
 }
 
 // randomPaddingLength generates a cryptographically secure random integer in the

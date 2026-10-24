@@ -20,9 +20,8 @@ type (
 	HeaderProtectorManager = wire.HeaderProtectorManager
 )
 
-// SipHash / ChaCha / padding modifier types
+// ChaCha / padding modifier types
 type (
-	SipHashLengthModifier     = wire.SipHashLengthModifier
 	ChaChaObfuscationModifier = wire.ChaChaObfuscationModifier
 	SSU2PaddingModifier       = wire.SSU2PaddingModifier
 )
@@ -156,13 +155,6 @@ const (
 	SSU2NetworkID       = wire.SSU2NetworkID
 )
 
-// ─── SipHash modifier constants ────────────────────────────────────────────────
-
-const (
-	SipHashIVSize       = wire.SipHashIVSize
-	DataLengthFieldSize = wire.DataLengthFieldSize
-)
-
 // ─── TokenCache constants ──────────────────────────────────────────────────────
 
 const (
@@ -197,10 +189,6 @@ var (
 	EncodeConnectionID  = wire.EncodeConnectionID
 	ExtractPacketNumber = wire.ExtractPacketNumber
 	EncodePacketNumber  = wire.EncodePacketNumber
-
-	// SipHash length modifier constructors
-	NewSipHashLengthModifier            = wire.NewSipHashLengthModifier
-	NewSipHashLengthModifierDirectional = wire.NewSipHashLengthModifierDirectional
 
 	// ChaCha obfuscation modifier constructor
 	NewChaChaObfuscationModifier = wire.NewChaChaObfuscationModifier

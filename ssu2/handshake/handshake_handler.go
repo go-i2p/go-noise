@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"github.com/go-i2p/go-noise/internal/cryptorand"
 	"github.com/go-i2p/go-noise/mod/replaycache"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
@@ -469,6 +470,17 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 		return nil, oops.Errorf("destConnID=0 is only allowed for SessionRequest (type %d), got type %d", MessageTypeSessionRequest, msgType)
 	}
 
+	// ssu2.rst §"Session Request" / §"Session Created": "Source Connection ID ::
+	// Randomly generated ... must not be equal to Destination Connection ID".
+	// A session whose source and destination IDs collide cannot be demultiplexed
+	// by the peer's packet router, so reject it before it is put on the wire.
+	if sourceConnID == destConnID {
+		return nil, oops.
+			With("connection_id", sourceConnID).
+			With("message_type", msgType).
+			Errorf("source and destination connection IDs must not be equal")
+	}
+
 	payload, err := SerializeBlocks(blocks)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to serialize handshake blocks")
@@ -477,9 +489,20 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 	// Build the 32-byte long header per ssu2.rst "Packet Header":
 	// dest_conn_id(0-7), pkt_num(8-11), type(12), ver(13), id(14),
 	// flag(15), src_conn_id(16-23), token(24-31).
+	//
+	// ssu2.rst §"Packet Numbering" lists Session Request and Session Created
+	// among the messages that "contain a random packet number that is ignored",
+	// so this is fresh randomness rather than a data-phase counter. The header
+	// is MixHash'd below, so the value is still bound into the transcript and
+	// cannot be silently altered in flight.
+	packetNumber, err := cryptorand.RandInRange(1, int64(MaxPacketNumber))
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to generate handshake packet number")
+	}
+
 	header := make([]byte, 32)
 	binary.BigEndian.PutUint64(header[0:8], destConnID)
-	binary.BigEndian.PutUint32(header[8:12], 0) // packet number 0 for handshake
+	binary.BigEndian.PutUint32(header[8:12], uint32(packetNumber))
 	header[12] = msgType
 	header[13] = SSU2ProtocolVersion // ver=2
 	header[14] = SSU2NetworkID       // id=2 (I2P mainnet)

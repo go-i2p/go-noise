@@ -79,7 +79,7 @@ func PrintNTCP2Usage(appName, description string) {
 	PrintUsageExample(appName, "Run demo mode", "-demo")
 	PrintUsageExample(appName, "Run NTCP2 server", "-server localhost:7654 -router-hash <64-char-hex>")
 	PrintUsageExample(appName, "Run NTCP2 client", "-client localhost:7654 -router-hash <64-char-hex> -remote-router-hash <64-char-hex>")
-	fmt.Println("Note: NTCP2 uses Noise_XK_25519_AESGCM_SHA256 pattern exclusively")
+	fmt.Println("Note: NTCP2 uses Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256")
 }
 
 // HandleNTCP2DefaultAddress sets the default server address for an NTCP2 example
@@ -370,15 +370,15 @@ func RunNTCP2Generate() {
 	displayNTCP2Material(routerHash, remoteRouterHash, staticKey, destinationHash)
 }
 
-// demonstrateNTCP2Pattern shows NTCP2's use of the IK pattern
+// demonstrateNTCP2Pattern shows NTCP2's use of the XK pattern
 func demonstrateNTCP2Pattern() {
 	PrintLines(
 		"🔐 NTCP2 Noise Protocol Pattern:",
 		"=================================",
-		"NTCP2 exclusively uses: Noise_XK_25519_AESGCM_SHA256",
-		"  • XK Pattern: Initiator sends static key, knows responder's static key",
+		"NTCP2 exclusively uses: Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256",
+		"  • XK Pattern: Initiator knows the responder's static key; its own arrives encrypted in message 3",
 		"  • Curve25519: Elliptic curve for key exchange",
-		"  • AESGCM: Authenticated encryption",
+		"  • aesobfse: AES-256-CBC obfuscation of the ephemeral key; ChaCha20-Poly1305 for the AEAD frames",
 		"  • SHA256: Hash function",
 		"  • Requirements: Local static key + Remote router hash",
 		"",

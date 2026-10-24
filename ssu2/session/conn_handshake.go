@@ -622,7 +622,40 @@ func (h *SSU2Conn) finalizeHandshake() error {
 
 	h.applyNegotiatedPadding()
 	h.startDataLoops()
+
+	// ssu2.rst §"Session Confirmed ACK": "Bob sends an ACK of packet 0, which
+	// acknowledges the Session Confirmed message and allows Alice to proceed to
+	// the data phase, and discard the large Session Confirmed message being
+	// saved for possible retransmission... Bob should send an ACK as soon as
+	// possible after receiving the Session Confirmed message."
+	//
+	// §"Packet Numbering" makes this Bob's *first* Data packet, numbered 0:
+	// "For Bob, outbound packet numbering starts at 0 with first Data packet,
+	// which should be an ACK of the Session Confirmed." Without it Alice never
+	// gets her Session Confirmed acknowledged and keeps retransmitting it.
+	//
+	// Must run after installCipherStates/deriveDataPhaseKeys so the ACK is
+	// sealed with the data-phase key and protected with the data-phase header
+	// keys.
+	if !h.initiator {
+		h.sendSessionConfirmedACK()
+	}
+
 	return nil
+}
+
+// sendSessionConfirmedACK emits Bob's packet-0 ACK-only Data message.
+func (h *SSU2Conn) sendSessionConfirmedACK() {
+	flog("sendSessionConfirmedACK").Debug("sending Session Confirmed ACK (packet 0)")
+
+	// The Session Confirmed arrived as packet 0 of Alice's numbering; record it
+	// so the ACK's "ack through" field is 0 with acnt 0, exactly the
+	// "Ack-through = 0, acnt = 0" example in ssu2.rst §"Ack".
+	h.ackHandler.RecordReceived(0)
+
+	// sendImmediateACK allocates the next send sequence, which is 0 for the
+	// responder at this point, and AEAD-seals + header-protects the packet.
+	h.sendImmediateACK()
 }
 
 // deriveDataPhaseKeys installs KDF-derived header protection keys and returns
@@ -700,23 +733,73 @@ func (h *SSU2Conn) pushNegotiatedPaddingToModifier(negotiated *OptionsParams) {
 	}
 }
 
-// startDataLoops starts background goroutines for data transport.
-// Called after handshake completes to avoid wasting resources on failed connections.
-// extractRetryToken parses a Retry message and returns the 8-byte token.
+// extractRetryToken authenticates a Retry message and returns its 8-byte token.
+//
+// Per ssu2.rst §"KDF for Retry" the Retry payload is ChaCha20-Poly1305 sealed
+// with the responder's intro key, the cleartext 32-byte header as associated
+// data, and the header packet number as the nonce; the token itself is header
+// bytes 24-31 (it is NOT carried in a New Token block).
+//
+// The AEAD check is what makes a Retry trustworthy: header obfuscation alone
+// only masks the connection ID, so without this the dest-conn-ID comparison in
+// handleRetryResponse would be the only (forgeable) guard against an injected
+// Retry carrying an attacker-chosen token.
 func (h *SSU2Conn) extractRetryToken(retry *SSU2Packet) ([]byte, error) {
-	blocks, err := DeserializeBlocks(retry.Payload)
+	introKey := h.config.RemoteIntroKey
+	if len(introKey) != HeaderKeySize {
+		return nil, oops.
+			Code("RETRY_INTRO_KEY_MISSING").
+			In("session").
+			Errorf("cannot authenticate Retry: responder intro key (32 bytes) not configured")
+	}
+	if len(retry.Header) < LongHeaderSize {
+		return nil, oops.
+			Code("RETRY_HEADER_TOO_SHORT").
+			In("session").
+			With("header_len", len(retry.Header)).
+			Errorf("Retry header must be %d bytes", LongHeaderSize)
+	}
+	if len(retry.Payload) < MinPayloadSize {
+		return nil, oops.
+			Code("RETRY_PAYLOAD_TOO_SHORT").
+			In("session").
+			With("payload_len", len(retry.Payload)).
+			Errorf("Retry ciphertext payload too short")
+	}
+
+	plaintext, err := DecryptIntroKeyAEAD(
+		introKey, retry.Header, retry.Payload, retry.MAC, retry.PacketNumber,
+	)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to parse Retry payload")
+		return nil, oops.Wrapf(err, "Retry failed AEAD authentication")
 	}
-	tokenBlock := FindBlockByType(blocks, BlockTypeNewToken)
-	if tokenBlock == nil {
-		return nil, oops.Errorf("Retry message missing NewToken block")
-	}
-	parsed, err := ParseNewTokenBlock(tokenBlock)
+
+	// Sanity-check the authenticated payload carries the blocks the spec
+	// requires (DateTime + Address); a Retry without them is malformed.
+	blocks, err := DeserializeBlocks(plaintext)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to parse NewToken block from Retry")
+		return nil, oops.Wrapf(err, "failed to parse Retry payload blocks")
 	}
-	return parsed.Token, nil
+	if FindBlockByType(blocks, BlockTypeDateTime) == nil {
+		return nil, oops.Errorf("Retry payload missing required DateTime block")
+	}
+
+	token := make([]byte, 8)
+	copy(token, retry.Header[24:32])
+	if isAllZeroBytes(token) {
+		return nil, oops.Errorf("Retry token is zero (session rejected without a token)")
+	}
+	return token, nil
+}
+
+// isAllZeroBytes reports whether every byte in b is zero.
+func isAllZeroBytes(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // receivePacketWithTimeout waits for a packet with timeout.

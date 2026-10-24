@@ -1299,10 +1299,11 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 	assert.Equal(t, rekeyThreshold+1, currentSeq, "send sequence should be threshold+1 after two calls")
 }
 
-// TestProcessInboundPacket_ReorderedDataDelivery tests that out-of-order data
-// packets are all delivered when gaps are filled. It verifies that
-// processInboundPacket honors the ready packet list returned by
-// recvWindow.Insert(), so reordered packets are not silently dropped.
+// TestProcessInboundPacket_ReorderedDataDelivery verifies that out-of-order data
+// packets are each delivered on arrival. SSU2 does not provide in-order
+// delivery (ssu2.rst §"Delivery Guarantees"), so processInboundPacket must hand
+// every non-duplicate packet straight to the data path instead of holding it in
+// a reordering buffer.
 func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping slow test")
@@ -1319,10 +1320,10 @@ func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	// Manually initialize the receive window to simulate an established connection
+	// Manually initialize the packet-number filter to simulate an established
+	// connection.
 	conn.recvWindow = NewReceiveWindow(1, DefaultMaxWindowSize)
 
-	// Create two data packets with consecutive sequence numbers
 	packet1 := &SSU2Packet{
 		MessageType:  MessageTypeData,
 		PacketNumber: 1,
@@ -1337,20 +1338,19 @@ func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 		Payload:      []byte{0x03, 0x04},
 	}
 
-	// Process packet 2 first (out of order).
-	// It should be buffered by the receive window.
+	// Process packet 2 first, i.e. out of order. ssu2.rst §"Delivery
+	// Guarantees": SSU2 "does NOT provide in-order delivery of I2NP messages",
+	// so packet 2 must be delivered on arrival rather than held back until
+	// packet 1 shows up.
 	conn.processInboundPacket(packet2)
 	received1 := conn.validDataPacketsReceived.Load()
 
-	// Now process packet 1 (fills the gap).
-	// This should trigger processing of both packet 1 and the buffered packet 2.
+	// Packet 1 then arrives normally and is delivered as well.
 	conn.processInboundPacket(packet1)
 	received2 := conn.validDataPacketsReceived.Load()
 
-	// Verify both packets were processed and counted.
-	// Expected: packet 2 was buffered (received1=0), then both packets released (received2=2)
-	assert.Equal(t, uint64(0), received1, "packet 2 should be buffered, not counted yet")
-	assert.Equal(t, uint64(2), received2, "both packets should be counted after gap is filled")
+	assert.Equal(t, uint64(1), received1, "out-of-order packet 2 must be delivered immediately")
+	assert.Equal(t, uint64(2), received2, "both packets must be counted")
 }
 
 // TestIdleTimeoutKeepaliveLoopDeadlock verifies that idle timeout on

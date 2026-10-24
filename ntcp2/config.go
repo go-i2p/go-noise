@@ -133,11 +133,15 @@ type Config struct {
 	sipHashModifier atomic.Pointer[SipHashLengthModifier]
 
 	// ReplayDetector checks for replayed ephemeral keys during handshakes.
-	// If nil, replay detection is disabled (not recommended for
-	// production).
+	//
+	// Leave it nil to use the shared process-wide default cache; replay
+	// protection is never disabled, because ntcp2.rst §"Session Request" makes
+	// the duplicate-handshake-value cache mandatory. Set it to a cache you own
+	// (see NewReplayCacheWithTTL) to scope entries per listener and to control
+	// its lifetime via Close().
+	//
 	// Shared across all responder connections using this config (typically
-	// instantiated once per listener). Initiator connections ignore this
-	// field.
+	// instantiated once per listener). Initiator connections ignore this field.
 	ReplayDetector ReplayDetector
 
 	// AllowReuseAddress, when true, enables the SO_REUSEADDR socket

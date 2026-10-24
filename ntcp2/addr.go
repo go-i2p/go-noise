@@ -19,6 +19,12 @@
 //   - ChaChaPoly: encryption with ChaCha20-Poly1305 (RFC 7539), which also
 //     checks that messages were not tampered with.
 //   - SHA256: the hash function used to turn shared secrets into keys.
+//   - hs2+hs3: an extra MixHash() before handshake messages 2 and 3, mixing
+//     in the *cleartext padding* that follows messages 1 and 2. The name is
+//     the message index, not "hash the key": ntcp2.rst writes it as
+//     "// MixHash(padding)" in the KDF pseudocode for both steps. Padding is
+//     outside the AEAD frame, so mixing it in is what makes tampering with it
+//     cause the next message to fail.
 //
 // # NTCP2 extensions
 //
@@ -31,7 +37,9 @@
 //     and to message 3 and every data frame (inside the encryption), so
 //     message sizes do not give away how much data is really being sent.
 //   - Data frames start with a two-byte length field, and that field is
-//     scrambled with SipHash-2-4, the same trick obfs4 uses.
+//     scrambled with SipHash-2-4, the same trick obfs4 uses. This length
+//     obfuscation is NTCP2-only; SSU2 has no length field at all because its
+//     datagram length is the message length.
 //
 // The handshake follows a fixed order: SessionRequest, SessionCreated,
 // SessionConfirmed. Only after those three messages do the routers exchange
@@ -123,8 +131,17 @@ func (na *Addr) String() string {
 	return fmt.Sprintf("ntcp2://%s/%s/%s", routerB64, na.role, na.underlying.String())
 }
 
-// RouterHash returns the identity hash of the router on the other end of
-// the connection.
+// RouterHash returns the router hash of the router on the other end of the
+// connection.
+//
+// Naming caveat: before [PropagatePeerStaticKey] has run, this is a
+// *placeholder* — SHA-256 of the peer's 32-byte Noise static key — and not the
+// I2P router hash. The real RH is defined over the serialized RouterIdentity
+// (ntcp2.rst uses RH_A/RH_B for exactly that value, and it is what NTCP2's AES
+// ephemeral-key obfuscation is keyed with), so the placeholder must never be
+// used as an obfuscation key or as a netdb identity. It exists only so the
+// transport layer can correlate a connection with a peer it has not yet looked
+// up.
 func (na *Addr) RouterHash() data.Hash {
 	na.mu.RLock()
 	defer na.mu.RUnlock()

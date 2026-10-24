@@ -90,6 +90,12 @@ const (
 	MinPayloadSize    = 8
 	MaxPacketSizeIPv4 = 1472 // 1500 Ethernet MTU - 20 IPv4 header - 8 UDP header
 	MaxPacketSizeIPv6 = 1452 // 1500 Ethernet MTU - 40 IPv6 header - 8 UDP header
+
+	// MaxPacketNumber is the largest 32-bit packet number (2^32 - 1).
+	// ssu2.rst §"Packet Numbering": "When a max of 2**32 packets have been
+	// sent, wrapping the packet number back to the first packet number, that
+	// session is no longer valid."
+	MaxPacketNumber uint32 = 0xFFFFFFFF
 )
 
 // SSU2 long header field constants per specification

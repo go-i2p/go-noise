@@ -434,9 +434,13 @@ func (h *SSU2Conn) applyOutboundHeaderProtection(data []byte, messageType uint8)
 }
 
 // trackPendingPacket records a sent data packet for potential retransmission.
+//
+// Every Data packet number is tracked, including 0: ssu2.rst §"Packet Numbering"
+// gives the responder packet 0 for its first Data packet, so 0 is a legitimate
+// data-phase number and must not be treated as "not yet in the data phase".
 func (h *SSU2Conn) trackPendingPacket(packet *SSU2Packet, plaintext []byte) {
 	flog("trackPendingPacket", logger.Fields{"pktNum": packet.PacketNumber}).Debug("recording packet for retransmission")
-	if packet.MessageType != MessageTypeData || packet.PacketNumber == 0 {
+	if packet.MessageType != MessageTypeData {
 		return
 	}
 	h.pendingMutex.Lock()

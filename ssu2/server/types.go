@@ -86,8 +86,10 @@ const (
 
 	ShortHeaderSize     = wire.ShortHeaderSize
 	LongHeaderSize      = wire.LongHeaderSize
+	HeaderKeySize       = wire.HeaderKeySize
 	EphemeralKeySize    = wire.EphemeralKeySize
 	MACSize             = wire.MACSize
+	MaxPacketNumber     = wire.MaxPacketNumber
 	MinPacketSize       = wire.MinPacketSize
 	MaxPacketSizeIPv4   = wire.MaxPacketSizeIPv4
 	MaxPacketSizeIPv6   = wire.MaxPacketSizeIPv6
@@ -108,4 +110,8 @@ var (
 	FindBlockByType                = wire.FindBlockByType
 	ExtractConnectionID            = wire.ExtractConnectionID
 	NewHeaderProtectorFromIntroKey = wire.NewHeaderProtectorFromIntroKey
+	EncodeAddressBlock             = wire.EncodeAddressBlock
+	DecodeAddressBlock             = wire.DecodeAddressBlock
+	EncryptIntroKeyAEAD            = wire.EncryptIntroKeyAEAD
+	DecryptIntroKeyAEAD            = wire.DecryptIntroKeyAEAD
 )

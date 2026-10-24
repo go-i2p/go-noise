@@ -22,6 +22,12 @@
 // hash before encryption (binding it to the message), and the cleartext
 // ephemeral keys are obfuscated with ChaCha20.
 //
+// The +hs1+hs2+hs3 in the protocol name names those three MixHash() calls by
+// handshake message index — "an extra MixHash() before message N" — and each
+// one mixes in that message's header. It does not mean "hash the key"; the
+// responder's static key is mixed in raw, as MixHash(bpk), by the pre-message
+// step.
+//
 // # What this package provides
 //
 //   - HandshakeHandler: drives the three-message exchange for both the

@@ -17,8 +17,10 @@
 //     RFC 6298, and derives the retransmission timeout (RTO).
 //   - CongestionController: implements Westwood+ congestion control,
 //     which adapts the send rate to the available bandwidth.
-//   - ReceiveWindow: buffers out-of-order packets and releases them in
-//     sequence, and detects duplicates.
+//   - ReceiveWindow: the inbound packet-number filter. It drops duplicates and
+//     numbers below a sliding floor. It does NOT reorder: ssu2.rst
+//     §"Delivery Guarantees" states SSU2 "does NOT provide in-order delivery of
+//     I2NP messages", so every new packet is delivered on arrival.
 //   - KeepaliveManager: sends periodic keepalive packets so the UDP
 //     connection (and any NAT mapping) stays alive.
 //

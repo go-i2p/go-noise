@@ -113,6 +113,7 @@ const (
 
 const (
 	ShortHeaderSize   = wire.ShortHeaderSize
+	LongHeaderSize    = wire.LongHeaderSize
 	MACSize           = wire.MACSize
 	MaxPacketSizeIPv4 = wire.MaxPacketSizeIPv4
 	HeaderKeySize     = wire.HeaderKeySize
@@ -123,6 +124,7 @@ const (
 var (
 	NewSSU2Block              = wire.NewSSU2Block
 	DecodeRouterInfoBlock     = wire.DecodeRouterInfoBlock
+	DecryptIntroKeyAEAD       = wire.DecryptIntroKeyAEAD
 	EncodeRouterInfoBlock     = wire.EncodeRouterInfoBlock
 	NewBlockRouter            = wire.NewBlockRouter
 	SerializeBlocks           = wire.SerializeBlocks

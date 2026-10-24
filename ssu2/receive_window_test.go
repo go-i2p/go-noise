@@ -6,7 +6,21 @@ import (
 	"time"
 )
 
-// TestNewReceiveWindow verifies window initialization.
+// These tests cover the SSU2 inbound packet-number filter.
+//
+// ssu2.rst §"Delivery Guarantees" is explicit that SSU2 "does NOT provide
+// in-order delivery of I2NP messages", so the filter must deliver every new
+// packet immediately and must never hold one back waiting for a gap. Its only
+// job is bounded duplicate detection, from §"Packet Numbering": "The data
+// required for detecting duplicates can be limited by maintaining a minimum
+// packet number below which all packets are immediately dropped."
+
+// newTestPacket builds a packet with the given number.
+func newTestPacket(pktNum uint32) *SSU2Packet {
+	return &SSU2Packet{PacketNumber: pktNum, Timestamp: time.Now()}
+}
+
+// TestNewReceiveWindow verifies filter initialization.
 func TestNewReceiveWindow(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -15,472 +29,292 @@ func TestNewReceiveWindow(t *testing.T) {
 		wantMaxSize  int
 		wantExpected uint32
 	}{
-		{
-			name:         "valid parameters",
-			expected:     1000,
-			maxSize:      100,
-			wantMaxSize:  100,
-			wantExpected: 1000,
-		},
-		{
-			name:         "zero expected",
-			expected:     0,
-			maxSize:      50,
-			wantMaxSize:  50,
-			wantExpected: 0,
-		},
-		{
-			name:         "max uint32 expected",
-			expected:     MaxPacketNumber,
-			maxSize:      200,
-			wantMaxSize:  200,
-			wantExpected: MaxPacketNumber,
-		},
-		{
-			name:         "zero maxSize uses default",
-			expected:     100,
-			maxSize:      0,
-			wantMaxSize:  DefaultMaxWindowSize,
-			wantExpected: 100,
-		},
+		{name: "valid parameters", expected: 1000, maxSize: 100, wantMaxSize: 100, wantExpected: 1000},
+		{name: "zero expected", expected: 0, maxSize: 50, wantMaxSize: 50, wantExpected: 0},
+		{name: "max uint32 expected", expected: MaxPacketNumber, maxSize: 200, wantMaxSize: 200, wantExpected: MaxPacketNumber},
+		{name: "zero maxSize uses default", expected: 100, maxSize: 0, wantMaxSize: DefaultMaxWindowSize, wantExpected: 100},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rw := NewReceiveWindow(tt.expected, tt.maxSize)
-
 			if rw == nil {
 				t.Fatal("NewReceiveWindow returned nil")
 			}
-
 			if rw.GetExpected() != tt.wantExpected {
-				t.Errorf("expected = %d, want %d", rw.GetExpected(), tt.wantExpected)
+				t.Errorf("floor = %d, want %d", rw.GetExpected(), tt.wantExpected)
 			}
-
 			if rw.GetMaxSize() != tt.wantMaxSize {
-				t.Errorf("maxSize = %d, want %d", rw.GetMaxSize(), tt.wantMaxSize)
+				t.Errorf("capacity = %d, want %d", rw.GetMaxSize(), tt.wantMaxSize)
 			}
-
 			if rw.GetWindowSize() != 0 {
-				t.Errorf("initial window size = %d, want 0", rw.GetWindowSize())
-			}
-
-			if rw.HasGaps() {
-				t.Error("new window should not have gaps")
+				t.Errorf("initial recorded count = %d, want 0", rw.GetWindowSize())
 			}
 		})
 	}
 }
 
-// TestReceiveWindow_InsertExpected verifies inserting the expected packet.
-func TestReceiveWindow_InsertExpected(t *testing.T) {
+// TestReceiveWindow_InsertDeliversImmediately verifies that the expected packet
+// is returned for delivery at once.
+func TestReceiveWindow_InsertDeliversImmediately(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	packet := &SSU2Packet{
-		PacketNumber: 1000,
-		Timestamp:    time.Now(),
-	}
-
-	ready, err := rw.Insert(packet)
+	ready, err := rw.Insert(newTestPacket(1000))
 	if err != nil {
 		t.Fatalf("Insert() error = %v, want nil", err)
 	}
-
-	if len(ready) != 1 {
-		t.Fatalf("ready packets = %d, want 1", len(ready))
+	if len(ready) != 1 || ready[0].PacketNumber != 1000 {
+		t.Fatalf("ready = %v, want exactly packet 1000", ready)
 	}
-
-	if ready[0].PacketNumber != 1000 {
-		t.Errorf("ready[0].PacketNumber = %d, want 1000", ready[0].PacketNumber)
-	}
-
-	if rw.GetExpected() != 1001 {
-		t.Errorf("expected = %d, want 1001", rw.GetExpected())
-	}
-
-	if rw.GetWindowSize() != 0 {
-		t.Errorf("window size = %d, want 0", rw.GetWindowSize())
-	}
-}
-
-// TestReceiveWindow_InsertFuture verifies buffering future packets.
-func TestReceiveWindow_InsertFuture(t *testing.T) {
-	rw := NewReceiveWindow(1000, 100)
-
-	packet := &SSU2Packet{
-		PacketNumber: 1005,
-		Timestamp:    time.Now(),
-	}
-
-	ready, err := rw.Insert(packet)
-	if err != nil {
-		t.Fatalf("Insert() error = %v, want nil", err)
-	}
-
-	if len(ready) != 0 {
-		t.Errorf("ready packets = %d, want 0 (buffered)", len(ready))
-	}
-
+	// The floor only moves when the tracked span is exceeded.
 	if rw.GetExpected() != 1000 {
-		t.Errorf("expected = %d, want 1000 (unchanged)", rw.GetExpected())
+		t.Errorf("floor = %d, want 1000 (unchanged)", rw.GetExpected())
 	}
-
 	if rw.GetWindowSize() != 1 {
-		t.Errorf("window size = %d, want 1", rw.GetWindowSize())
-	}
-
-	if !rw.HasGaps() {
-		t.Error("window should have gaps after buffering future packet")
+		t.Errorf("recorded count = %d, want 1", rw.GetWindowSize())
 	}
 }
 
-// TestReceiveWindow_InsertOld verifies rejecting old packets.
+// TestReceiveWindow_OutOfOrderNotBuffered is the core spec test: an out-of-order
+// packet must be delivered immediately, not held for the missing one.
+func TestReceiveWindow_OutOfOrderNotBuffered(t *testing.T) {
+	rw := NewReceiveWindow(1000, 100)
+
+	// 1002, 1001, 1003 arrive before 1000. Each must be delivered on arrival.
+	for _, pktNum := range []uint32{1002, 1001, 1003} {
+		ready, err := rw.Insert(newTestPacket(pktNum))
+		if err != nil {
+			t.Fatalf("Insert(%d) error = %v", pktNum, err)
+		}
+		if len(ready) != 1 || ready[0].PacketNumber != pktNum {
+			t.Errorf("Insert(%d) ready = %d packets, want 1 delivered immediately (no head-of-line blocking)", pktNum, len(ready))
+		}
+	}
+
+	// Late arrival of 1000 is still new, so it is delivered too.
+	ready, err := rw.Insert(newTestPacket(1000))
+	if err != nil {
+		t.Fatalf("Insert(1000) error = %v", err)
+	}
+	if len(ready) != 1 {
+		t.Errorf("Insert(1000) ready = %d, want 1", len(ready))
+	}
+}
+
+// TestReceiveWindow_LostPacketDoesNotStallSession guards the regression that
+// made the old reordering buffer a denial-of-service: because SSU2 never
+// retransmits a data packet with the same number, a buffered gap could never
+// fill and every later packet would be dropped forever.
+func TestReceiveWindow_LostPacketDoesNotStallSession(t *testing.T) {
+	rw := NewReceiveWindow(0, 16)
+
+	// Packet 0 arrives, then 1 is lost, then 2..40 arrive.
+	if _, err := rw.Insert(newTestPacket(0)); err != nil {
+		t.Fatalf("Insert(0) error = %v", err)
+	}
+	for pktNum := uint32(2); pktNum < 40; pktNum++ {
+		ready, err := rw.Insert(newTestPacket(pktNum))
+		if err != nil {
+			t.Fatalf("Insert(%d) error = %v: session stalled after one lost packet", pktNum, err)
+		}
+		if len(ready) != 1 {
+			t.Errorf("Insert(%d) ready = %d, want 1", pktNum, len(ready))
+		}
+	}
+}
+
+// TestReceiveWindow_InsertOld verifies packets below the floor are dropped.
 func TestReceiveWindow_InsertOld(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	packet := &SSU2Packet{
-		PacketNumber: 999,
-		Timestamp:    time.Now(),
+	if _, err := rw.Insert(newTestPacket(999)); err == nil {
+		t.Fatal("Insert(999) error = nil, want error for packet below the floor")
 	}
-
-	ready, err := rw.Insert(packet)
-
-	if err == nil {
-		t.Fatal("Insert() error = nil, want error for old packet")
-	}
-
-	if len(ready) != 0 {
-		t.Errorf("ready packets = %d, want 0", len(ready))
-	}
-
 	if rw.GetExpected() != 1000 {
-		t.Errorf("expected = %d, want 1000 (unchanged)", rw.GetExpected())
+		t.Errorf("floor = %d, want 1000 (unchanged)", rw.GetExpected())
+	}
+	if rw.GetWindowSize() != 0 {
+		t.Errorf("recorded count = %d, want 0", rw.GetWindowSize())
 	}
 }
 
-// TestReceiveWindow_InsertDuplicate verifies rejecting duplicate packets.
+// TestReceiveWindow_InsertDuplicate verifies duplicates are dropped inside the
+// tracked span.
 func TestReceiveWindow_InsertDuplicate(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	// Insert first packet
-	packet1 := &SSU2Packet{
-		PacketNumber: 1000,
-		Timestamp:    time.Now(),
-	}
-	_, _ = rw.Insert(packet1)
-
-	// Try duplicate
-	packet2 := &SSU2Packet{
-		PacketNumber: 1000,
-		Timestamp:    time.Now(),
-	}
-
-	ready, err := rw.Insert(packet2)
-
-	if err == nil {
-		t.Fatal("Insert() error = nil, want error for duplicate")
-	}
-
-	if len(ready) != 0 {
-		t.Errorf("ready packets = %d, want 0", len(ready))
+	for _, pktNum := range []uint32{1000, 1005} {
+		if _, err := rw.Insert(newTestPacket(pktNum)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", pktNum, err)
+		}
+		ready, err := rw.Insert(newTestPacket(pktNum))
+		if err == nil {
+			t.Errorf("Insert(%d) twice: error = nil, want duplicate error", pktNum)
+		}
+		if len(ready) != 0 {
+			t.Errorf("Insert(%d) twice: ready = %d, want 0", pktNum, len(ready))
+		}
 	}
 }
 
-// TestReceiveWindow_InsertDuplicateFuture verifies rejecting duplicate future packets.
-func TestReceiveWindow_InsertDuplicateFuture(t *testing.T) {
-	rw := NewReceiveWindow(1000, 100)
-
-	// Buffer future packet
-	packet1 := &SSU2Packet{
-		PacketNumber: 1005,
-		Timestamp:    time.Now(),
-	}
-	_, _ = rw.Insert(packet1)
-
-	// Try duplicate future packet
-	packet2 := &SSU2Packet{
-		PacketNumber: 1005,
-		Timestamp:    time.Now(),
-	}
-
-	ready, err := rw.Insert(packet2)
-
-	if err == nil {
-		t.Fatal("Insert() error = nil, want error for duplicate future packet")
-	}
-
-	if len(ready) != 0 {
-		t.Errorf("ready packets = %d, want 0", len(ready))
-	}
-
-	if rw.GetWindowSize() != 1 {
-		t.Errorf("window size = %d, want 1 (no change)", rw.GetWindowSize())
-	}
-}
-
-// TestReceiveWindow_InsertNil verifies rejecting nil packets.
+// TestReceiveWindow_InsertNil verifies a nil packet is rejected.
 func TestReceiveWindow_InsertNil(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
 	ready, err := rw.Insert(nil)
-
 	if err == nil {
 		t.Fatal("Insert(nil) error = nil, want error")
 	}
-
 	if ready != nil {
 		t.Errorf("Insert(nil) ready = %v, want nil", ready)
 	}
 }
 
-// TestReceiveWindow_SequentialPackets verifies processing in-order packets.
+// TestReceiveWindow_SequentialPackets verifies an in-order run is delivered
+// packet-for-packet.
 func TestReceiveWindow_SequentialPackets(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
 	for i := uint32(1000); i < 1010; i++ {
-		packet := &SSU2Packet{
-			PacketNumber: i,
-			Timestamp:    time.Now(),
-		}
-
-		ready, err := rw.Insert(packet)
+		ready, err := rw.Insert(newTestPacket(i))
 		if err != nil {
-			t.Fatalf("Insert(%d) error = %v, want nil", i, err)
+			t.Fatalf("Insert(%d) error = %v", i, err)
 		}
+		if len(ready) != 1 || ready[0].PacketNumber != i {
+			t.Errorf("Insert(%d) ready = %v, want exactly that packet", i, ready)
+		}
+	}
+	if rw.GetWindowSize() != 10 {
+		t.Errorf("recorded count = %d, want 10", rw.GetWindowSize())
+	}
+}
 
+// TestReceiveWindow_FloorAdvancesAndStateStaysBounded verifies the bounded-state
+// requirement: as newer numbers arrive the floor slides and the recorded set
+// never exceeds the configured capacity.
+func TestReceiveWindow_FloorAdvancesAndStateStaysBounded(t *testing.T) {
+	capacity := uint(10)
+	rw := NewReceiveWindow(1000, capacity)
+
+	for i := uint32(1000); i < 3000; i++ {
+		if _, err := rw.Insert(newTestPacket(i)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", i, err)
+		}
+		if got := rw.GetWindowSize(); got > int(capacity) {
+			t.Fatalf("recorded count = %d after Insert(%d), want <= %d", got, i, capacity)
+		}
+	}
+
+	if rw.GetExpected() <= 1000 {
+		t.Errorf("floor = %d, want it to have advanced past 1000", rw.GetExpected())
+	}
+	// Everything below the floor is now dropped as old.
+	if _, err := rw.Insert(newTestPacket(1000)); err == nil {
+		t.Error("Insert(1000) after the floor advanced: error = nil, want drop")
+	}
+}
+
+// TestReceiveWindow_Wraparound verifies modular packet-number arithmetic, since
+// ssu2.rst allows numbers to wrap within a session.
+func TestReceiveWindow_Wraparound(t *testing.T) {
+	rw := NewReceiveWindow(MaxPacketNumber-2, 100)
+
+	for _, pktNum := range []uint32{MaxPacketNumber - 2, MaxPacketNumber - 1, MaxPacketNumber, 0, 1} {
+		ready, err := rw.Insert(newTestPacket(pktNum))
+		if err != nil {
+			t.Fatalf("Insert(%d) across the wrap: error = %v", pktNum, err)
+		}
 		if len(ready) != 1 {
-			t.Errorf("Insert(%d) ready packets = %d, want 1", i, len(ready))
-		}
-
-		if ready[0].PacketNumber != i {
-			t.Errorf("ready[0].PacketNumber = %d, want %d", ready[0].PacketNumber, i)
+			t.Errorf("Insert(%d) ready = %d, want 1", pktNum, len(ready))
 		}
 	}
 
-	if rw.GetExpected() != 1010 {
-		t.Errorf("expected = %d, want 1010", rw.GetExpected())
+	// Duplicates are still detected across the wrap boundary.
+	if _, err := rw.Insert(newTestPacket(0)); err == nil {
+		t.Error("Insert(0) again: error = nil, want duplicate error")
 	}
-
-	if rw.GetWindowSize() != 0 {
-		t.Errorf("window size = %d, want 0", rw.GetWindowSize())
+	// A number behind the wrapped floor is dropped as old.
+	if _, err := rw.Insert(newTestPacket(MaxPacketNumber - 2)); err == nil {
+		t.Error("Insert behind the wrapped floor: error = nil, want drop")
 	}
 }
 
-// TestReceiveWindow_OutOfOrderRelease verifies releasing buffered packets in order.
-func TestReceiveWindow_OutOfOrderRelease(t *testing.T) {
-	rw := NewReceiveWindow(1000, 100)
-
-	// Buffer packets out of order: 1002, 1001, 1003
-	packets := []*SSU2Packet{
-		{PacketNumber: 1002},
-		{PacketNumber: 1001},
-		{PacketNumber: 1003},
-	}
-
-	for _, pkt := range packets {
-		ready, err := rw.Insert(pkt)
-		if err != nil {
-			t.Fatalf("Insert(%d) error = %v", pkt.PacketNumber, err)
-		}
-		if len(ready) != 0 {
-			t.Errorf("Insert(%d) should buffer, got %d ready", pkt.PacketNumber, len(ready))
-		}
-	}
-
-	if rw.GetWindowSize() != 3 {
-		t.Fatalf("window size = %d, want 3", rw.GetWindowSize())
-	}
-
-	// Insert missing packet 1000, should release all
-	packet := &SSU2Packet{PacketNumber: 1000}
-	ready, err := rw.Insert(packet)
-	if err != nil {
-		t.Fatalf("Insert(1000) error = %v, want nil", err)
-	}
-
-	if len(ready) != 4 {
-		t.Fatalf("ready packets = %d, want 4", len(ready))
-	}
-
-	// Verify order: 1000, 1001, 1002, 1003
-	expectedOrder := []uint32{1000, 1001, 1002, 1003}
-	for i, pktNum := range expectedOrder {
-		if ready[i].PacketNumber != pktNum {
-			t.Errorf("ready[%d].PacketNumber = %d, want %d", i, ready[i].PacketNumber, pktNum)
-		}
-	}
-
-	if rw.GetExpected() != 1004 {
-		t.Errorf("expected = %d, want 1004", rw.GetExpected())
-	}
-
-	if rw.GetWindowSize() != 0 {
-		t.Errorf("window size = %d, want 0 (all released)", rw.GetWindowSize())
-	}
-}
-
-// TestReceiveWindow_PartialGapFill verifies partial gap filling.
-func TestReceiveWindow_PartialGapFill(t *testing.T) {
-	rw := NewReceiveWindow(1000, 100)
-
-	// Buffer 1001, 1002, 1005
-	for _, pktNum := range []uint32{1001, 1002, 1005} {
-		pkt := &SSU2Packet{PacketNumber: pktNum}
-		_, _ = rw.Insert(pkt)
-	}
-
-	// Insert 1000, should release 1000, 1001, 1002 (stop at gap before 1005)
-	packet := &SSU2Packet{PacketNumber: 1000}
-	ready, err := rw.Insert(packet)
-	if err != nil {
-		t.Fatalf("Insert(1000) error = %v", err)
-	}
-
-	if len(ready) != 3 {
-		t.Fatalf("ready packets = %d, want 3", len(ready))
-	}
-
-	// Verify released: 1000, 1001, 1002
-	for i, expected := range []uint32{1000, 1001, 1002} {
-		if ready[i].PacketNumber != expected {
-			t.Errorf("ready[%d].PacketNumber = %d, want %d", i, ready[i].PacketNumber, expected)
-		}
-	}
-
-	if rw.GetExpected() != 1003 {
-		t.Errorf("expected = %d, want 1003", rw.GetExpected())
-	}
-
-	if rw.GetWindowSize() != 1 {
-		t.Errorf("window size = %d, want 1 (1005 still buffered)", rw.GetWindowSize())
-	}
-}
-
-// TestReceiveWindow_WindowFull verifies window size limit enforcement.
-func TestReceiveWindow_WindowFull(t *testing.T) {
-	maxSize := uint(10)
-	rw := NewReceiveWindow(1000, maxSize)
-
-	// Fill window with future packets
-	for i := uint32(1001); i < 1001+uint32(maxSize); i++ {
-		pkt := &SSU2Packet{PacketNumber: i}
-		_, err := rw.Insert(pkt)
-		if err != nil {
-			t.Fatalf("Insert(%d) error = %v, want nil", i, err)
-		}
-	}
-
-	if rw.GetWindowSize() != int(maxSize) {
-		t.Fatalf("window size = %d, want %d", rw.GetWindowSize(), maxSize)
-	}
-
-	// Try to insert one more (should fail)
-	pkt := &SSU2Packet{PacketNumber: 1001 + uint32(maxSize)}
-	ready, err := rw.Insert(pkt)
-
-	if err == nil {
-		t.Fatal("Insert() error = nil, want error for full window")
-	}
-
-	if len(ready) != 0 {
-		t.Errorf("ready packets = %d, want 0", len(ready))
-	}
-
-	if rw.GetWindowSize() != int(maxSize) {
-		t.Errorf("window size = %d, want %d (unchanged)", rw.GetWindowSize(), maxSize)
-	}
-}
-
-// TestReceiveWindow_Clear verifies window clearing.
+// TestReceiveWindow_Clear verifies resetting the filter.
 func TestReceiveWindow_Clear(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	// Buffer some packets
 	for i := uint32(1005); i < 1010; i++ {
-		pkt := &SSU2Packet{PacketNumber: i}
-		_, _ = rw.Insert(pkt)
+		if _, err := rw.Insert(newTestPacket(i)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", i, err)
+		}
 	}
-
 	if rw.GetWindowSize() != 5 {
-		t.Fatalf("window size = %d, want 5", rw.GetWindowSize())
+		t.Fatalf("recorded count = %d, want 5", rw.GetWindowSize())
 	}
 
-	// Clear to new expected
 	rw.Clear(2000)
 
 	if rw.GetExpected() != 2000 {
-		t.Errorf("expected = %d, want 2000", rw.GetExpected())
+		t.Errorf("floor = %d, want 2000", rw.GetExpected())
 	}
-
 	if rw.GetWindowSize() != 0 {
-		t.Errorf("window size = %d, want 0 (cleared)", rw.GetWindowSize())
+		t.Errorf("recorded count = %d, want 0 after Clear", rw.GetWindowSize())
 	}
-
-	if rw.HasGaps() {
-		t.Error("cleared window should not have gaps")
+	// 1005 is now below the floor and must be dropped rather than delivered.
+	if _, err := rw.Insert(newTestPacket(1005)); err == nil {
+		t.Error("Insert(1005) after Clear: error = nil, want drop")
 	}
 }
 
-// TestReceiveWindow_SetExpected verifies updating expected packet number.
+// TestReceiveWindow_SetExpected verifies rebaselining the floor.
 func TestReceiveWindow_SetExpected(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	// Buffer some packets: 1005, 1006, 1007
 	for i := uint32(1005); i < 1008; i++ {
-		pkt := &SSU2Packet{PacketNumber: i}
-		_, _ = rw.Insert(pkt)
+		if _, err := rw.Insert(newTestPacket(i)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", i, err)
+		}
 	}
 
-	// Set expected to 1006 (discard 1005, keep 1006, 1007)
 	rw.SetExpected(1006)
 
 	if rw.GetExpected() != 1006 {
-		t.Errorf("expected = %d, want 1006", rw.GetExpected())
+		t.Errorf("floor = %d, want 1006", rw.GetExpected())
 	}
-
-	if rw.GetWindowSize() != 2 {
-		t.Errorf("window size = %d, want 2 (1006, 1007)", rw.GetWindowSize())
+	if rw.GetWindowSize() != 0 {
+		t.Errorf("recorded count = %d, want 0 (SetExpected forgets the span)", rw.GetWindowSize())
 	}
-
-	// Packet 1006 is still buffered, trying to insert it again should fail
-	pkt := &SSU2Packet{PacketNumber: 1006}
-	ready, err := rw.Insert(pkt)
-	if err == nil {
-		t.Error("Insert(1006) should fail (duplicate of buffered packet)")
+	// 1006 is above the new floor and was forgotten, so it is deliverable again.
+	ready, err := rw.Insert(newTestPacket(1006))
+	if err != nil {
+		t.Fatalf("Insert(1006) error = %v, want nil", err)
 	}
-	if len(ready) != 0 {
-		t.Errorf("ready = %d, want 0", len(ready))
-	}
-
-	// Window state should be unchanged
-	if rw.GetWindowSize() != 2 {
-		t.Errorf("window size after dup = %d, want 2 (unchanged)", rw.GetWindowSize())
+	if len(ready) != 1 {
+		t.Errorf("Insert(1006) ready = %d, want 1", len(ready))
 	}
 }
 
-// TestReceiveWindow_GetGapInfo verifies gap diagnostics.
+// TestReceiveWindow_GetGapInfo verifies the diagnostics accessor reports the
+// recorded span.
 func TestReceiveWindow_GetGapInfo(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	// No gaps initially
-	min, max, count := rw.GetGapInfo()
-	if min != 0 || max != 0 || count != 0 {
-		t.Errorf("empty window gap info = (%d, %d, %d), want (0, 0, 0)", min, max, count)
+	if min, max, count := rw.GetGapInfo(); min != 1000 || max != 1000 || count != 0 {
+		t.Errorf("empty filter gap info = (%d, %d, %d), want (1000, 1000, 0)", min, max, count)
 	}
 
-	// Buffer packets: 1005, 1007, 1010
 	for _, pktNum := range []uint32{1005, 1007, 1010} {
-		pkt := &SSU2Packet{PacketNumber: pktNum}
-		_, _ = rw.Insert(pkt)
+		if _, err := rw.Insert(newTestPacket(pktNum)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", pktNum, err)
+		}
 	}
 
-	min, max, count = rw.GetGapInfo()
-	if min != 1005 || max != 1010 || count != 3 {
+	if min, max, count := rw.GetGapInfo(); min != 1005 || max != 1010 || count != 3 {
 		t.Errorf("gap info = (%d, %d, %d), want (1005, 1010, 3)", min, max, count)
 	}
 }
 
-// TestReceiveWindow_Concurrency verifies thread-safety.
+// TestReceiveWindow_Concurrency verifies thread-safety under concurrent inserts.
 func TestReceiveWindow_Concurrency(t *testing.T) {
 	rw := NewReceiveWindow(0, 1000)
 
@@ -489,50 +323,33 @@ func TestReceiveWindow_Concurrency(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
-
-	// Concurrent inserts
 	for i := 0; i < numGoroutines; i++ {
 		go func(offset int) {
 			defer wg.Done()
 			for j := 0; j < packetsPerGoroutine; j++ {
 				pktNum := uint32(offset*packetsPerGoroutine + j)
-				pkt := &SSU2Packet{
-					PacketNumber: pktNum,
-					Timestamp:    time.Now(),
-				}
-				_, _ = rw.Insert(pkt) // Ignore errors (duplicates expected)
+				_, _ = rw.Insert(newTestPacket(pktNum)) // duplicates from overlap are expected
 			}
 		}(i)
 	}
-
 	wg.Wait()
 
-	// Verify final state is consistent
-	expected := rw.GetExpected()
-	windowSize := rw.GetWindowSize()
-
-	t.Logf("After concurrent inserts: expected=%d, windowSize=%d", expected, windowSize)
-
-	// Expected should have advanced
-	if expected == 0 {
-		t.Error("expected = 0, should have advanced")
+	if got := rw.GetWindowSize(); got > 1000 {
+		t.Errorf("recorded count = %d, want <= capacity 1000", got)
 	}
-
-	// Total packets = expected + windowSize should be reasonable
-	totalProcessed := int(expected) + windowSize
-	if totalProcessed > numGoroutines*packetsPerGoroutine {
-		t.Errorf("totalProcessed = %d > max possible %d", totalProcessed, numGoroutines*packetsPerGoroutine)
+	if rw.GetExpected() == 0 {
+		t.Error("floor = 0, want it to have advanced past the capacity")
 	}
 }
 
-// TestReceiveWindow_ConcurrentReads verifies concurrent read operations.
+// TestReceiveWindow_ConcurrentReads verifies read operations do not mutate state.
 func TestReceiveWindow_ConcurrentReads(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	// Buffer some packets
 	for i := uint32(1005); i < 1010; i++ {
-		pkt := &SSU2Packet{PacketNumber: i}
-		_, _ = rw.Insert(pkt)
+		if _, err := rw.Insert(newTestPacket(i)); err != nil {
+			t.Fatalf("Insert(%d) error = %v", i, err)
+		}
 	}
 
 	const numReaders = 50
@@ -540,83 +357,60 @@ func TestReceiveWindow_ConcurrentReads(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(numReaders)
-
-	// Concurrent reads
 	for i := 0; i < numReaders; i++ {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < readsPerGoroutine; j++ {
 				_ = rw.GetExpected()
 				_ = rw.GetWindowSize()
-				_ = rw.HasGaps()
 				_, _, _ = rw.GetGapInfo()
 			}
 		}()
 	}
-
 	wg.Wait()
 
-	// Verify state unchanged
 	if rw.GetExpected() != 1000 {
-		t.Errorf("expected = %d, want 1000 (reads should not modify)", rw.GetExpected())
+		t.Errorf("floor = %d, want 1000 (reads must not modify)", rw.GetExpected())
 	}
-
 	if rw.GetWindowSize() != 5 {
-		t.Errorf("window size = %d, want 5 (reads should not modify)", rw.GetWindowSize())
+		t.Errorf("recorded count = %d, want 5 (reads must not modify)", rw.GetWindowSize())
 	}
 }
 
-// BenchmarkReceiveWindow_Insert measures insertion performance.
+// BenchmarkReceiveWindow_Insert measures in-order insert performance.
 func BenchmarkReceiveWindow_Insert(b *testing.B) {
 	rw := NewReceiveWindow(0, 10000)
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		pkt := &SSU2Packet{
-			PacketNumber: uint32(i),
-			Timestamp:    time.Now(),
-		}
-		_, _ = rw.Insert(pkt)
+		_, _ = rw.Insert(newTestPacket(uint32(i)))
 	}
 }
 
-// BenchmarkReceiveWindow_InsertOutOfOrder measures out-of-order insertion.
+// BenchmarkReceiveWindow_InsertOutOfOrder measures out-of-order insert cost.
 func BenchmarkReceiveWindow_InsertOutOfOrder(b *testing.B) {
 	rw := NewReceiveWindow(0, 10000)
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// Insert every other packet (creates gaps)
-		pkt := &SSU2Packet{
-			PacketNumber: uint32(i * 2),
-			Timestamp:    time.Now(),
-		}
-		_, _ = rw.Insert(pkt)
+		_, _ = rw.Insert(newTestPacket(uint32(i * 2)))
 	}
 }
 
-// BenchmarkReceiveWindow_GetExpected measures read performance.
+// BenchmarkReceiveWindow_GetExpected measures floor read performance.
 func BenchmarkReceiveWindow_GetExpected(b *testing.B) {
 	rw := NewReceiveWindow(1000, 100)
-
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = rw.GetExpected()
 	}
 }
 
-// BenchmarkReceiveWindow_Concurrent measures concurrent access performance.
+// BenchmarkReceiveWindow_Concurrent measures concurrent insert performance.
 func BenchmarkReceiveWindow_Concurrent(b *testing.B) {
 	rw := NewReceiveWindow(0, 100000)
-
 	b.RunParallel(func(pb *testing.PB) {
 		i := uint32(0)
 		for pb.Next() {
-			pkt := &SSU2Packet{
-				PacketNumber: i,
-				Timestamp:    time.Now(),
-			}
-			_, _ = rw.Insert(pkt)
+			_, _ = rw.Insert(newTestPacket(i))
 			i++
 		}
 	})

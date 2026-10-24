@@ -42,17 +42,18 @@
 //     manage the lifecycle of sessions.
 //   - [GarlicEncryptor]: encrypt-only subset, for components that only send.
 //   - [GarlicDecryptor]: decrypt-only subset, for components that only receive.
-//   - [BuildRecordEncryptor]: encrypts tunnel build request records (ECIES-X25519).
-//   - [BuildReplyEncryptor]: encrypts tunnel build reply records (ChaCha20-Poly1305).
 //   - [TagResolver]: fast lookup of a session by its 8-byte tag.
 //
 // Callers in go-i2p convert I2P types to raw bytes before calling these
 // interfaces:
 //
 //   - common.Hash → [32]byte
-//   - session_key.SessionKey → [32]byte
+//   - session_key.SessionKey → [32]byte (garlic session keys)
 //   - session_tag.ECIESSessionTag → [8]byte
 //   - router_info.RouterInfo → extracted [32]byte keys via adapter functions
+//
+// Tunnel build-request/build-reply record crypto is out of scope here; see
+// tunnel-ecies.rst and [BuildRecordEncryptor]'s removal note in interfaces.go.
 //
 // Reference: https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst
 package ratchet

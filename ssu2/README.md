@@ -12,7 +12,7 @@ This package provides handshake modifiers and utilities for implementing the SSU
 
 - **ChaCha20 Obfuscation Modifier** - Ephemeral key obfuscation for handshake messages (91.1% coverage)
 - **SSU2 Padding Modifier** - MTU-aware padding with I2P ratios 0.0-15.9375 (82.7% coverage)
-- **SipHash Length Modifier** - Frame length obfuscation using SipHash-2-4 (100% coverage)
+- **Header Protection** - Per-packet header obfuscation with ChaCha20 (ssu2.rst §"Header Encryption"); SSU2 has **no** length obfuscation, since §"Messages" makes the datagram length the message length
 - **SSU2 Address (`SSU2Addr`)** - Complete `net.Addr` implementation with connection ID and NAT traversal support (100% coverage)
 - **SSU2 Configuration (`SSU2Config`)** - Builder pattern configuration with comprehensive validation (88.4% coverage)
 - **SSU2 Connection (`SSU2Conn`)** - Full `net.Conn` implementation (Close, LocalAddr, RemoteAddr, deadlines, Read, Write) with XK handshake. `Read` returns one I2NP message at a time, buffering any remainder that does not fit the caller's buffer; `Write` auto-fragments large messages. Because `Read`/`Write` are message-oriented rather than a raw byte stream, a callback-based path via `DataHandler.MessageChan()` is also offered for consumers that prefer explicit per-message handling.
@@ -82,55 +82,6 @@ func main() {
 }
 ```
 
-### SipHash Length Modifier
-
-```go
-package main
-
-import (
-    "encoding/binary"
-    "github.com/go-i2p/go-noise/ssu2"
-    "github.com/go-i2p/go-noise/handshake"
-)
-
-func main() {
-    // Derive SipHash keys from Noise handshake (post-handshake)
-    // These would typically come from the KDF after handshake completion
-    k1 := uint64(0x0123456789ABCDEF)
-    k2 := uint64(0xFEDCBA9876543210)
-    initialIV := uint64(0x1122334455667788)
-    
-    // Create SipHash length modifier for data phase
-    modifier := ssu2.NewSSU2LengthModifier(
-        "ssu2-length-obfs",
-        [2]uint64{k1, k2},
-        initialIV,
-    )
-    
-    // In data phase, obfuscate frame lengths (2 bytes)
-    frameLength := uint16(1280) // SSU2 packet size
-    lengthBytes := make([]byte, 2)
-    binary.BigEndian.PutUint16(lengthBytes, frameLength)
-    
-    // Obfuscate outbound length
-    obfuscated, err := modifier.ModifyOutbound(handshake.PhaseFinal, lengthBytes)
-    if err != nil {
-        panic(err)
-    }
-    
-    // ... send obfuscated length with data ...
-    
-    // Deobfuscate inbound length (receiver with same keys)
-    deobfuscated, err := modifier.ModifyInbound(handshake.PhaseFinal, obfuscated)
-    if err != nil {
-        panic(err)
-    }
-    
-    originalLength := binary.BigEndian.Uint16(deobfuscated)
-    // originalLength == 1280
-}
-```
-
 ## Architecture
 
 ### ChaCha20 Obfuscation
@@ -148,25 +99,23 @@ Key differences from NTCP2's AES obfuscation:
 - **Operation**: XOR-based vs block encryption
 - **State Derivation**: From encrypted data (sender and receiver must coordinate)
 
-### SipHash Length Obfuscation
+### No Length Obfuscation (unlike NTCP2)
 
-The SipHash length modifier implements frame length obfuscation in the data phase:
+SSU2 does **not** obfuscate message lengths. ssu2.rst §"Messages": "Each UDP
+datagram contains exactly one message. The length of the datagram (after the IP
+and UDP headers) is the length of the message." Padding is therefore carried
+inside the message as a Padding block rather than applied to a length field:
 
-- **Data Phase Only**: Applies to PhaseFinal (after handshake completion)
-- **2-Byte Lengths**: Obfuscates frame length fields using SipHash-2-4
-- **Counter-Based**: Maintains separate counters for inbound/outbound
-- **XOR Operation**: Length XOR SipHash(k1, k2, counter) = obfuscated length
+- **No length field**: the UDP datagram length is the message length
+- **Padding block only**: type 254 inside the encrypted payload
+- **Traffic analysis**: mitigated by padding blocks, not by masking a length
 
-Algorithm:
-1. Increment frame counter
-2. Calculate SipHash-2-4 with keys (k1, k2) and counter as input
-3. XOR first 2 bytes of hash with frame length
-4. Result is obfuscated length (symmetric operation for deobfuscation)
-
-Shared with NTCP2:
-- Identical SipHash-2-4 algorithm
-- Same counter management strategy
-- Protocol-agnostic length obfuscation
+SipHash appears in SSU2 only for the optional stateless-token construction that
+§"Session Request" discusses (and explicitly cautions against for replay
+rejection). The SipHash-2-4 length-obfuscation chain is NTCP2-only
+(ntcp2.rst §"Data Phase"); its implementation lives in
+`github.com/go-i2p/go-noise/handshake/siphash` and is used by the `ntcp2`
+package.
 
 ## Security Properties
 
@@ -198,15 +147,11 @@ Based on benchmarks on Intel Core i7-10710U @ 1.10GHz:
 BenchmarkChaChaObfuscation-12            1396284    855.2 ns/op     40 B/op     2 allocs/op
 BenchmarkSSU2Padding-12                  1000000   1170 ns/op      140 B/op     0 allocs/op
 BenchmarkSSU2PaddingRemoval-12          13712234     73.52 ns/op     0 B/op     0 allocs/op
-BenchmarkSSU2LengthModifier-12          15523298     92.99 ns/op     2 B/op     1 allocs/op
-BenchmarkSSU2LengthModifierRoundtrip-12  8316558    153.0 ns/op      4 B/op     2 allocs/op
 ```
 
 - **ChaCha20 Throughput**: ~1.4 million operations/second
 - **Padding Overhead**: ~1.2 microseconds per operation
 - **Padding Removal**: ~73 nanoseconds (extremely fast)
-- **SipHash Length**: ~93 nanoseconds per operation
-- **SipHash Roundtrip**: ~153 nanoseconds (obfuscate + deobfuscate)
 - **Memory**: Minimal allocations (0-140 bytes per operation)
 
 ## Testing
@@ -242,10 +187,8 @@ Current test coverage: **88.4%**
 ## Dependencies
 
 - **golang.org/x/crypto/chacha20**: ChaCha20 stream cipher implementation
-- **github.com/dchest/siphash**: SipHash-2-4 implementation (via NTCP2)
 - **github.com/samber/oops**: Rich error context and wrapping
 - **github.com/go-i2p/go-noise/handshake**: Handshake modifier interface
-- **github.com/go-i2p/go-noise/ntcp2**: NTCP2 SipHash modifier (reused for SSU2)
 
 ## Contributing
 
@@ -263,11 +206,17 @@ MIT License
 
 ## Status
 
-**Development Status**: Phases 1 & 2 complete - Core cryptographic foundation, addressing, and configuration are production-ready.
+**Development Status**: The transport is feature-complete for the parts of ssu2.rst
+that are finalized: handshake modifiers, addressing, configuration, the connection and
+listener layers, and the tunnel/relay block handling.
 
 **What's Available**:
-- Handshake modifiers (ChaCha20, Padding, SipHash) with comprehensive testing
+- Handshake modifiers (ChaCha20 obfuscation, Padding) with comprehensive testing
 - `SSU2Addr` implementing `net.Addr` for UDP connections with NAT traversal support
 - `SSU2Config` builder for fluent configuration with automatic modifier setup
+- `SSU2Conn` implementing `net.Conn`, and `SSU2Listener` implementing `net.Listener`
 
-**Next Steps**: Phase 3 will implement the connection layer (`SSU2Conn`, `SSU2Listener`) and transport functions. See [PLAN.md](../PLAN.md) for details.
+**Next Steps**: interoperability testing against a live I2P router. SessionConfirmed
+(message 3 of the XK exchange) is routed through the Noise state machine but has not
+yet been validated against another implementation, and NextNonce key rotation remains
+disabled by default because the spec marks that area "TODO"/"TBD".

@@ -232,15 +232,23 @@ type SSU2Config struct {
 	ReplayCacheTTL time.Duration
 
 	// MaxClockSkew is the maximum allowed difference between local and
-	// remote clocks for handshake timestamp validation. Per the SSU2 spec,
-	// the receiver should verify that the DateTime block timestamp is
-	// within a certain window of local time.
-	// Default: 120 seconds. Set to 0 to disable skew validation.
+	// remote clocks for handshake timestamp validation.
+	//
+	// ssu2.rst §"Replay Prevention": "Both Alice and Bob validate that the time
+	// for these messages is within a valid skew (recommended +/- 2 minutes). For
+	// 'probing resistance', Bob should not reply to Token Request or Session
+	// Request messages if the skew is invalid, as these messages may be a replay
+	// or probing attack."
+	//
+	// Default: 120 seconds, i.e. the spec's recommended ±2 minutes.
+	// Set to 0 to disable skew validation.
 	MaxClockSkew time.Duration
 
-	// ReceiveWindowSize is the maximum number of out-of-order packets
-	// buffered by the receive window. Larger values improve throughput on
-	// lossy links at the cost of memory.
+	// ReceiveWindowSize is how many packet numbers the inbound filter tracks
+	// for duplicate detection. It is NOT a reordering buffer: ssu2.rst
+	// §"Delivery Guarantees" states SSU2 "does NOT provide in-order delivery of
+	// I2NP messages", so every non-duplicate packet is delivered on arrival.
+	// A larger span detects duplicates further back at the cost of memory.
 	// Default: 256. Use 0 for DefaultMaxWindowSize (512).
 	ReceiveWindowSize uint
 

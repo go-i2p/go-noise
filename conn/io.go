@@ -6,6 +6,7 @@ package conn
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"time"
@@ -159,6 +160,19 @@ func (nc *Conn) configureWriteTimeout() error {
 func (nc *Conn) encryptData(data []byte) ([]byte, error) {
 	encrypted, err := nc.sendCipherState.Encrypt(nil, nil, data)
 	if err != nil {
+		// Noise spec §11 "Sending and receiving the transport message
+		// stream": "If EncryptWithAd() or DecryptWithAd() signal an error due
+		// to nonce exhaustion, then the application must delete the CipherState
+		// and terminate the session."
+		if errors.Is(err, noise.ErrMaxNonce) {
+			nc.terminateNonceExhausted("send")
+			return nil, oops.
+				Code("NONCE_EXHAUSTED").
+				In("noise").
+				With("direction", "send").
+				With("plaintext_len", len(data)).
+				Wrapf(err, "send cipher state nonce exhausted; session terminated")
+		}
 		return nil, oops.
 			Code("ENCRYPT_FAILED").
 			In("noise").
@@ -282,6 +296,18 @@ func (nc *Conn) readFramedMessage() ([]byte, error) {
 func (nc *Conn) decryptData(encrypted []byte, encryptedLen int) ([]byte, error) {
 	decrypted, err := nc.recvCipherState.Decrypt(nil, nil, encrypted)
 	if err != nil {
+		// Nonce exhaustion is not a recoverable decrypt failure: the session
+		// must be terminated (Noise spec §11). A plain authentication failure
+		// is left to the caller, which the same section permits.
+		if errors.Is(err, noise.ErrMaxNonce) {
+			nc.terminateNonceExhausted("receive")
+			return nil, oops.
+				Code("NONCE_EXHAUSTED").
+				In("noise").
+				With("direction", "receive").
+				With("encrypted_len", encryptedLen).
+				Wrapf(err, "receive cipher state nonce exhausted; session terminated")
+		}
 		return nil, oops.
 			Code("DECRYPT_FAILED").
 			In("noise").
@@ -374,4 +400,31 @@ func (nc *Conn) Config() *ConnConfig {
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 func (nc *Conn) GetModifierChain() *handshake.ModifierChain {
 	return nc.config.GetModifierChain()
+}
+
+// terminateNonceExhausted deletes the cipher state key material and terminates
+// the session, as the Noise Protocol Framework requires once a CipherState's
+// nonce counter is exhausted.
+//
+// Noise spec §11: "If EncryptWithAd() or DecryptWithAd() signal an error due to
+// nonce exhaustion, then the application must delete the CipherState and
+// terminate the session." §5 explains why this is not optional: nonces "are not
+// allowed to wrap back to zero due to integer overflow, and the maximum nonce
+// value is reserved", so continuing past the ceiling would reuse a nonce under
+// the same key.
+//
+// direction is "send" or "receive", for the log line. Safe to call while the
+// caller holds readMutex or writeMutex: ZeroKeys() takes no lock, and Close()
+// closes the socket before acquiring those mutexes, so it cannot deadlock here.
+func (nc *Conn) terminateNonceExhausted(direction string) {
+	nc.logger.Error("nonce exhausted, terminating session per Noise spec section 11",
+		"direction", direction,
+		"local_addr", nc.LocalAddr().String(),
+		"remote_addr", nc.RemoteAddr().String())
+	nc.ZeroKeys()
+	go func() {
+		if err := nc.Close(); err != nil {
+			nc.logger.Debug("close after nonce exhaustion returned an error", "error", err.Error())
+		}
+	}()
 }

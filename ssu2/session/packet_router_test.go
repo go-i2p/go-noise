@@ -447,19 +447,24 @@ func TestPacketRouter_Concurrent(t *testing.T) {
 func createMockSSU2Conn(t *testing.T, connID uint64) *SSU2Conn {
 	t.Helper()
 
-	routerHash := generateRandomHash()
+	// Build the conn through NewSSU2Conn so the read path (receive window, ACK
+	// handler, data handler, RTT estimator) is fully initialized. A hand-assembled
+	// struct literal leaves those fields nil, which segfaults as soon as an
+	// inbound Data packet reaches handleReadyDataPacket.
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5554})
+	config := createTestConfig(t)
+	config.ConnectionID = connID
 
-	addr, err := NewSSU2Addr(
+	conn, err := NewSSU2Conn(
+		underlying,
 		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5555},
-		routerHash,
-		connID,
-		"initiator",
+		config,
+		true,
+		make([]byte, 32),
+		config.RemoteStaticKey,
 	)
 	require.NoError(t, err)
-
-	return &SSU2Conn{
-		ssu2Addr: addr,
-	}
+	return conn
 }
 
 // createMockPacket creates a mock SSU2Packet for testing purposes.

@@ -103,73 +103,23 @@ type GarlicSessionManager interface {
 	Close() error
 }
 
-// BuildRecordEncryptor encrypts tunnel build request records using
-// ECIES-X25519.
+// Tunnel build-request and build-reply record crypto is deliberately NOT
+// implemented here.
 //
-// A tunnel build request is the first message in an I2P tunnel: it asks a
-// peer to join a tunnel and carries the keys needed to encrypt the reply.
-// This interface accepts pre-extracted raw key material; go-i2p is
-// responsible for extracting keys from RouterInfo before calling these
-// methods.
-type BuildRecordEncryptor interface {
-	// EncryptBuildRequest encrypts a serialized build request record
-	// (222 bytes).
-	//
-	// Parameters:
-	//   - cleartext: 222-byte serialized BuildRequestRecord.
-	//   - recipientPubKey: recipient's 32-byte X25519 public key (extracted
-	//     from RouterInfo by caller).
-	//   - recipientIdentityHash: recipient's 32-byte identity hash (extracted
-	//     from RouterInfo by caller).
-	//
-	// Returns the 528-byte encrypted record.
-	EncryptBuildRequest(cleartext []byte, recipientPubKey, recipientIdentityHash [32]byte) ([528]byte, error)
-
-	// DecryptBuildRequest decrypts a 528-byte encrypted build request record.
-	//
-	// Parameters:
-	//   - encrypted: the 528-byte encrypted record.
-	//   - privateKey: our 32-byte X25519 private key.
-	//
-	// Returns the 222-byte cleartext.
-	DecryptBuildRequest(encrypted [528]byte, privateKey []byte) ([]byte, error)
-
-	// VerifyIdentityHash checks whether an encrypted build request record is
-	// intended for us, by comparing the embedded identity hash against ours.
-	//
-	// Parameters:
-	//   - encrypted: the 528-byte record.
-	//   - ourIdentityHash: our 32-byte identity hash.
-	VerifyIdentityHash(encrypted [528]byte, ourIdentityHash [32]byte) bool
-}
-
-// BuildReplyEncryptor encrypts and decrypts tunnel build reply records.
+// The ECIES build-record formats live in tunnel-ecies.rst ("Tunnel ECIES-X25519
+// Build Request Records"), not in ecies.rst, and they are Noise-pattern based
+// ("Noise_N_25519_ChaChaPoly_SHA256", with the request's transcript hash `h`
+// used as the reply record's associated data). Building them requires the
+// HKDF-based layer/reply key derivation and, for Short records, raw ChaCha20
+// (not ChaCha20/Poly1305) for the iteratively encrypted records.
 //
-// A tunnel build reply is the peer's answer to a build request: it either
-// accepts the tunnel (and returns the session keys) or rejects it.
-// Implementations use ChaCha20-Poly1305 or AES-256-CBC depending on record
-// type.
-type BuildReplyEncryptor interface {
-	// EncryptReplyRecord encrypts a reply record.
-	//
-	// Parameters:
-	//   - cleartext: serialized response record bytes.
-	//   - replyKey: 32-byte session key.
-	//   - replyIV: 16-byte initialization vector.
-	//
-	// Returns the encrypted bytes (544 bytes for ChaCha20-Poly1305).
-	EncryptReplyRecord(cleartext []byte, replyKey [32]byte, replyIV [16]byte) ([]byte, error)
-
-	// DecryptReplyRecord decrypts an encrypted reply record.
-	//
-	// Parameters:
-	//   - encrypted: ciphertext bytes.
-	//   - replyKey: 32-byte session key.
-	//   - replyIV: 16-byte initialization vector.
-	//
-	// Returns the plaintext bytes.
-	DecryptReplyRecord(encrypted []byte, replyKey [32]byte, replyIV [16]byte) ([]byte, error)
-}
+// This package implements the ECIES *garlic* session only. Record crypto is a
+// tunnel-layer concern and belongs in github.com/go-i2p/crypto, alongside the
+// ECIES primitives it is built from; see the upstream gap report. The previous
+// BuildRecordEncryptor / BuildReplyEncryptor interfaces and their
+// implementations were removed because they encoded ElGamal-era record sizes
+// (222-byte request cleartext, 528-byte reply cleartext with a caller-supplied
+// reply key and IV) that no ECIES record format in the spec uses.
 
 // TagResolver provides O(1) session tag lookup for incoming messages.
 //

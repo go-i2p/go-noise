@@ -344,8 +344,10 @@ func (nc *Conn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-// RouterHash returns the identity hash of the router on the other end of
-// the connection.
+// RouterHash returns the router hash of the peer on the other end of the
+// connection. See [Addr.RouterHash] for the placeholder caveat: until
+// [Conn.PropagatePeerStaticKey] has run, the value is SHA-256 of the peer's
+// static key rather than a real I2P router hash.
 func (nc *Conn) RouterHash() data.Hash {
 	return nc.remoteAddr.RouterHash()
 }

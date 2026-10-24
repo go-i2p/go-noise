@@ -125,6 +125,16 @@ func (nl *Listener) createResponderConnConfig() (*noise.ConnConfig, *Config, err
 	// Clone() avoids copying the atomic.Pointer and is resilient to new fields.
 	responderCfg := nl.config.Load().Clone()
 	responderCfg.Initiator = false
+
+	// Replay protection is mandatory, not opt-in (ntcp2.rst §"Session Request":
+	// "Bob must maintain a local cache of previously-used handshake values and
+	// reject duplicates"). Fill in a shared default when the operator supplied
+	// no detector, so a replayed message 1 arriving on a *different* connection
+	// is still rejected.
+	if responderCfg.ReplayDetector == nil {
+		responderCfg.ReplayDetector = fallbackReplayDetector(responderCfg.maxClockSkew())
+	}
+
 	connConfig, err := responderCfg.ToConnConfig()
 	if err != nil {
 		return nil, nil, oops.

@@ -76,8 +76,8 @@ The NTCP2 protocol implementation is split between this package (`go-i2p/go-nois
 | Data-phase AEAD error handling (probing resistance) | `handleAEADError()` |
 | Frame padding (type 254 padding blocks) | `NTCP2PaddingModifier` |
 | Nonce management and exhaustion detection | `NonceExhaustionImminent()` advisory (upstream `CipherState` enforces hard limit) |
-| Replay cache | Per-router ephemeral key (X value) cache with TTL eviction |
-| KDF intermediate material zeroing | `zeroBytes()` in `kdf.go` |
+| Replay cache | Per-router ephemeral key (X value) cache with TTL eviction; mandatory per ntcp2.rst, so a shared default cache is installed when the operator configures none |
+| KDF intermediate material zeroing | `securemem.SecureZero()` calls in `kdf.go` |
 | Connection configuration and validation | `NTCP2Config` |
 
 ### Router transport layer (`go-i2p/go-i2p/lib/transport/ntcp`)

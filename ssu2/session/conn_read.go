@@ -393,8 +393,9 @@ func (h *SSU2Conn) keepaliveLoop() {
 
 // ProcessInboundPacket processes a received packet by routing it to the appropriate
 // handler based on message type. Handshake packets are enqueued to the receive queue
-// for the initiator/responder handshake logic to consume. Data packets are processed
-// through the receive window for reordering and duplicate detection.
+// for the initiator/responder handshake logic to consume. Data packets pass through
+// the packet-number filter for duplicate detection and are then processed in arrival
+// order; SSU2 does not reorder them.
 //
 // This method is exported to support cross-package delivery of packets from
 // the listener to pending outbound sessions during handshake demultiplexing,
@@ -418,7 +419,10 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 }
 
 func (h *SSU2Conn) processDataPackets(packet *SSU2Packet) {
-	// Enforce receive window: reject duplicate, old, and out-of-window packets
+	// Filter duplicate and too-old packet numbers. SSU2 provides no in-order
+	// delivery (ssu2.rst §"Delivery Guarantees"), so an accepted packet goes
+	// straight to the data path in arrival order rather than to a reordering
+	// buffer.
 	readyPackets := h.collectReadyDataPackets(packet)
 	for _, readyPacket := range readyPackets {
 		h.handleReadyDataPacket(readyPacket)
@@ -440,20 +444,23 @@ func (h *SSU2Conn) collectReadyDataPackets(packet *SSU2Packet) []*SSU2Packet {
 func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	h.validDataPacketsReceived.Add(1)
 
-	// Record for ACK only after window acceptance
-	if readyPacket.PacketNumber > 0 {
-		h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+	// Record for ACK only after window acceptance.
+	//
+	// Every data-phase packet number is meaningful and must be ackable,
+	// including 0: ssu2.rst §"Packet Numbering" gives Bob packet 0 for the
+	// Session Confirmed ACK, so a peer's first Data packet can legitimately be
+	// PN 0 and must not be filtered out.
+	h.ackHandler.RecordReceived(readyPacket.PacketNumber)
 
-		// Check if a delayed ACK should be sent immediately.
-		// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
-		// Otherwise, rely on the timer or the next batch of packets.
-		rtt := h.rttEstimator.GetSmoothedRTT()
-		if rtt == 0 {
-			rtt = 50 * time.Millisecond // Default if not yet measured
-		}
-		if h.ackHandler.ShouldSendACK(rtt) {
-			h.sendImmediateACK()
-		}
+	// Check if a delayed ACK should be sent immediately.
+	// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
+	// Otherwise, rely on the timer or the next batch of packets.
+	rtt := h.rttEstimator.GetSmoothedRTT()
+	if rtt == 0 {
+		rtt = 50 * time.Millisecond // Default if not yet measured
+	}
+	if h.ackHandler.ShouldSendACK(rtt) {
+		h.sendImmediateACK()
 	}
 
 	// Check immediate-ack flag: header byte 13, bit 0. This is also
@@ -466,8 +473,15 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 }
 
 func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
-	// Handshake packets bypass receive window
-	if packet.PacketNumber > 0 {
+	// Handshake packets bypass receive window.
+	//
+	// ssu2.rst §"Packet Numbering": Session Request, Session Created, Token
+	// Request, Retry, Peer Test and Hole Punch carry a *random* packet number
+	// that is ignored, so recording those would pollute the ACK set with
+	// numbers the peer never assigned. Session Confirmed is the exception: for
+	// Alice "outbound packet numbering starts at 0 with Session Confirmed",
+	// and Bob must acknowledge that packet 0.
+	if packet.MessageType == MessageTypeSessionConfirmed {
 		h.ackHandler.RecordReceived(packet.PacketNumber)
 	}
 	// Handshake packets are scarce and progress the state machine; dropping

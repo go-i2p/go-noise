@@ -1,9 +1,11 @@
 package ntcp2
 
 import (
+	"sync"
 	"time"
 
 	"github.com/go-i2p/go-noise/mod/replaycache"
+	"github.com/go-i2p/logger"
 )
 
 // ClockSkewTolerance is the maximum allowed difference between local and
@@ -22,9 +24,15 @@ const ClockSkewTolerance = 60 * time.Second
 //
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
 const (
-	// replayCacheTTL is the time-to-live for replay cache entries.
-	// Entries older than this are evicted. Set to 2× the clock skew tolerance
-	// (120 seconds) to cover legitimate retransmissions within the skew window.
+	// replayCacheTTL is the default time-to-live for replay cache entries.
+	// Entries older than this are evicted.
+	//
+	// ntcp2.rst §"Session Request": "Bob must maintain a local cache of
+	// previously-used handshake values and reject duplicates, to prevent replay
+	// attacks. Values in the cache must have a lifetime of at least 2*D", where
+	// D is the maximum tolerated clock skew. With the default D of
+	// ClockSkewTolerance (60 s) that is 120 s. Use replayCacheTTLFor so a
+	// non-default MaxClockSkew still satisfies the 2*D floor.
 	replayCacheTTL = 2 * ClockSkewTolerance
 
 	// replayCacheCleanupInterval is how often the cache runs eviction of
@@ -58,19 +66,70 @@ type ReplayCache struct {
 // compile-time interface check
 var _ ReplayDetector = (*ReplayCache)(nil)
 
-// NewReplayCache creates a new replay cache and starts a background
-// cleanup goroutine that periodically removes expired entries.
+// NewReplayCache creates a new replay cache with the default TTL
+// (2 × ClockSkewTolerance) and starts a background cleanup goroutine that
+// periodically removes expired entries.
 //
 // Call Close() when the cache is no longer needed.
 func NewReplayCache() *ReplayCache {
-	flog("NewReplayCache").Debug("Creating NTCP2 replay cache")
+	return NewReplayCacheWithTTL(replayCacheTTL)
+}
+
+// NewReplayCacheWithTTL creates a replay cache whose entries live for at least
+// ttl.
+//
+// ntcp2.rst §"Session Request" requires cached handshake values to have a
+// lifetime of at least 2*D, where D is the responder's maximum tolerated clock
+// skew, so a cache built for a config with a custom MaxClockSkew should use
+// replayCacheTTLFor that value. A non-positive ttl falls back to the default.
+func NewReplayCacheWithTTL(ttl time.Duration) *ReplayCache {
+	flog("NewReplayCacheWithTTL", logger.Fields{"ttl": ttl}).Debug("Creating NTCP2 replay cache")
+	if ttl <= 0 {
+		ttl = replayCacheTTL
+	}
 	return &ReplayCache{
 		cache: replaycache.New(replaycache.Config{
-			TTL:             replayCacheTTL,
+			TTL:             ttl,
 			MaxSize:         replayCacheMaxSize,
 			CleanupInterval: replayCacheCleanupInterval,
 		}),
 	}
+}
+
+// replayCacheTTLFor returns the replay-cache lifetime required for a maximum
+// clock skew of d, i.e. the spec's 2*D floor.
+func replayCacheTTLFor(d time.Duration) time.Duration {
+	if d <= 0 {
+		return replayCacheTTL
+	}
+	return 2 * d
+}
+
+// defaultReplayCaches holds the process-wide fallback replay caches, keyed by
+// TTL, used by any responder whose Config does not supply a ReplayDetector.
+var defaultReplayCaches sync.Map // time.Duration -> *ReplayCache
+
+// fallbackReplayDetector returns a replay cache for responders that were not
+// given one.
+//
+// ntcp2.rst §"Session Request" makes the duplicate-handshake-value cache
+// mandatory ("Bob must maintain a local cache of previously-used handshake
+// values and reject duplicates"), so replay protection must not be opt-in: a
+// responder with no configured detector still needs one. The cache is shared
+// across such responders for a given skew so that a replay arriving on a
+// different connection is still caught.
+func fallbackReplayDetector(maxSkew time.Duration) *ReplayCache {
+	ttl := replayCacheTTLFor(maxSkew)
+	if existing, ok := defaultReplayCaches.Load(ttl); ok {
+		return existing.(*ReplayCache)
+	}
+	rc := NewReplayCacheWithTTL(ttl)
+	// Load-or-store so concurrent first handshakes share a single cache.
+	actual, _ := defaultReplayCaches.LoadOrStore(ttl, rc)
+	if actual != rc {
+		rc.Close()
+	}
+	return actual.(*ReplayCache)
 }
 
 // CheckAndAdd checks whether an ephemeral key has been seen before.

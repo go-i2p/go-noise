@@ -50,6 +50,7 @@ const (
 	SSU2NetworkID               = wire.SSU2NetworkID
 	ShortHeaderSize             = wire.ShortHeaderSize
 	MACSize                     = wire.MACSize
+	MaxPacketNumber             = wire.MaxPacketNumber
 )
 
 // Termination reason aliases
