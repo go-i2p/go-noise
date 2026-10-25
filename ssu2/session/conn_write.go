@@ -456,6 +456,23 @@ func (h *SSU2Conn) encryptDataPayload(packet *SSU2Packet) ([]byte, error) {
 	plaintextPayload = make([]byte, len(packet.Payload))
 	copy(plaintextPayload, packet.Payload)
 
+	// ssu2.md §"Congestion Control" -> §"Immediate ACK Flag": the sender sets
+	// the data-header flag byte bit 0 (header[13] & 0x01) to request that the
+	// peer ACK within min(rtt/16, 5) ms instead of the normal delayed ACK.
+	// The flag must be applied before sealing because the cleartext header is
+	// the AEAD associated data.
+	//
+	// Strategy (per the strategies the spec lists, matching Java
+	// PeerState2.getFlags()/PeerState.shouldRequestImmediateAck(), which sets
+	// 0x01 when the send window is over 2/3 full): set it when the congestion
+	// window is more than two-thirds consumed, and only on packets carrying
+	// I2NP messages or fragments, since the spec says "Immediate ACK flags
+	// should only be necessary on data packets containing I2NP messages or
+	// message fragments."
+	if wire.ContainsI2NPBlocks(plaintextPayload) && h.shouldRequestImmediateAck() {
+		packet.Header[13] |= 0x01
+	}
+
 	packet.Header[12] = packet.MessageType
 	cipher.SetNonce(uint64(packet.PacketNumber))
 	encrypted, err := cipher.Encrypt(nil, packet.Header[:ShortHeaderSize], packet.Payload)
@@ -464,6 +481,26 @@ func (h *SSU2Conn) encryptDataPayload(packet *SSU2Packet) ([]byte, error) {
 	}
 	packet.Payload = encrypted
 	return plaintextPayload, nil
+}
+
+// shouldRequestImmediateAck reports whether outbound I2NP data packets
+// should request an immediate ACK from the peer.
+//
+// ssu2.md §"Congestion Control" -> §"Immediate ACK Flag" lists several valid
+// sender strategies; Java I2P (PeerState.shouldRequestImmediateAck(), used by
+// PeerState2.getFlags()) sets the flag when the send window is over 2/3 full,
+// i.e. remaining < window/3. We mirror that: remaining = CWND - bytesInFlight.
+// A zero window (slow-start edge) never requests.
+func (h *SSU2Conn) shouldRequestImmediateAck() bool {
+	cc := h.congestionController
+	if cc == nil {
+		return false
+	}
+	cwnd := cc.GetCWND()
+	if cwnd <= 0 {
+		return false
+	}
+	return cc.AvailableWindow() < cwnd/3
 }
 
 // applyDataHeaderMoreFlags sets the data-phase short-header "moreflags" field

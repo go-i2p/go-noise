@@ -390,6 +390,40 @@ func DeserializeBlocks(data []byte) ([]*SSU2Block, error) {
 	return blocks, nil
 }
 
+// ContainsI2NPBlocks reports whether a serialized block payload (the
+// plaintext "blocks" section of a Data packet) contains at least one I2NP
+// message or message-fragment block: I2NPMessage (type 3), FirstFragment
+// (type 4), or FollowOnFragment (type 5).
+//
+// It walks the Type(1)+Length(2)+Value TLV structure without allocating, and
+// stops at the first matching block. A malformed/truncated payload returns
+// false (the caller treats "not an I2NP packet" as the safe default).
+//
+// Used by the data-phase immediate-ack heuristic (ssu2.md §"Congestion
+// Control" -> §"Immediate ACK Flag"), which only applies to packets carrying
+// I2NP messages or fragments.
+func ContainsI2NPBlocks(payload []byte) bool {
+	offset := 0
+	for offset < len(payload) {
+		if len(payload)-offset < minBlockHeaderSize {
+			return false
+		}
+		blockType := payload[offset]
+		length := int(payload[offset+1])<<8 | int(payload[offset+2])
+		if blockType == BlockTypeI2NPMessage ||
+			blockType == BlockTypeFirstFragment ||
+			blockType == BlockTypeFollowOnFragment {
+			return true
+		}
+		next := offset + minBlockHeaderSize + length
+		if next <= offset {
+			return false // zero/overflowing length: malformed
+		}
+		offset = next
+	}
+	return false
+}
+
 // IsKnownBlockType returns true if the block type is defined in the SSU2 specification.
 func IsKnownBlockType(blockType uint8) bool {
 	_, ok := blockTypeNames[blockType]
