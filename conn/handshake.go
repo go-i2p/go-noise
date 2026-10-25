@@ -222,7 +222,20 @@ func validateNewConnParams(underlying net.Conn, config *ConnConfig) error {
 func createHandshakeState(config *ConnConfig, privateStaticKey []byte) (*noise.HandshakeState, error) {
 	cs := config.CipherSuite
 	if cs == nil {
-		cs = noise.NewCipherSuite(noise.DH25519, noise.CipherAESGCM, noise.HashSHA256)
+		// Default to the cipher suite every I2P transport mandates, rather than
+		// AES-256-GCM.
+		//
+		// ntcp2.md §"Noise Protocol Framework": "Cipher Function: ChaChaPoly",
+		// with the suite named "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256";
+		// ssu2.md §"Noise Protocol Framework" likewise specifies
+		// "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256". ecies.md builds
+		// the ratchet on ChaCha20-Poly1305 throughout (§"3) AEAD (ChaChaPoly)").
+		//
+		// Both transports set an explicit suite (ntcp2/config.go,
+		// ssu2/handshake/handshake_handler.go), so this default only governs the
+		// generic path. An AES-GCM default there produced a transcript that a
+		// spec-compliant peer cannot reproduce, silently rather than loudly.
+		cs = noise.NewCipherSuite(noise.DH25519, noise.CipherChaChaPoly, noise.HashSHA256)
 	}
 
 	pattern, err := parseHandshakePattern(config.Pattern)

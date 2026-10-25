@@ -1977,9 +1977,10 @@ func TestReplenishTagWindowOutsideLock_ReplenishesCorrectly(t *testing.T) {
 	destHash := mustBootstrapSession(t, sender, receiver)
 
 	// Exchange enough messages to trigger at least 3 tag window replenishments
-	// (each replenishment fires when pendingTags < tagReplenishThreshold = tagWindowSize/2 = 12,
-	// i.e. roughly every 13 messages). We stay below DHRatchetInterval (50) to
-	// avoid DH ratchet rotation breaking tag matching (separate concern).
+	// (each replenishment fires when pendingTags < tagReplenishThreshold, i.e.
+	// roughly every 13 messages). The count stays well below nextKeyTagThreshold
+	// (4096) so no DH ratchet rotation fires mid-test; rotation is covered by
+	// TestDHRatchetRotationPreservesInterop and TestNextKeyExchange_FullFlow.
 	const n = 45
 	for i := 0; i < n; i++ {
 		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("data"))

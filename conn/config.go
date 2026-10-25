@@ -43,8 +43,11 @@ type ConnConfig struct {
 	RemoteKey []byte
 
 	// CipherSuite names the Noise cipher suite used for the handshake. If
-	// nil, it defaults to DH25519 + CipherAESGCM + SHA256. Protocols like
-	// NTCP2 require DH25519 + CipherChaChaPoly + SHA256 instead.
+	// nil, it defaults to DH25519 + CipherChaChaPoly + SHA256, which is the
+	// suite NTCP2, SSU2 and the ECIES ratchet all mandate (ntcp2.md / ssu2.md
+	// §"Noise Protocol Framework": "Cipher Function: ChaChaPoly"; ecies.md
+	// §"3) AEAD (ChaChaPoly)"). Set it explicitly only if you need a different
+	// suite for a non-I2P peer.
 	CipherSuite noise.CipherSuite
 
 	// ProtocolName overrides the auto-generated Noise protocol name used to
