@@ -591,3 +591,41 @@ func TestPartialReads(t *testing.T) {
 	require.Equal(t, payloadSize, len(recovered), "All bytes must be recovered")
 	require.Equal(t, payload, recovered, "Recovered bytes must match original payload")
 }
+
+// TestWrite_OversizedMessageDoesNotConsumeNonce verifies the Noise message size
+// limit is enforced before encryption, so a refused write cannot desynchronise
+// the send nonce from the peer's receive counter.
+//
+// noise.html §3 "Message format": "All Noise messages are less than or equal to
+// 65535 bytes in length"; ntcp2.md §"ChaCha20/Poly1305" bounds the ciphertext at
+// "0 - 65519 bytes" for a 2-byte-length-framed AEAD message.
+//
+// If the limit were only checked while framing, the AEAD would already have run
+// and advanced the nonce, and the next successfully-sent message would fail to
+// decrypt at the peer.
+func TestWrite_OversizedMessageDoesNotConsumeNonce(t *testing.T) {
+	initiatorConn, responderConn := setupHandshakePairConn(t, handshakePairConfig{
+		pattern:      "XK",
+		setRemoteKey: true,
+	})
+	defer initiatorConn.Close()
+	defer responderConn.Close()
+
+	// One byte past the plaintext ceiling: 65519 + 16-byte tag = 65535 is the
+	// largest frame, so 65520 bytes of plaintext must be refused.
+	_, err := initiatorConn.Write(make([]byte, maxNoiseMessageSize-aeadTagSize+1))
+	require.Error(t, err, "oversized write must be rejected")
+	assert.Contains(t, err.Error(), "message too large")
+
+	// A normal write after the refusal must still decrypt at the peer, proving
+	// the rejected attempt consumed no nonce.
+	payload := []byte("still in sync")
+	n, err := initiatorConn.Write(payload)
+	require.NoError(t, err, "write after a rejected oversized write must succeed")
+	require.Equal(t, len(payload), n)
+
+	buf := make([]byte, 4096)
+	readN, err := responderConn.Read(buf)
+	require.NoError(t, err, "peer must decrypt the post-refusal message")
+	assert.Equal(t, payload, buf[:readN])
+}

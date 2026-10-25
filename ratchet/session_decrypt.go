@@ -287,6 +287,16 @@ func (sm *SessionManager) initializeInboundRatchetState(remotePubKey [32]byte, k
 
 	sm.sessions[sessionHash] = session
 
+	// Receipt of an NS requires an NSR response.
+	// Spec ref: ecies.md §"Ratchet-layer Responses" - "Receipt of NS and NSR
+	// messages require a response"; §"Multiple NSR Messages" - "For each NS message
+	// received, until an ES message is received, Bob must reply with a new NSR".
+	// The handshake timeout is shorter than the ES one, per the same section:
+	// "It may also be appropriate for an even shorter timeout for responses to NS
+	// and NSR messages, to shift the traffic to the efficient ES messages as soon
+	// as possible."
+	session.oweResponse("new session", responseTimerHandshake)
+
 	if err := sm.generateTagWindow(session); err != nil {
 		return oops.Wrapf(err, "failed to generate inbound tag window")
 	}
@@ -317,6 +327,8 @@ func (sm *SessionManager) queueAdditionalNSReplyLocked(session *Session, hs *noi
 		return nil
 	}
 	session.awaitingNSRReplies = append(session.awaitingNSRReplies, hs)
+	// Each additional NS requires its own NSR (§"Multiple NSR Messages").
+	session.oweResponse("new session", responseTimerHandshake)
 	flog("queueAdditionalNSReplyLocked", logger.Fields{"queued": len(session.awaitingNSRReplies)}).
 		Debug("Queued additional NS for a separate NSR reply")
 	return nil
@@ -402,6 +414,12 @@ func (sm *SessionManager) decryptIncomingNSR(session *Session, nsrTag [8]byte, h
 	}
 	session.LastUsed = time.Now()
 	session.lastReceived = time.Now()
+	// Receipt of an NSR requires a response.
+	// Spec ref: ecies.md §"Multiple NSR Messages" - "Once Alice receives an NSR,
+	// Alice does a split() to derive the ES session keys. Alice should set a timer,
+	// and send an empty ES message if the higher layer does not send any traffic,
+	// typically within one second."
+	session.oweResponse("new session reply", responseTimerES)
 	session.mu.Unlock()
 	sm.mu.Unlock()
 
@@ -709,6 +727,11 @@ func (sm *SessionManager) processDecryptedESBlocks(session *Session, plaintext [
 // session lock and refreshing the inbound tag window under the manager lock.
 func (sm *SessionManager) handleNextKeyBlock(session *Session, info NextKeyInfo) error {
 	session.mu.Lock()
+	// Receipt of a NextKey block requires a response: either the reverse block or
+	// the first message on the new outbound tag set.
+	// Spec ref: ecies.md §"Ratchet-layer Responses" - "receipt of ACK Request and
+	// Next Key blocks also require a response".
+	session.oweResponse("next key", responseTimerES)
 	var err error
 	if info.Reverse {
 		err = session.applyReverseNextKey(info)

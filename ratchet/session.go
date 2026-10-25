@@ -180,6 +180,10 @@ type Session struct {
 	// Callers can inspect this to confirm message delivery.
 	lastAckedEntries []AckEntry
 
+	// response records an outstanding ratchet-layer response obligation and its
+	// deadline. Spec ref: ecies.md §"Retransmissions and State Transistions" ->
+	// §"Ratchet-layer Responses". See response_timer.go.
+	response responseOwed
 	// awaitingFirstES is set to true on the responder (Bob) after sending an NSR.
 	// The spec (ecies.rst §"Notes" after §1g) states:
 	//   "Bob must receive an ES message from Alice before sending ES messages."

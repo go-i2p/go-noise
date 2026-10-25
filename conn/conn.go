@@ -69,6 +69,12 @@ import (
 	"github.com/samber/oops"
 )
 
+// aeadTagSize is the AEAD authentication tag length for the Noise cipher
+// suites in use (ChaCha20-Poly1305 and AES-256-GCM both produce a 16-byte tag).
+// noise.html §5.4 CipherState: "The output ... is plaintext plus a 16-byte
+// authentication tag."
+const aeadTagSize = 16
+
 // maxNoiseMessageSize is the maximum Noise message size per the Noise spec
 // §3 "Message format" ("All Noise messages are less than or equal to 65535 bytes
 // in length"). Each message on the wire is preceded by a 2-byte big-endian
@@ -318,6 +324,26 @@ func (nc *Conn) Write(b []byte) (int, error) {
 	toEncrypt, err := nc.applyOutboundModifier(b)
 	if err != nil {
 		return 0, err
+	}
+
+	// Size check BEFORE encrypting, not after.
+	//
+	// noise.html §3 "Message Format": "All Noise messages are less than or equal
+	// to 65535 bytes", and ntcp2.md §"ChaCha20/Poly1305" gives the ciphertext
+	// "encrypted data :: Same size as plaintext data, 0 - 65519 bytes". Checking
+	// only in writeFramedMessage means a message that a padding modifier pushed
+	// over the limit is encrypted first and then refused, which consumes the send
+	// nonce for a frame that never goes out and permanently desynchronises the
+	// nonce counter from the peer's receive counter.
+	if len(toEncrypt)+aeadTagSize > maxNoiseMessageSize {
+		return 0, oops.
+			Code("MESSAGE_TOO_LARGE").
+			In("noise").
+			With("plaintext_len", len(b)).
+			With("modified_len", len(toEncrypt)).
+			With("max_plaintext_len", maxNoiseMessageSize-aeadTagSize).
+			Errorf("message too large: %d bytes of data plus the %d-byte AEAD tag exceeds the maximum Noise message size of %d bytes",
+				len(toEncrypt), aeadTagSize, maxNoiseMessageSize)
 	}
 
 	encrypted, err := nc.encryptData(toEncrypt)

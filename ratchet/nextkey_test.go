@@ -3,6 +3,7 @@ package ratchet
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/go-i2p/crypto/rand"
 	"github.com/go-i2p/crypto/types"
@@ -832,4 +833,103 @@ func TestMultipleNSR_ResponderKeepsBothTagsets(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, err = responder.DecryptGarlicMessage(enc)
 	require.NoError(t, err, "responder must decrypt ES keyed by the second NSR's tagset")
+}
+
+// ============================================================================
+// Ratchet-layer response obligations (ecies.md §"Ratchet-layer Responses")
+// ============================================================================
+
+// TestResponseObligation_NextKeyRequiresResponse verifies that receiving a
+// NextKey block arms a response obligation with the spec's ~1 second deadline,
+// and that real outbound traffic discharges it.
+//
+// Spec ref: ecies.md §"Retransmissions and State Transistions" -> §"Ratchet-layer
+// Responses": "receipt of ACK Request and Next Key blocks also require a response.
+// Implementations should start a timer ... and generate an 'empty' (no Garlic
+// Clove block) response at the ECIES layer if no reverse traffic is sent in a
+// short period of time (e.g. 1 second)."
+func TestResponseObligation_NextKeyRequiresResponse(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.receiver)
+
+	session.mu.Lock()
+	// The fixture establishes the session with mustEstablishNS, which sends an NS
+	// and leaves the responder without an NSR, so an obligation is already armed
+	// before the NextKey receipt under test.
+	assert.Contains(t, session.response.kinds, "new session",
+		"an unanswered NS must already be an obligation")
+	session.mu.Unlock()
+
+	var pub [32]byte
+	_, _ = rand.Read(pub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: false, RequestReverse: true, KeyID: 0, PublicKey: pub}
+	require.NoError(t, f.receiver.handleNextKeyBlock(session, info))
+
+	session.mu.Lock()
+	assert.False(t, session.response.deadline.IsZero(), "NextKey receipt must arm a response obligation")
+	assert.Contains(t, session.response.kinds, "next key")
+	assert.False(t, session.responseDue(time.Now()), "the deadline must not already be expired")
+	session.mu.Unlock()
+
+	// The obligation is discharged only by this session's own outbound traffic
+	// (encryptExistingSession calls fulfillResponse once the message is built), so
+	// simulate that directly rather than standing up a second send path.
+	session.mu.Lock()
+	session.fulfillResponse()
+	assert.True(t, session.response.deadline.IsZero(), "outbound traffic clears the obligation")
+	session.mu.Unlock()
+}
+
+// TestSweepResponses_FiresAfterDeadline verifies the host-facing sweep: an
+// obligation is reported once its deadline passes and is not silently consumed,
+// so a failed send retries.
+func TestSweepResponses_FiresAfterDeadline(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.receiver)
+
+	var pub [32]byte
+	_, _ = rand.Read(pub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: false, RequestReverse: true, KeyID: 0, PublicKey: pub}
+	require.NoError(t, f.receiver.handleNextKeyBlock(session, info))
+
+	// Nothing is due yet.
+	assert.Empty(t, f.receiver.SweepResponses(), "no response is due before the deadline")
+
+	// Force the deadline into the past.
+	session.mu.Lock()
+	session.response.deadline = time.Now().Add(-time.Millisecond)
+	session.mu.Unlock()
+
+	due := f.receiver.SweepResponses()
+	require.Len(t, due, 1, "an expired obligation must be reported")
+	assert.Contains(t, due[0].Kinds, "next key")
+	assert.Greater(t, due[0].OverdueBy, time.Duration(0))
+
+	// Still reported on the next sweep: the obligation is only cleared by an
+	// actual send, so a host whose send fails retries rather than losing it.
+	assert.Len(t, f.receiver.SweepResponses(), 1, "sweep must not consume the obligation")
+}
+
+// TestResponseObligation_NSArmsHandshakeTimer verifies an inbound New Session
+// arms the shorter handshake-response timer, per §"Ratchet-layer Responses":
+// "It may also be appropriate for an even shorter timeout for responses to NS and
+// NSR messages, to shift the traffic to the efficient ES messages as soon as
+// possible."
+func TestResponseObligation_NSArmsHandshakeTimer(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	destHash := types.SHA256(receiver.ourPublicKey[:])
+
+	ns, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, mustBuildNSPayload(t, []byte("ns")))
+	require.NoError(t, err)
+	_, _, sh, err := receiver.DecryptGarlicMessage(ns)
+	require.NoError(t, err)
+	require.NotNil(t, sh)
+
+	session := lookupSessionByHash(t, receiver, *sh)
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.False(t, session.response.deadline.IsZero(), "NS receipt must arm an NSR obligation")
+	assert.Contains(t, session.response.kinds, "new session")
+	assert.Less(t, time.Until(session.response.deadline), responseTimerES,
+		"the handshake response timer must be shorter than the ES one")
 }

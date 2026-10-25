@@ -935,7 +935,7 @@ func TestDataPhaseNonce_PacketNumberAsNonce(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(reqPkt)
 	require.NoError(t, err)
-	crePkt, err := responder.CreateSessionCreated(33333, 44444)
+	crePkt, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(crePkt)
 	require.NoError(t, err)

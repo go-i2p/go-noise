@@ -89,7 +89,7 @@ func TestCreateSessionCreated_EmitsAddressBlock(t *testing.T) {
 
 	responder.SetPeerAddress(net.ParseIP("198.51.100.7"), 51501)
 
-	packet, err := responder.CreateSessionCreated(0x1122334455667788, 0x99aabbccddeeff00)
+	packet, err := responder.CreateSessionCreated(0x99aabbccddeeff00, 0x1122334455667788)
 	require.NoError(t, err)
 	require.NotNil(t, packet)
 	assert.Greater(t, len(packet.Payload), 16, "payload plus MAC must be non-empty")

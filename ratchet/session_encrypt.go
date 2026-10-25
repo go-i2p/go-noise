@@ -266,6 +266,13 @@ func (sm *SessionManager) encryptExistingSession(
 
 	msg := buildExistingSessionMessage(sessionTag, ciphertext, tag)
 
+	// Real outbound traffic carries any queued Ack / NextKey blocks with it, so it
+	// discharges the response obligation.
+	// Spec ref: ecies.md §"Ratchet-layer Responses" - "In almost all cases, the
+	// higher layer (datagram or streaming) will reply, forcing a NSR or ES, and the
+	// timer may be cancelled."
+	session.fulfillResponse()
+
 	session.LastUsed = time.Now()
 	session.lastSent = time.Now()
 	session.MessageCounter++
@@ -399,6 +406,13 @@ func (sm *SessionManager) EncryptNewSessionReply(
 		return nil, oops.Wrapf(applyErr, "failed to apply NSR keys to responder session ratchets")
 	}
 	session.awaitingFirstES = true
+	// The NSR just sent discharges the obligation for the NS it answered. If more
+	// unanswered NS messages are queued, each still requires its own NSR
+	// (§"Multiple NSR Messages"), so the obligation is re-armed rather than cleared.
+	session.fulfillResponse()
+	if len(session.awaitingNSRReplies) > 0 {
+		session.oweResponse("new session", responseTimerHandshake)
+	}
 	session.LastUsed = time.Now()
 	session.lastSent = time.Now()
 	session.mu.Unlock()

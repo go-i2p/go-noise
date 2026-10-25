@@ -268,7 +268,7 @@ func TestHandshakeHandler_CreateSessionCreated(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now responder can create SessionCreated
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	require.NotNil(t, createdPacket)
 
@@ -281,7 +281,11 @@ func TestHandshakeHandler_CreateSessionCreated(t *testing.T) {
 	// Validate connection IDs per spec §LongHeader layout
 	decodedDestConnID := binary.BigEndian.Uint64(createdPacket.Header[0:8])
 	decodedSourceConnID := binary.BigEndian.Uint64(createdPacket.Header[16:24])
-	assert.Equal(t, uint64(44444), decodedDestConnID)
+	// ssu2.md §"Session Created" header table: "Destination Connection ID :: The
+	// Source Connection ID received from Alice in Session Request". Alice's source
+	// ID was 11111, so the responder's SessionCreated must carry it as the
+	// destination. Bytes 16-23 carry Bob's own connection ID.
+	assert.Equal(t, uint64(11111), decodedDestConnID)
 	assert.Equal(t, uint64(33333), decodedSourceConnID)
 	assert.Equal(t, MessageTypeSessionCreated, createdPacket.Header[12])
 	assert.Equal(t, SSU2ProtocolVersion, createdPacket.Header[13])
@@ -306,7 +310,7 @@ func TestHandshakeHandler_ProcessSessionCreated(t *testing.T) {
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
 
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 
 	// Initiator processes SessionCreated
@@ -357,7 +361,7 @@ func TestHandshakeHandler_CreateSessionConfirmed(t *testing.T) {
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
 
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 
 	err = initiator.ProcessSessionCreated(createdPacket)
@@ -405,7 +409,7 @@ func TestHandshakeHandler_ProcessSessionConfirmed(t *testing.T) {
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
 
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 
 	err = initiator.ProcessSessionCreated(createdPacket)
@@ -468,7 +472,7 @@ func TestHandshakeHandler_FullHandshakeFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	// Step 2: SessionCreated
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 
 	err = initiator.ProcessSessionCreated(createdPacket)
@@ -521,7 +525,7 @@ func TestHandshakeHandler_GetCipherStates_AfterComplete(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
@@ -648,7 +652,7 @@ func BenchmarkHandshakeHandler_FullHandshake(b *testing.B) {
 		requestPacket, _ := initiator.CreateSessionRequest(11111, 22222)
 		_, _ = responder.ProcessSessionRequest(requestPacket)
 
-		createdPacket, _ := responder.CreateSessionCreated(33333, 44444)
+		createdPacket, _ := responder.CreateSessionCreated(33333, 11111)
 		_ = initiator.ProcessSessionCreated(createdPacket)
 
 		confirmedPacket, _ := initiator.CreateSessionConfirmed(55555, 1, nil)
@@ -682,7 +686,7 @@ func TestDeriveHeaderKeys_AfterHandshake(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
@@ -730,7 +734,7 @@ func TestDeriveHeaderKeys_Deterministic(t *testing.T) {
 
 		req, _ := init.CreateSessionRequest(11111, 22222)
 		_, _ = resp.ProcessSessionRequest(req)
-		created, _ := resp.CreateSessionCreated(33333, 44444)
+		created, _ := resp.CreateSessionCreated(33333, 11111)
 		_ = init.ProcessSessionCreated(created)
 		confirmed, _ := init.CreateSessionConfirmed(55555, 1, nil)
 		_ = resp.ProcessSessionConfirmed(confirmed)
@@ -758,7 +762,7 @@ func TestCreateSessionConfirmedFragments_SinglePacket(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(req)
 	require.NoError(t, err)
-	created, err := responder.CreateSessionCreated(33333, 44444)
+	created, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(created)
 	require.NoError(t, err)
@@ -783,7 +787,7 @@ func TestCreateSessionConfirmedFragments_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(req)
 	require.NoError(t, err)
-	created, err := responder.CreateSessionCreated(33333, 44444)
+	created, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(created)
 	require.NoError(t, err)
@@ -806,7 +810,7 @@ func TestCreateSessionConfirmedFragments_LargePayload(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(req)
 	require.NoError(t, err)
-	created, err := responder.CreateSessionCreated(33333, 44444)
+	created, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(created)
 	require.NoError(t, err)
@@ -1087,7 +1091,7 @@ func TestSessionConfirmedFragments_PacketNumberAlwaysZero(t *testing.T) {
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
 
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 
 	err = initiator.ProcessSessionCreated(createdPacket)
@@ -1124,7 +1128,7 @@ func TestSessionConfirmedRetransmit_PreservesPacketNumber(t *testing.T) {
 	require.NoError(t, err)
 	_, err = responder.ProcessSessionRequest(requestPacket)
 	require.NoError(t, err)
-	createdPacket, err := responder.CreateSessionCreated(33333, 44444)
+	createdPacket, err := responder.CreateSessionCreated(33333, 11111)
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
