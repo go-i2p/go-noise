@@ -91,9 +91,9 @@ func allowedBlocksForMessageType(mt payloadMessageType) map[BlockType]bool {
 //
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 type PayloadBuilder struct {
-	blocks       []PayloadBlock
-	messageType  payloadMessageType
-	allowlist    map[BlockType]bool
+	blocks      []PayloadBlock
+	messageType payloadMessageType
+	allowlist   map[BlockType]bool
 }
 
 // newSessionPayloadBuilder creates a builder for a New Session or Existing

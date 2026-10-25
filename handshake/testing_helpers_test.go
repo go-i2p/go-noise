@@ -65,10 +65,16 @@ func newTestXORModifier(name string, key []byte) (*xorModifier, error) {
 }
 
 func (xm *xorModifier) ModifyOutbound(_ HandshakePhase, data []byte) ([]byte, error) {
+	if xm.closed {
+		return nil, errors.New("xorModifier: use after Close")
+	}
 	return xm.xor(data), nil
 }
 
 func (xm *xorModifier) ModifyInbound(_ HandshakePhase, data []byte) ([]byte, error) {
+	if xm.closed {
+		return nil, errors.New("xorModifier: use after Close")
+	}
 	return xm.xor(data), nil
 }
 
@@ -108,6 +114,9 @@ func newTestPaddingModifier(name string, minPadding, maxPadding int) (*paddingMo
 }
 
 func (pm *paddingModifier) ModifyOutbound(_ HandshakePhase, data []byte) ([]byte, error) {
+	if pm.closed {
+		return nil, errors.New("paddingModifier: use after Close")
+	}
 	n := pm.min
 	if pm.max > pm.min {
 		b := make([]byte, 1)
@@ -128,6 +137,9 @@ func (pm *paddingModifier) ModifyOutbound(_ HandshakePhase, data []byte) ([]byte
 }
 
 func (pm *paddingModifier) ModifyInbound(_ HandshakePhase, data []byte) ([]byte, error) {
+	if pm.closed {
+		return nil, errors.New("paddingModifier: use after Close")
+	}
 	if len(data) == 0 {
 		return data, nil
 	}

@@ -1,8 +1,8 @@
 package config
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"fmt"
+	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
 

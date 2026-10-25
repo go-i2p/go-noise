@@ -77,15 +77,24 @@ func TestCreateHandshakeBlocks_SessionRequestHasNoAddress(t *testing.T) {
 // TestCreateSessionCreated_EmitsAddressBlock covers the real message path, not
 // just the block list, so a regression in the packet builder is caught too.
 func TestCreateSessionCreated_EmitsAddressBlock(t *testing.T) {
-	h := responderHandler(t)
-	h.SetPeerAddress(net.ParseIP("198.51.100.7"), 51501)
+	// SessionCreated is Noise message 2, so the responder must have processed
+	// the initiator's SessionRequest first; a handler that never received
+	// message 1 is still at ReadMessage and cannot WriteMessage.
+	initiator, responder, _, _ := setupHandshakePair(t)
 
-	packet, err := h.CreateSessionCreated(0x1122334455667788, 0x99aabbccddeeff00)
+	requestPacket, err := initiator.CreateSessionRequest(0x1122334455667788, 0x99aabbccddeeff00)
+	require.NoError(t, err)
+	_, err = responder.ProcessSessionRequest(requestPacket)
+	require.NoError(t, err)
+
+	responder.SetPeerAddress(net.ParseIP("198.51.100.7"), 51501)
+
+	packet, err := responder.CreateSessionCreated(0x1122334455667788, 0x99aabbccddeeff00)
 	require.NoError(t, err)
 	require.NotNil(t, packet)
 	assert.Greater(t, len(packet.Payload), 16, "payload plus MAC must be non-empty")
 
 	// The payload is AEAD-sealed, so assert the builder's block list rather
 	// than the ciphertext.
-	assert.NotNil(t, findBlock(h.createHandshakeBlocks(MessageTypeSessionCreated), BlockTypeAddress))
+	assert.NotNil(t, findBlock(responder.createHandshakeBlocks(MessageTypeSessionCreated), BlockTypeAddress))
 }

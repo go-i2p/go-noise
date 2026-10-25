@@ -104,20 +104,18 @@ func TestNTCP2ConfigBuilderMethods(t *testing.T) {
 func TestNTCP2ConfigWithModifiers(t *testing.T) {
 	routerHash := generateRandomHash()
 
-	// Create some test modifiers
-	xorMod, err := handshake.NewXORModifier("test-xor", []byte{0xAA, 0xBB})
-	require.NoError(t, err)
-	paddingMod, err := handshake.NewPaddingModifier("test-padding", 4, 8)
-	require.NoError(t, err)
+	// Two distinct custom modifiers, identified by name.
+	mod1 := &testModifier{name: "test-mod-1"}
+	mod2 := &testModifier{name: "test-mod-2"}
 
 	config, err := NewNTCP2Config(routerHash, true)
 	require.NoError(t, err)
 
-	config = config.WithModifiers(xorMod, paddingMod)
+	config = config.WithModifiers(mod1, mod2)
 
 	assert.Len(t, config.Modifiers, 2)
-	assert.Equal(t, "test-xor", config.Modifiers[0].Name())
-	assert.Equal(t, "test-padding", config.Modifiers[1].Name())
+	assert.Equal(t, "test-mod-1", config.Modifiers[0].Name())
+	assert.Equal(t, "test-mod-2", config.Modifiers[1].Name())
 }
 
 func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
@@ -248,23 +246,28 @@ func TestNTCP2ConfigComprehensiveValidation(t *testing.T) {
 			errorCode:   "INVALID_PADDING",
 		},
 		{
-			// GenericPaddingModifier uses an NTCP2-incompatible 4-byte
-			// length-prefix wire format and must be rejected by config
-			// validation rather than silently produce non-interoperable
-			// messages. validateModifiers already enforces this at runtime
-			// (INCOMPATIBLE_MODIFIER); this test asserts that guard is
-			// actually exercised via Config.Validate().
-			name: "GenericPaddingModifier is rejected as an NTCP2 modifier",
+			// The formerly-rejected GenericPaddingModifier / XORModifier types
+			// were deleted as spec-noncompliant (no I2P spec defines a
+			// whole-message XOR or a 4-byte length-prefixed padding frame), so
+			// there is no longer a type to reject by identity. What
+			// validateModifiers can still detect is a malformed chain, which is
+			// asserted here.
+			name: "nil modifier is rejected",
 			setupConfig: func() *Config {
 				config, _ := NewNTCP2Config(routerHash, false)
-				mod, err := handshake.NewGenericPaddingModifier("generic-padding", 4, 16)
-				if err != nil {
-					t.Fatalf("NewGenericPaddingModifier() error = %v", err)
-				}
-				return config.WithModifiers(mod)
+				return config.WithModifiers(nil)
 			},
 			expectError: true,
-			errorCode:   "INCOMPATIBLE_MODIFIER",
+			errorCode:   "INVALID_MODIFIER",
+		},
+		{
+			name: "unnamed modifier is rejected",
+			setupConfig: func() *Config {
+				config, _ := NewNTCP2Config(routerHash, false)
+				return config.WithModifiers(&testModifier{name: ""})
+			},
+			expectError: true,
+			errorCode:   "INVALID_MODIFIER",
 		},
 	}
 
@@ -330,16 +333,15 @@ func TestNTCP2ConfigToConnConfigWithDisabledModifiers(t *testing.T) {
 func TestNTCP2ConfigToConnConfigWithCustomModifiers(t *testing.T) {
 	m := newTestCryptoMaterial(t)
 
-	// Create custom modifiers — only compatible ones
-	xorMod, err := handshake.NewXORModifier("custom-xor", []byte{0xCC, 0xDD})
-	require.NoError(t, err)
+	// A caller-supplied custom modifier, appended after the NTCP2 ones.
+	customMod := &testModifier{name: "custom-modifier"}
 
 	ntcp2Config, err := NewNTCP2Config(m.routerHash, false)
 	require.NoError(t, err)
 
 	ntcp2Config = ntcp2Config.
 		WithAESObfuscation(true, m.obfuscationIV).
-		WithModifiers(xorMod)
+		WithModifiers(customMod)
 
 	connConfig, err := ntcp2Config.ToConnConfig()
 	require.NoError(t, err)
@@ -348,7 +350,7 @@ func TestNTCP2ConfigToConnConfigWithCustomModifiers(t *testing.T) {
 	assert.Len(t, connConfig.Modifiers, 4) // AES + SipHash + Padding + 1 custom
 
 	// Custom modifier should be at the end
-	assert.Equal(t, "custom-xor", connConfig.Modifiers[3].Name())
+	assert.Equal(t, "custom-modifier", connConfig.Modifiers[3].Name())
 }
 
 func TestNTCP2ConfigBuilderDefensiveCopying(t *testing.T) {
@@ -989,19 +991,24 @@ func TestConfigSipHashModifier_Disabled(t *testing.T) {
 	assert.Nil(t, config.SipHashModifier())
 }
 
-func TestNTCP2ConfigRejectsPaddingModifier(t *testing.T) {
+// TestNTCP2ConfigRejectsNilModifier verifies validateModifiers still guards the
+// chain against malformed entries.
+//
+// The sibling test that used to assert rejection of handshake.GenericPaddingModifier
+// by type is gone: that modifier (and XORModifier) was deleted from the codebase as
+// spec-noncompliant rather than merely refused here. ntcp2.md §"Additions to the
+// Framework" enumerates exactly five NTCP2 extensions, none of which is a
+// whole-message XOR or a length-prefixed padding frame.
+func TestNTCP2ConfigRejectsNilModifier(t *testing.T) {
 	routerHash := generateRandomHash()
 	config, err := NewNTCP2Config(routerHash, false)
 	require.NoError(t, err)
 
-	// Add incompatible PaddingModifier
-	pm, pmErr := handshake.NewPaddingModifier("bad-padding", 0, 32)
-	require.NoError(t, pmErr)
-	config.Modifiers = []handshake.HandshakeModifier{pm}
+	config.Modifiers = []handshake.HandshakeModifier{nil}
 
 	err = config.Validate()
-	require.Error(t, err, "Validate should reject PaddingModifier in NTCP2 config")
-	assert.Contains(t, err.Error(), "NTCP2-compatible")
+	require.Error(t, err, "Validate should reject a nil modifier")
+	assert.Contains(t, err.Error(), "nil modifier")
 }
 
 func TestNTCP2ConfigAcceptsValidModifiers(t *testing.T) {
@@ -1009,11 +1016,11 @@ func TestNTCP2ConfigAcceptsValidModifiers(t *testing.T) {
 	config, err := NewNTCP2Config(routerHash, false)
 	require.NoError(t, err)
 
-	// Add a compatible custom modifier (not PaddingModifier)
+	// A named custom modifier is accepted.
 	config.Modifiers = []handshake.HandshakeModifier{&testModifier{name: "ok"}}
 
 	err = config.Validate()
-	assert.NoError(t, err, "Validate should accept non-PaddingModifier modifiers")
+	assert.NoError(t, err, "Validate should accept a well-formed custom modifier")
 }
 
 // TestNTCP2ConfigValidatesOversizedRouterInfo verifies that Config.Validate()

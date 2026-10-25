@@ -33,21 +33,23 @@ See \[I2P Spec: NTCP2\]\(https://github.com/i2p/i2p.www/blob/master/i2p2www/spec
 - [HandshakeModifier](<#HandshakeModifier>): the interface every modifier implements.
 - [HandshakePhase](<#HandshakePhase>): the phase of the connection a message is in.
 - [ModifierChain](<#ModifierChain>): applies several modifiers in order \(and in reverse on the way back in\).
-- [GenericPaddingModifier](<#GenericPaddingModifier>): adds random padding with a length prefix.
-- [XORModifier](<#XORModifier>): scrambles bytes with a repeating key.
 - [PaddingEngine](<#PaddingEngine>): shared padding math and I2P block wire format used by the NTCP2 and SSU2 padding modifiers.
 
 The \[siphash\] subpackage provides the SipHash\-2\-4 length obfuscation modifier shared by NTCP2 and SSU2.
 
+The protocol\-specific modifiers themselves live in the transport packages, because each one implements a wire format defined by that transport's spec: ntcp2.NewAESObfuscationModifier, ntcp2.NewNTCP2PaddingModifier and ssu2/wire.NewSSU2PaddingModifier / ssu2/wire.NewChaChaObfuscationModifier.
+
+This package deliberately ships no padding or XOR modifier of its own. The two it once exported were removed as non\-compliant with the spec: ntcp2.md §"Additions to the Framework" enumerates exactly five NTCP2 extensions and none is a whole\-message XOR with a repeating key, and no I2P spec defines the "\[4\-byte big\-endian length\]\[data\]\[padding\]" frame layout the generic padding modifier produced.
+
 ### Example
 
 ```
-xor, _ := handshake.NewXORModifier("xor", key)
-pad, _ := handshake.NewGenericPaddingModifier("pad", 16, 64)
-chain := handshake.NewModifierChain("my-chain", xor, pad)
+pad, _ := ntcp2.NewNTCP2PaddingModifier("pad", 16, 64, true)
+aes, _ := ntcp2.NewAESObfuscationModifier("aes", routerHash, iv)
+chain := handshake.NewModifierChain("my-chain", aes, pad)
 
-outbound, _ := chain.ModifyOutbound(handshake.PhaseInitial, plaintext)
-recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
+outbound, _ := chain.ModifyOutbound(handshake.PhaseData, plaintext)
+recovered, _ := chain.ModifyInbound(handshake.PhaseData, outbound)
 ```
 
 ## Index
@@ -55,13 +57,6 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 - [Constants](<#constants>)
 - [func ValidatePaddingParams\(domain string, minPadding, maxPadding int, paddingRatio float64\) error](<#ValidatePaddingParams>)
 - [func ValidatePaddingRange\(subsystem string, minPadding, maxPadding int\) error](<#ValidatePaddingRange>)
-- [type GenericPaddingModifier](<#GenericPaddingModifier>)
-  - [func NewGenericPaddingModifier\(name string, minPadding, maxPadding int\) \(\*GenericPaddingModifier, error\)](<#NewGenericPaddingModifier>)
-  - [func NewPaddingModifier\(name string, minPadding, maxPadding int\) \(\*GenericPaddingModifier, error\)](<#NewPaddingModifier>)
-  - [func \(pm \*GenericPaddingModifier\) Close\(\) error](<#GenericPaddingModifier.Close>)
-  - [func \(pm \*GenericPaddingModifier\) ModifyInbound\(phase HandshakePhase, data \[\]byte\) \(\[\]byte, error\)](<#GenericPaddingModifier.ModifyInbound>)
-  - [func \(pm \*GenericPaddingModifier\) ModifyOutbound\(phase HandshakePhase, data \[\]byte\) \(\[\]byte, error\)](<#GenericPaddingModifier.ModifyOutbound>)
-  - [func \(pm \*GenericPaddingModifier\) Name\(\) string](<#GenericPaddingModifier.Name>)
 - [type HandshakeModifier](<#HandshakeModifier>)
 - [type HandshakePhase](<#HandshakePhase>)
   - [func \(p HandshakePhase\) String\(\) string](<#HandshakePhase.String>)
@@ -85,13 +80,6 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
   - [func \(pe \*PaddingEngine\) ShouldSkipPadding\(\) bool](<#PaddingEngine.ShouldSkipPadding>)
   - [func \(pe \*PaddingEngine\) UpdateParams\(minPad, maxPad int, ratio float64\) error](<#PaddingEngine.UpdateParams>)
 - [type PaddingEngineConfig](<#PaddingEngineConfig>)
-- [type PaddingModifier](<#PaddingModifier>)
-- [type XORModifier](<#XORModifier>)
-  - [func NewXORModifier\(name string, xorKey \[\]byte\) \(\*XORModifier, error\)](<#NewXORModifier>)
-  - [func \(xm \*XORModifier\) Close\(\) error](<#XORModifier.Close>)
-  - [func \(xm \*XORModifier\) ModifyInbound\(phase HandshakePhase, data \[\]byte\) \(\[\]byte, error\)](<#XORModifier.ModifyInbound>)
-  - [func \(xm \*XORModifier\) ModifyOutbound\(phase HandshakePhase, data \[\]byte\) \(\[\]byte, error\)](<#XORModifier.ModifyOutbound>)
-  - [func \(xm \*XORModifier\) Name\(\) string](<#XORModifier.Name>)
 
 
 ## Constants
@@ -140,81 +128,6 @@ ValidatePaddingRange checks that min and max padding sizes form a valid range. I
 
 It delegates to [ValidatePaddingParams](<#ValidatePaddingParams>) \(with paddingRatio=0.0, since callers of this function validate the padding ratio separately, if at all\) so that the config\-time min/max check can never diverge from the stricter bound enforced later when a padding engine is constructed \(NewPaddingEngine/NewNTCP2PaddingModifier/NewSSU2PaddingModifier\). This keeps a MaxPaddingSize above the I2P spec limit \([I2PMaxBlockDataSize](<#I2PPaddingBlockType>)\) from passing config validation and only failing later at connection\-establishment time with a different, confusing error code.
 
-<a name="GenericPaddingModifier"></a>
-## type GenericPaddingModifier
-
-GenericPaddingModifier adds random padding to handshake messages on the way out and removes it on the way in. Padding makes messages harder to size, which resists traffic analysis.
-
-WARNING: this modifier uses a custom wire format — \[4\-byte big\-endian length\]\[data\]\[padding\] — that is NOT part of any I2P specification. Do not use it in NTCP2 modifier chains or anywhere that expects fixed\-size protocol fields \(for example, NTCP2 Message 1 is exactly 64 bytes per spec §3.2\). Substituting it for ntcp2.NTCP2PaddingModifier produces messages that other I2P peers cannot read, and the modifier layer will not report an error.
-
-For I2P NTCP2 transport contexts, use ntcp2.NTCP2PaddingModifier instead. See \[I2P Spec: NTCP2\]\(https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst\) for details.
-
-The modifier is phase\-aware: it only pads during the handshake phases \([PhaseInitial](<#PhaseInitial>), [PhaseExchange](<#PhaseInitial>), [PhaseFinal](<#PhaseInitial>)\). For [PhaseData](<#PhaseInitial>) and any unknown phase, data passes through unchanged so post\-handshake transport messages are not corrupted.
-
-```go
-type GenericPaddingModifier struct {
-    // contains filtered or unexported fields
-}
-```
-
-<a name="NewGenericPaddingModifier"></a>
-### func NewGenericPaddingModifier
-
-```go
-func NewGenericPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error)
-```
-
-NewGenericPaddingModifier creates a new generic padding modifier that adds between minPadding and maxPadding bytes of random padding. The values are validated against I2P limits before the modifier is returned.
-
-<a name="NewPaddingModifier"></a>
-### func NewPaddingModifier
-
-```go
-func NewPaddingModifier(name string, minPadding, maxPadding int) (*GenericPaddingModifier, error)
-```
-
-Deprecated: Use NewGenericPaddingModifier instead.
-
-<a name="GenericPaddingModifier.Close"></a>
-### func \(\*GenericPaddingModifier\) Close
-
-```go
-func (pm *GenericPaddingModifier) Close() error
-```
-
-Close is a no\-op for GenericPaddingModifier because it holds no sensitive key material. It satisfies the HandshakeModifier lifecycle contract.
-
-<a name="GenericPaddingModifier.ModifyInbound"></a>
-### func \(\*GenericPaddingModifier\) ModifyInbound
-
-```go
-func (pm *GenericPaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
-```
-
-ModifyInbound removes the padding that ModifyOutbound added, recovering the original data from the \[original\_length:4\]\[original\_data\]\[padding\_data\] format.
-
-For [PhaseData](<#PhaseInitial>) \(and any future phase beyond [PhaseFinal](<#PhaseInitial>)\), data is returned unmodified. This mirrors ModifyOutbound's phase guard and prevents post\-handshake transport frames from being misread as padded messages.
-
-<a name="GenericPaddingModifier.ModifyOutbound"></a>
-### func \(\*GenericPaddingModifier\) ModifyOutbound
-
-```go
-func (pm *GenericPaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
-```
-
-ModifyOutbound adds random padding to outbound handshake data. The result has the form \[original\_length:4\]\[original\_data\]\[padding\_data\], where the length prefix is the original data length as a 4\-byte big\-endian number. It returns an error if the data is too large for the 4\-byte length prefix \(math.MaxUint32\).
-
-For [PhaseData](<#PhaseInitial>) \(and any future phase beyond [PhaseFinal](<#PhaseInitial>)\), data is returned unmodified. This prevents silent corruption of post\-handshake transport messages that use their own framing \(for example, Noise transport or NTCP2 SipHash\).
-
-<a name="GenericPaddingModifier.Name"></a>
-### func \(\*GenericPaddingModifier\) Name
-
-```go
-func (pm *GenericPaddingModifier) Name() string
-```
-
-Name returns the name of the padding modifier for logging and debugging.
-
 <a name="HandshakeModifier"></a>
 ## type HandshakeModifier
 
@@ -254,7 +167,7 @@ HandshakePhase names the phase of a Noise connection that a message is in. The f
 
 See \[Noise Protocol Framework\]\(https://noiseprotocol.org/noise.html\) for details.
 
-The numeric values of these constants are part of a stability contract. Downstream packages \(for example, ntcp2\) rely on the ordering PhaseInitial \< PhaseExchange \< PhaseFinal \< PhaseData. In particular, guards of the form "phase \>= PhaseFinal" are used to match both PhaseFinal and PhaseData. New phase constants MUST NOT be inserted between PhaseFinal and PhaseData; add them after PhaseData or before PhaseInitial instead.
+The numeric values of these constants are part of a stability contract. Downstream packages rely on the ordering PhaseInitial \< PhaseExchange \< PhaseFinal \< PhaseData. In particular, guards of the form "phase \>= PhaseFinal" \(ssu2/wire\) are used to match both PhaseFinal and PhaseData, while "phase \> PhaseFinal" \(ntcp2\) matches only PhaseData. New phase constants MUST NOT be inserted between PhaseFinal and PhaseData; add them after PhaseData or before PhaseInitial instead.
 
 ```go
 type HandshakePhase int
@@ -279,9 +192,9 @@ const (
     // SSU2).
     //
     // Stability: PhaseData MUST stay strictly greater than PhaseFinal. The
-    // ntcp2 package uses "phase >= PhaseFinal" guards that depend on this
-    // ordering. Inserting a new constant between PhaseFinal and PhaseData will
-    // silently break those modifiers.
+    // ssu2 package uses "phase >= PhaseFinal" guards (and ntcp2 uses "phase >
+    // PhaseFinal") that depend on this ordering. Inserting a new constant
+    // between PhaseFinal and PhaseData will silently break those modifiers.
     PhaseData
 )
 ```
@@ -503,78 +416,5 @@ type PaddingEngineConfig struct {
     Domain       string // Error domain for oops messages (e.g., "ntcp2", "ssu2")
 }
 ```
-
-<a name="PaddingModifier"></a>
-## type PaddingModifier
-
-Deprecated: Use GenericPaddingModifier instead.
-
-```go
-type PaddingModifier = GenericPaddingModifier
-```
-
-<a name="XORModifier"></a>
-## type XORModifier
-
-XORModifier is a simple obfuscation modifier. It scrambles handshake data by XORing it with a repeating key pattern, and unscrambles it the same way on the way in. This adds a layer of obfuscation without affecting the security of the underlying Noise protocol.
-
-After Close\(\) is called, ModifyOutbound and ModifyInbound return an error. This prevents a silent security problem: with a zeroed key, XOR would do nothing, and data would pass through with no obfuscation at all.
-
-```go
-type XORModifier struct {
-    // contains filtered or unexported fields
-}
-```
-
-<a name="NewXORModifier"></a>
-### func NewXORModifier
-
-```go
-func NewXORModifier(name string, xorKey []byte) (*XORModifier, error)
-```
-
-NewXORModifier creates a new XOR modifier that uses the given key. The key is repeated as needed to match the length of the data being transformed.
-
-If key is nil or empty, a 32\-byte cryptographically random key is generated automatically. Do not rely on any particular default value — the old well\-known default \(0xAA\) provided no meaningful obfuscation and has been replaced by this random fallback.
-
-If the OS entropy source is unavailable \(crypto/rand fails\), this function returns an error. Callers MUST NOT proceed with a connection that cannot be obfuscated, because silently degrading to a weak key breaks anonymity guarantees.
-
-<a name="XORModifier.Close"></a>
-### func \(\*XORModifier\) Close
-
-```go
-func (xm *XORModifier) Close() error
-```
-
-Close zeroes the XOR key to prevent session\-derived key material from lingering in memory after the connection is torn down. After Close\(\), ModifyOutbound and ModifyInbound will return an error to prevent silent security degradation from XOR with an all\-zero key.
-
-<a name="XORModifier.ModifyInbound"></a>
-### func \(\*XORModifier\) ModifyInbound
-
-```go
-func (xm *XORModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
-```
-
-ModifyInbound removes XOR obfuscation from inbound handshake data. Because XOR is symmetric, this performs the same operation as ModifyOutbound.
-
-<a name="XORModifier.ModifyOutbound"></a>
-### func \(\*XORModifier\) ModifyOutbound
-
-```go
-func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
-```
-
-ModifyOutbound applies XOR obfuscation to outbound handshake data. It returns an error if Close\(\) has been called.
-
-For [PhaseData](<#PhaseInitial>) \(and any future phase beyond [PhaseFinal](<#PhaseInitial>)\), data is returned unmodified. The XOR key is a single static, non\-advancing keystream: applying it at the same byte offsets to every post\-handshake message would reuse the same keystream bytes across the connection's entire data phase. An adversary who learns or guesses plaintext at any offset in one message would then recover the keystream bytes needed to de\-obfuscate that same offset in every other message. Confining XOR to the one\-shot handshake phases avoids this repeated\-keystream break.
-
-<a name="XORModifier.Name"></a>
-### func \(\*XORModifier\) Name
-
-```go
-func (xm *XORModifier) Name() string
-```
-
-Name returns the name of the XOR modifier for logging and debugging.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

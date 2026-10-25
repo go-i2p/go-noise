@@ -56,8 +56,8 @@ type SessionManager struct {
 	// completed the NS/NSR handshake. Spec: "NSR tagset timeout (receiver) =
 	// 3 minutes". Java: SESSION_PENDING_DURATION_MS = 3 min.
 	pendingSessionTimeout time.Duration
-	ctx            context.Context
-	cancel         context.CancelFunc
+	ctx                   context.Context
+	cancel                context.CancelFunc
 
 	// nsMaxPastAge is the maximum acceptable age for NS DateTime freshness.
 	nsMaxPastAge time.Duration
@@ -85,6 +85,7 @@ type SessionManager struct {
 //
 // Parameters:
 //   - privateKey: the 32-byte X25519 private key to use for this manager.
+//
 // sessionExpiry returns the appropriate timeout for the given session based
 // on its handshake state. Pending sessions (NSR not yet exchanged) use the
 // shorter nsrPendingTimeout (3 min); established sessions use sessionTimeout
@@ -123,19 +124,19 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &SessionManager{
-		sessions:        make(map[[32]byte]*Session),
-		tagIndex:        make(map[[8]byte]*Session),
-		nsrTagIndex:     make(map[[8]byte]*Session),
-		tagCounterIndex: make(map[[8]byte]uint32),
-		oneTimeKeys:     make(map[[8]byte][32]byte),
-		ourPrivateKey:   privateKey,
-		ourPublicKey:    publicKey,
-		sessionTimeout:  10 * time.Minute,
+		sessions:              make(map[[32]byte]*Session),
+		tagIndex:              make(map[[8]byte]*Session),
+		nsrTagIndex:           make(map[[8]byte]*Session),
+		tagCounterIndex:       make(map[[8]byte]uint32),
+		oneTimeKeys:           make(map[[8]byte][32]byte),
+		ourPrivateKey:         privateKey,
+		ourPublicKey:          publicKey,
+		sessionTimeout:        10 * time.Minute,
 		pendingSessionTimeout: nsrPendingTimeout,
-		nsMaxPastAge:    defaultNSMaxPastAge,
-		nsMaxFutureAge:  defaultNSMaxFutureAge,
-		ctx:             ctx,
-		cancel:          cancel,
+		nsMaxPastAge:          defaultNSMaxPastAge,
+		nsMaxFutureAge:        defaultNSMaxFutureAge,
+		ctx:                   ctx,
+		cancel:                cancel,
 	}
 
 	for _, opt := range opts {

@@ -110,6 +110,31 @@ type HandshakeHandler struct {
 	// peerSessionRequestReplayToken is the deterministic replay token derived
 	// from the most recently validated SessionRequest.
 	peerSessionRequestReplayToken []byte
+
+	// sentSourceConnID / sentDestConnID record the connection IDs the initiator
+	// placed in its outbound SessionRequest, so ProcessSessionCreated can verify
+	// that the responder echoed them back swapped.
+	//
+	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message
+	// if the Destination and Source Connection IDs do not match the Source and
+	// Destination Connection IDs of the Session Request." The header table defines
+	// Destination Connection ID as "The Source Connection ID received from Alice in
+	// Session Request" and Source Connection ID as "The Destination Connection ID
+	// received from Alice in Session Request".
+	sentSourceConnID uint64
+	sentDestConnID   uint64
+	// sessionRequestSent marks that the IDs above were recorded, so the check is
+	// not applied to a SessionCreated that was preceded by no SessionRequest.
+	sessionRequestSent bool
+
+	// expectedPeerAddr is the UDP source address the SessionRequest was received
+	// from / the SessionCreated is expected to arrive from, on the responder side
+	// it is the peer's observed endpoint.
+	//
+	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message
+	// if the source IP and port do not match the destination IP and port of the
+	// Session Request."
+	expectedPeerAddr *net.UDPAddr
 }
 
 // buildSSU2Prologue returns the Noise prologue for SSU2 handshakes.

@@ -82,10 +82,11 @@ func NextMask(keys [2]uint64, iv *uint64) uint16 {
 //
 // After Close() (or ZeroKeys()) is called, ModifyOutbound and ModifyInbound
 // return an error instead of silently computing a deterministic all-zero-key
-// mask sequence, mirroring XORModifier's use-after-close contract. The
-// lower-level NextOutboundMask/NextInboundMask accessors do not error after
-// Close() (see their doc comments for why) — use Closed() to check state
-// explicitly if calling those directly.
+// mask sequence: once the keys are erased, any mask derived from them would be
+// both non-recoverable and a key-reuse signal to a peer. The lower-level
+// NextOutboundMask/NextInboundMask accessors do not error after Close() (see
+// their doc comments for why) — use Closed() to check state explicitly if
+// calling those directly.
 type LengthModifier struct {
 	mu           sync.Mutex
 	name         string

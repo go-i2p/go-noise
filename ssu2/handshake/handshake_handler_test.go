@@ -3,6 +3,7 @@ package handshake
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"net"
 	"testing"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
@@ -31,6 +32,15 @@ func setupHandshakePair(t *testing.T) (*HandshakeHandler, *HandshakeHandler, []b
 	// Responder doesn't know initiator's key yet (will learn from SessionRequest)
 	responder, err := NewHandshakeHandlerWithKeys(false, respDH, nil, nil)
 	require.NoError(t, err)
+
+	// Mirror the production responder, which records the initiator's observed
+	// UDP endpoint before building SessionCreated
+	// (ssu2/session/conn_handshake.go calls SetPeerAddress). ssu2.md
+	// §"Session Created" -> §"Payload" lists the Address block with no
+	// "(optional)" marker - §"Address" describes it as "Alice's address, sent to
+	// Alice by Bob" - so a conformant SessionCreated must carry it, and
+	// validateHandshakeBlocks rejects one that does not.
+	responder.SetPeerAddress(net.ParseIP("203.0.113.10"), 51500)
 
 	return initiator, responder, initDH.Public, respDH.Public
 }

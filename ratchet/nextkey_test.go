@@ -124,10 +124,10 @@ func TestPrepareSend_KeyIDProgression(t *testing.T) {
 	}
 
 	expected := []want{
-		{0, true}, // key 0*
-		{1, true}, // key 1*
+		{0, true},  // key 0*
+		{1, true},  // key 1*
 		{1, false}, // key 1 (reuse)
-		{2, true}, // key 2*
+		{2, true},  // key 2*
 		{2, false}, // key 2 (reuse)
 	}
 	assert.Equal(t, expected, got, "sender key IDs must follow the spec progression table")

@@ -38,20 +38,30 @@
 //   - [HandshakePhase]: the phase of the connection a message is in.
 //   - [ModifierChain]: applies several modifiers in order (and in reverse on
 //     the way back in).
-//   - [GenericPaddingModifier]: adds random padding with a length prefix.
-//   - [XORModifier]: scrambles bytes with a repeating key.
 //   - [PaddingEngine]: shared padding math and I2P block wire format used by
 //     the NTCP2 and SSU2 padding modifiers.
 //
 // The [siphash] subpackage provides the SipHash-2-4 length obfuscation
 // modifier shared by NTCP2 and SSU2.
 //
+// The protocol-specific modifiers themselves live in the transport packages,
+// because each one implements a wire format defined by that transport's spec:
+// ntcp2.NewAESObfuscationModifier, ntcp2.NewNTCP2PaddingModifier and
+// ssu2/wire.NewSSU2PaddingModifier / ssu2/wire.NewChaChaObfuscationModifier.
+//
+// This package deliberately ships no padding or XOR modifier of its own. The
+// two it once exported were removed as non-compliant with the spec: ntcp2.md §"Additions
+// to the Framework" enumerates exactly five NTCP2 extensions and none is a
+// whole-message XOR with a repeating key, and no I2P spec defines the
+// "[4-byte big-endian length][data][padding]" frame layout the generic padding
+// modifier produced.
+//
 // # Example
 //
-//	xor, _ := handshake.NewXORModifier("xor", key)
-//	pad, _ := handshake.NewGenericPaddingModifier("pad", 16, 64)
-//	chain := handshake.NewModifierChain("my-chain", xor, pad)
+//	pad, _ := ntcp2.NewNTCP2PaddingModifier("pad", 16, 64, true)
+//	aes, _ := ntcp2.NewAESObfuscationModifier("aes", routerHash, iv)
+//	chain := handshake.NewModifierChain("my-chain", aes, pad)
 //
-//	outbound, _ := chain.ModifyOutbound(handshake.PhaseInitial, plaintext)
-//	recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
+//	outbound, _ := chain.ModifyOutbound(handshake.PhaseData, plaintext)
+//	recovered, _ := chain.ModifyInbound(handshake.PhaseData, outbound)
 package handshake

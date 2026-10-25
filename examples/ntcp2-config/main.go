@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-i2p/common/data"
 	ntcp2shared "github.com/go-i2p/go-noise/examples/exampleutil"
-	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/ntcp2"
 )
 
@@ -115,15 +114,16 @@ func demonstrateAdvancedConfigurations(routerHash []byte) {
 	fmt.Println("\n2. Advanced Builder Pattern:")
 	fmt.Println("============================")
 
-	// Create custom handshake modifiers
-	xorMod, err := handshake.NewXORModifier("demo-xor", []byte{0xAA, 0xBB, 0xCC, 0xDD})
+	// Create custom handshake modifiers.
+	//
+	// Only the extensions ntcp2.md §"Additions to the Framework" defines may be
+	// placed in an NTCP2 modifier chain; Config.validateModifiers rejects anything
+	// else. The AES obfuscation and SipHash length modifiers are normally enabled
+	// through WithAESObfuscation / WithSipHashLength, so this shows the padding
+	// extension being supplied directly.
+	paddingMod, err := ntcp2.NewNTCP2PaddingModifier("demo-padding", 8, 32, true)
 	if err != nil {
-		fmt.Printf("❌ Failed to create XOR modifier: %v\n", err)
-		return
-	}
-	paddingMod, err := handshake.NewGenericPaddingModifier("demo-padding", 8, 32)
-	if err != nil {
-		fmt.Printf("❌ Failed to create generic padding modifier: %v\n", err)
+		fmt.Printf("❌ Failed to create NTCP2 padding modifier: %v\n", err)
 		return
 	}
 
@@ -142,7 +142,7 @@ func demonstrateAdvancedConfigurations(routerHash []byte) {
 		WithWriteTimeout(45*time.Second).
 		WithHandshakeRetries(3).
 		WithRetryBackoff(2*time.Second).
-		WithModifiers(xorMod, paddingMod).
+		WithModifiers(paddingMod).
 		WithFrameSettings(32768, true, 16, 128) // 32KB frames, padding 16-128 bytes
 
 	fmt.Printf("Advanced Config:\n")
@@ -150,6 +150,9 @@ func demonstrateAdvancedConfigurations(routerHash []byte) {
 	fmt.Printf("  Retry Settings: %d attempts, %v backoff\n",
 		config.HandshakeRetries, config.RetryBackoff)
 	fmt.Printf("  Custom Modifiers: %d\n", len(config.Modifiers))
+	for i, mod := range config.Modifiers {
+		fmt.Printf("    %d. %s\n", i+1, mod.Name())
+	}
 	fmt.Printf("  Frame Padding: %t\n", config.FramePaddingEnabled)
 }
 
@@ -266,12 +269,9 @@ func applyNTCP2Features(configBuilder *ntcp2.Config, remoteRouterHash []byte, ar
 // addCustomModifiers creates and adds demonstration modifiers to the configuration
 func addCustomModifiers(configBuilder *ntcp2.Config, args *ntcp2shared.NTCP2Args) *ntcp2.Config {
 	if args.Verbose {
-		xorMod, err := handshake.NewXORModifier("demo-xor", []byte{0xAA, 0xBB, 0xCC, 0xDD})
-		if err == nil {
-			paddingMod, err := handshake.NewGenericPaddingModifier("demo-padding", 8, 32)
-			if err == nil {
-				configBuilder = configBuilder.WithModifiers(xorMod, paddingMod)
-			}
+		// NTCP2's own padding extension; see ntcp2.md §"Padding".
+		if paddingMod, err := ntcp2.NewNTCP2PaddingModifier("demo-padding", 8, 32, true); err == nil {
+			configBuilder = configBuilder.WithModifiers(paddingMod)
 		}
 	}
 	return configBuilder

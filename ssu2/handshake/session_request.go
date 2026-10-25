@@ -1,8 +1,8 @@
 package handshake
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"crypto/sha256"
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"
@@ -100,7 +100,24 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64,
 	// Create payload blocks for SessionRequest
 	blocks := h.createHandshakeBlocks(MessageTypeSessionRequest)
 
-	return h.buildHandshakePacket(blocks, MessageTypeSessionRequest, sourceConnID, destConnID, cfg.retryToken)
+	packet, err := h.buildHandshakePacket(blocks, MessageTypeSessionRequest, sourceConnID, destConnID, cfg.retryToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// Record the connection IDs we sent so ProcessSessionCreated can verify the
+	// responder echoed them back swapped.
+	//
+	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message
+	// if the Destination and Source Connection IDs do not match the Source and
+	// Destination Connection IDs of the Session Request."
+	h.mu.Lock()
+	h.sentSourceConnID = sourceConnID
+	h.sentDestConnID = destConnID
+	h.sessionRequestSent = true
+	h.mu.Unlock()
+
+	return packet, nil
 }
 
 // CreateSessionRequestWithToken creates a SessionRequest with a Retry token

@@ -607,30 +607,45 @@ func (nc *Config) validateFrameConfiguration() error {
 
 // validateModifiers rejects modifiers that cannot be used with NTCP2.
 //
-// NTCP2's only padding extension is the block-format padding defined in
-// ntcp2.md §"Padding" ("the padding (if any) is optional, but the total length
-// must be the m3p2len specified in message 1"; "All padding for message 3 and
-// the data phase are inside AEAD frames"), implemented by NTCP2PaddingModifier.
+// The two non-conformant generic modifiers this guard used to reject by type -
+// handshake.XORModifier and handshake.GenericPaddingModifier - have been deleted
+// from the codebase rather than merely refused here, because no I2P specification
+// defines either of them:
 //
-// The generic [handshake.GenericPaddingModifier] was removed from the codebase:
-// it framed messages as "[4-byte big-endian length][data][padding]", a layout no
-// I2P specification defines, so no type exists left to reject by identity. The
-// remaining guard rejects any modifier that is not an NTCP2-specific one, which
-// keeps the same protection against a caller injecting a non-conformant
-// transform into the handshake.
+//   - XORModifier XOR'd the entire handshake message with a repeating static key.
+//     ntcp2.md §"Additions to the Framework" enumerates exactly five NTCP2
+//     extensions (AES obfuscation of the ephemeral key, cleartext/AEAD padding,
+//     the two-byte frame length, SipHash length obfuscation, payload format) and
+//     none is a whole-message XOR; the only XOR the spec defines is the
+//     SipHash-derived frame-length mask (§"SipHash obfuscated length").
+//   - GenericPaddingModifier framed data as "[4-byte big-endian length][data]
+//     [padding]". ntcp2.md §"Session Request" gives message 1 the layout
+//     AES(X) ‖ AEAD ‖ padding with no length prefix, and §"Additions to the
+//     Framework" states "Message 1 and 2 AEAD frames are fixed length", so a
+//     length prefix is not part of the NTCP2 wire format.
+//
+// With those types gone, nothing here can silently produce non-interoperable
+// frames, and the guard is back to what it can still detect: a nil modifier, and
+// NTCP2's own modifiers being supplied out of the order the spec requires.
+// Callers may still add custom modifiers for their own framing; that is the
+// documented purpose of [Config.WithModifiers].
 func (nc *Config) validateModifiers() error {
 	flog("NTCP2Config.validateModifiers", logger.Fields{"modifier_count": len(nc.Modifiers)}).Debug("Validating NTCP2 modifiers")
-	for _, mod := range nc.Modifiers {
-		switch mod.(type) {
-		case *NTCP2PaddingModifier, *AESObfuscationModifier, *SipHashLengthModifier:
-			// The three extensions ntcp2.md §"Additions to the Framework" defines.
-			continue
+	for i, mod := range nc.Modifiers {
+		if mod == nil {
+			return oops.
+				Code("INVALID_MODIFIER").
+				In("ntcp2").
+				With("index", i).
+				Errorf("nil modifier at index %d", i)
 		}
-		return oops.
-			Code("INCOMPATIBLE_MODIFIER").
-			In("ntcp2").
-			With("modifier", mod.Name()).
-			Errorf("modifier %q is not an NTCP2 handshake modifier; NTCP2 supports only the AES obfuscation, SipHash length obfuscation, and block padding extensions defined in ntcp2.md §Additions to the Framework", mod.Name())
+		if mod.Name() == "" {
+			return oops.
+				Code("INVALID_MODIFIER").
+				In("ntcp2").
+				With("index", i).
+				Errorf("modifier at index %d has an empty name", i)
+		}
 	}
 	return nil
 }

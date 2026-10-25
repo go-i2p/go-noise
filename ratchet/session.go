@@ -46,8 +46,8 @@ type Session struct {
 	// nextRootKey for the inbound and outbound directions (ecies.md
 	// §"DH Ratchet KDF": "rootKey = nextRootKey // from previous tagset in
 	// this direction").
-	sendRootKey [32]byte
-	recvRootKey [32]byte
+	sendRootKey      [32]byte
+	recvRootKey      [32]byte
 	SymmetricRatchet *ratchet.SymmetricRatchet // sending chain
 	TagRatchet       *ratchet.TagRatchet       // sending tags
 	// RecvSymmetricRatchet is the receiving chain ratchet.
@@ -262,7 +262,7 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 		//
 		// The NS/NSR handshake messages use their own separate "SessionReplyTags"
 		// tagset, so they do not consume ES counter 0.
-		MessageCounter:       0,
+		MessageCounter:     0,
 		recvWindowBase:     0,
 		recvFillMark:       0,
 		recvKeyCache:       make(map[uint32][32]byte),

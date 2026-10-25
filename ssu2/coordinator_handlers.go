@@ -1,9 +1,9 @@
 package ssu2
 
 import (
+	"encoding/binary"
 	"github.com/go-i2p/crypto/ed25519"
 	"github.com/go-i2p/crypto/rand"
-	"encoding/binary"
 	"net"
 	"time"
 

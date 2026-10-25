@@ -202,7 +202,6 @@ func (sm *SessionManager) removeTagsFromIndex(tag [8]byte) {
 	delete(sm.tagCounterIndex, tag)
 }
 
-
 // lookupSessionForNextKey finds the session and releases its lock, so the
 // caller can re-acquire it together with the manager lock in handleNextKeyBlock.
 func (sm *SessionManager) lookupSessionForNextKey(sessionTag [8]byte) (*Session, error) {
