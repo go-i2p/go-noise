@@ -8,6 +8,7 @@ import (
 	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/rand"
 	"github.com/go-i2p/go-noise/internal/cryptorand"
+	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/go-noise/mod/replaycache"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
@@ -744,13 +745,48 @@ func (h *HandshakeHandler) SessionConfirmedHeaderKey() []byte {
 	return copied
 }
 
-// Close releases resources held by the HandshakeHandler, including the
-// replay cache's background goroutine.
+// Close releases resources held by the HandshakeHandler and zeroes its key
+// material.
+//
+// ssu2.md §"Session Termination" -> §"Cleanup": "Upon any normal or abnormal
+// termination, routers should zero-out any in-memory ephemeral data, including
+// handshake ephemeral keys, symmetric crypto keys, and related information."
+//
+// The handler owns the Noise handshake state, the two transport cipher states,
+// and the intermediate header-protection keys derived at each handshake step, so
+// all of them are erased here rather than merely dropped for the garbage
+// collector (Go zeroes neither, and the bytes stay reachable until the buffer is
+// reused).
 func (h *HandshakeHandler) Close() {
 	flog("Close").Debug("Closing HandshakeHandler")
 	if h.replayCache != nil {
 		h.replayCache.Close()
 	}
+
+	// Transport cipher keys. ZeroKey also marks the state invalid, so a
+	// post-close Encrypt/Decrypt fails loudly instead of using a zero key.
+	if h.sendCipher != nil {
+		h.sendCipher.ZeroKey()
+	}
+	if h.recvCipher != nil {
+		h.recvCipher.ZeroKey()
+	}
+
+	// Local static private key and the intermediate header keys (SessCreateHeader
+	// / SessionConfirmed), which are symmetric key material.
+	securemem.SecureZero(h.staticKey)
+	securemem.SecureZero(h.sessCreateHeaderKey)
+	securemem.SecureZero(h.sessionConfirmedHeaderKey)
+	h.staticKey = nil
+	h.sessCreateHeaderKey = nil
+	h.sessionConfirmedHeaderKey = nil
+
+	// The handshake state itself holds the ephemeral key pair (e) and the
+	// chaining key; drop the reference so it can be collected, and nil the
+	// cipher states so any later use fails rather than reading zeroed keys.
+	h.handshakeState = nil
+	h.sendCipher = nil
+	h.recvCipher = nil
 }
 
 // ReconfigureReplayCache replaces the replay cache with one using the
