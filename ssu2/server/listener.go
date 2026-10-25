@@ -656,26 +656,87 @@ func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Pac
 // this listener's own intro key, so the caller can be certain the message was
 // addressed to us and is unmodified.
 //
-// Returns nil when no intro key is configured (test mode, where peers send
-// plaintext headers and payloads) or when the payload opens successfully.
-func (l *SSU2Listener) verifyIntroKeyMessage(packet *SSU2Packet) error {
+// Returns the decrypted payload blocks when the payload opens successfully. In
+// test mode (no intro key configured) peers send plaintext headers and
+// payloads, so the packet payload is returned as-is with a nil error.
+func (l *SSU2Listener) verifyIntroKeyMessage(packet *SSU2Packet) ([]byte, error) {
 	cfg := l.config.Load()
 	if cfg == nil || len(cfg.IntroKey) != HeaderKeySize {
-		return nil // header-protection/test mode: nothing to verify against
+		return packet.Payload, nil // header-protection/test mode: nothing to verify against
 	}
 	if len(packet.Header) < LongHeaderSize {
-		return oops.Errorf("intro-key message requires a %d-byte long header, got %d", LongHeaderSize, len(packet.Header))
+		return nil, oops.Errorf("intro-key message requires a %d-byte long header, got %d", LongHeaderSize, len(packet.Header))
 	}
-	if _, err := DecryptIntroKeyAEAD(
+	plaintext, err := DecryptIntroKeyAEAD(
 		cfg.IntroKey,
 		packet.Header[:LongHeaderSize],
 		packet.Payload,
 		packet.MAC,
 		packet.PacketNumber,
-	); err != nil {
-		return oops.Wrapf(err, "Token Request AEAD validation failed")
+	)
+	if err != nil {
+		return nil, oops.Wrapf(err, "Token Request AEAD validation failed")
 	}
-	return nil
+	return plaintext, nil
+}
+
+// tokenRequestMaxClockSkewDefault is the fallback DateTime skew window when
+// SSU2Config.MaxClockSkew is unset. ssu2.md §"Recommended Constants" gives
+// "±2 minutes"; config/defaults.go sets MaxClockSkew to 120s, so this only
+// guards against a hand-built config that left it zero (which would otherwise
+// silently disable the check, the audit F-07 defect class).
+const tokenRequestMaxClockSkewDefault = 2 * time.Minute
+
+// validateTokenRequestTimestamp enforces the DateTime skew check on an inbound
+// Token Request.
+//
+// ssu2.md §"Token Request" -> §"Notes": "Bob must reject connections where the
+// timestamp value is too far off from the current time. Call the maximum delta
+// time D." and "Bob MAY send a Retry message containing a zero token and a
+// Termination block with a clock skew reason code if the timestamp in the
+// DateTime block is too far skewed." §"Token Request" -> §"Payload" lists the
+// DateTime block as required (Java I2P InboundEstablishState2 throws "No
+// DateTime block in Session/Token Request").
+//
+// Returns:
+//   - skewExceeded=true, err=nil: a valid DateTime is present but too far off
+//     the local clock. The caller MAY answer with a zero-token Retry carrying a
+//     clock-skew Termination block, which the spec permits.
+//   - err!=nil: the payload is malformed or the required DateTime block is
+//     missing. §"Token Request" -> §"Notes" says "On most errors ... Bob should
+//     halt further message processing and drop the message without responding",
+//     so the caller drops silently.
+//   - skewExceeded=false, err=nil: the skew is within the window; proceed.
+func (l *SSU2Listener) validateTokenRequestTimestamp(plaintext []byte) (bool, error) {
+	blocks, err := DeserializeBlocks(plaintext)
+	if err != nil {
+		return false, oops.Wrapf(err, "Token Request payload failed to deserialize")
+	}
+	dateTime := FindBlockByType(blocks, BlockTypeDateTime)
+	if dateTime == nil {
+		return false, oops.Code("MISSING_DATETIME").In("ssu2_listener").
+			Errorf("Token Request missing required DateTime block")
+	}
+	if len(dateTime.Data) < 4 {
+		return false, oops.Errorf("Token Request DateTime block too short: %d bytes", len(dateTime.Data))
+	}
+	cfg := l.config.Load()
+	window := tokenRequestMaxClockSkewDefault
+	if cfg != nil && cfg.MaxClockSkew > 0 {
+		window = cfg.MaxClockSkew
+	}
+	remote := time.Unix(int64(binary.BigEndian.Uint32(dateTime.Data[:4])), 0)
+	skew := time.Since(remote)
+	if skew < 0 {
+		skew = -skew
+	}
+	if skew > window {
+		flog("validateTokenRequestTimestamp", logger.Fields{
+			"skew": skew.String(), "max_skew": window.String(),
+		}).Debug("Token Request timestamp skew exceeds the maximum")
+		return true, nil
+	}
+	return false, nil
 }
 
 // generateUniqueConnectionID generates a connection ID and verifies uniqueness
@@ -1142,9 +1203,42 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	// The Token Request payload is sealed with Bob's intro key (the receiver's
 	// own) as k, the 4-byte header packet number as n, and the 32-byte header
 	// before header encryption as ad (ssu2.md §"KDF for Token Request").
-	if err := l.verifyIntroKeyMessage(packet); err != nil {
+	plaintext, err := l.verifyIntroKeyMessage(packet)
+	if err != nil {
 		flog("processTokenRequest", logger.Fields{"remote_addr": remoteAddr.String()}).
 			WithError(err).Debug("dropping Token Request that failed AEAD validation")
+		return errNoTokenPresent
+	}
+
+	// Reject a Token Request whose DateTime is too far off the local clock,
+	// before spending any token-issuance resources on it.
+	//
+	// ssu2.md §"Token Request" -> §"Notes" makes the skew check mandatory for
+	// Bob. §"Handshake Retransmission" -> §"Token Request" notes the message is
+	// not part of the Noise handshake, so the response is a zero-token Retry
+	// with a clock-skew Termination block (a "don't retry" signal), which the
+	// spec explicitly permits.
+	skewExceeded, skewErr := l.validateTokenRequestTimestamp(plaintext)
+	if skewErr != nil {
+		// Malformed payload or missing DateTime: drop without responding, per
+		// ssu2.md §"Token Request" -> §"Notes" ("On most errors ... Bob should
+		// halt further message processing and drop the message without
+		// responding").
+		flog("processTokenRequest", logger.Fields{"remote_addr": remoteAddr.String()}).
+			WithError(skewErr).Debug("dropping malformed Token Request")
+		return errNoTokenPresent
+	}
+	if skewExceeded {
+		// ssu2.md §"Token Request" -> §"Notes": Bob MAY answer excessive clock
+		// skew with a zero-token Retry carrying a clock-skew Termination block
+		// (a "don't retry" signal). No token state is allocated.
+		reason := TerminationClockSkew
+		zeroToken := make([]byte, TokenSize)
+		incomingSize := len(packet.Header) + len(packet.Payload) + len(packet.MAC)
+		if sendErr := l.sendRetry(remoteAddr, zeroToken, packet.Header, incomingSize, &reason); sendErr != nil {
+			flog("processTokenRequest", logger.Fields{"error": sendErr.Error()}).
+				Debug("failed to send clock-skew rejection Retry")
+		}
 		return errNoTokenPresent
 	}
 

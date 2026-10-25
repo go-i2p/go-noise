@@ -1,7 +1,6 @@
 package server
 
-import (
-)
+import ()
 
 // newTokenCacheFromConfig creates the retry-token TokenCache using SSU2Config
 // values.

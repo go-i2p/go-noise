@@ -404,6 +404,21 @@ func createMockPacketConn(t *testing.T) net.PacketConn {
 	return pc
 }
 
+// tokenRequestPayload builds a spec-valid Token Request payload: the required
+// DateTime block carrying the current time (ssu2.md §"Token Request" ->
+// §"Payload"), padded to the 8-byte minimum payload size.
+func tokenRequestPayload(t *testing.T) []byte {
+	t.Helper()
+	var ts [4]byte
+	binary.BigEndian.PutUint32(ts[:], uint32(time.Now().Unix()))
+	payload, err := SerializeBlocks([]*SSU2Block{
+		{Type: BlockTypeDateTime, Data: ts[:]},
+		{Type: BlockTypePadding, Data: bytes.Repeat([]byte{0}, 8)},
+	})
+	require.NoError(t, err)
+	return payload
+}
+
 // createValidConfig creates a valid SSU2Config for testing.
 func createValidConfig(t *testing.T) *SSU2Config {
 	t.Helper()
@@ -436,9 +451,10 @@ func TestSSU2Listener_ProcessTokenRequest(t *testing.T) {
 		// Before processing, cache should be empty
 		assert.Equal(t, 0, listener.tokenCache.Size())
 
-		// Create a mock TokenRequest packet
+		// Create a mock TokenRequest packet with a spec-valid DateTime payload.
 		packet := NewSSU2Packet(MessageTypeTokenRequest, 0)
 		packet.Header = make([]byte, LongHeaderSize)
+		packet.Payload = tokenRequestPayload(t)
 
 		// Process token request (internally calls processTokenRequest)
 		err := listener.processTokenRequest(packet, remoteAddr)
@@ -462,6 +478,7 @@ func TestSSU2Listener_ProcessTokenRequest(t *testing.T) {
 
 		packet := NewSSU2Packet(MessageTypeTokenRequest, 0)
 		packet.Header = make([]byte, LongHeaderSize)
+		packet.Payload = tokenRequestPayload(t)
 
 		// First sight for each address should not allocate token cache entries.
 		_ = listener.processTokenRequest(packet, addr1)

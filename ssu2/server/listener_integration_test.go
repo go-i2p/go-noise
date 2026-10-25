@@ -183,10 +183,11 @@ func TestListenerIntegration_TokenRequestRetryFlow(t *testing.T) {
 	require.NoError(t, err)
 	defer clientPC.Close()
 
-	// Create a TokenRequest packet
+	// Create a TokenRequest packet with the required DateTime payload.
 	tokenRequest := NewSSU2Packet(MessageTypeTokenRequest, 0)
 	tokenRequest.Header = make([]byte, LongHeaderSize)
 	tokenRequest.MAC = make([]byte, MACSize)
+	tokenRequest.Payload = tokenRequestPayload(t)
 
 	data, err := tokenRequest.Serialize()
 	require.NoError(t, err)
