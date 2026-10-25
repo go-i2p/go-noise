@@ -2,6 +2,7 @@ package wire
 
 import (
 	"encoding/binary"
+	"net"
 	"time"
 
 	"github.com/go-i2p/logger"
@@ -45,6 +46,15 @@ type SSU2Packet struct {
 	// Timestamp records when packet was created or received
 	// Used for RTT estimation and debugging
 	Timestamp time.Time
+
+	// Source is the UDP address the datagram was received from, set by
+	// the reader (never serialized on the wire). Connection migration needs
+	// it after the receive-window dedup decision (ssu2.md §"Connection
+	// Migration" -> §"Initiating Path Validation": validate a new source
+	// only if the packet "is not a duplicate packet number, AND ... successfully
+	// decrypts"), so it must travel with the packet rather than being consumed
+	// at parse time.
+	Source net.Addr
 }
 
 // Message type constants from ssu2.rst

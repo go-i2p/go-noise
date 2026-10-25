@@ -261,9 +261,14 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		return nil
 	}
 
-	if h.shouldValidateMigratedAddress(udpAddr) {
-		h.initiatePathValidation(udpAddr)
-	}
+	// Carry the source address on the packet. Connection migration is NOT
+	// triggered here: ssu2.md §"Connection Migration" -> §"Initiating Path
+	// Validation" requires the packet to also "not [be] a duplicate packet
+	// number", which is only known after the receive-window dedup in
+	// processDataPackets. The trigger therefore happens in handleReadyDataPacket
+	// (post-dedup, post-decrypt). Handshake packets ignore Source: migration is
+	// "defined only for the data phase" and the handshake address is pinned.
+	packet.Source = udpAddr
 
 	h.updateActivity()
 	return packet
@@ -443,6 +448,16 @@ func (h *SSU2Conn) collectReadyDataPackets(packet *SSU2Packet) []*SSU2Packet {
 
 func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	h.validDataPacketsReceived.Add(1)
+
+	// Connection migration: this packet has now successfully decrypted
+	// (decryptInboundPayload) and passed the receive-window duplicate filter
+	// (collectReadyDataPackets), satisfying both spec preconditions in
+	// ssu2.md §"Connection Migration" -> §"Initiating Path Validation". Only
+	// then do we check for a changed source address and start validation.
+	if udpAddr := h.asUDPAddr(readyPacket.Source); udpAddr != nil &&
+		h.shouldValidateMigratedAddress(udpAddr) {
+		h.initiatePathValidation(udpAddr)
+	}
 
 	// Process the packet first, then decide about the ACK. ssu2.md §"ACK
 	// Frequency" allows exactly this: "A receiver may process multiple available
