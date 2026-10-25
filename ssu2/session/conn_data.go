@@ -155,8 +155,18 @@ func (h *SSU2Conn) sendTerminationReceived() {
 	binary.BigEndian.PutUint64(termData[0:8], h.validDataPacketsReceived.Load())
 	termData[8] = byte(TerminationReceived)
 
+	// §"Session Termination" -> §"Data phase": a data message carrying a
+	// Termination block "should also include an ACK block". §"Block Ordering
+	// Rules" requires Termination to be the last block except Padding, so the ACK
+	// goes first.
+	blocks := make([]*SSU2Block, 0, 2)
+	if ackBlock, ackErr := h.ackHandler.GenerateACK(); ackErr == nil && ackBlock != nil {
+		blocks = append(blocks, ackBlock)
+	}
+	blocks = append(blocks, &SSU2Block{Type: BlockTypeTermination, Data: termData})
+
 	packet := h.newDataPacket()
-	payload, err := SerializeBlocks([]*SSU2Block{{Type: BlockTypeTermination, Data: termData}})
+	payload, err := SerializeBlocks(blocks)
 	if err != nil {
 		flog("sendTerminationReceived", logger.Fields{"error": err.Error()}).Debug("could not serialize termination ack")
 		return

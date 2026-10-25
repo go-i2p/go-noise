@@ -652,6 +652,32 @@ func (l *SSU2Listener) handleSessionRequestTokenError(err error, packet *SSU2Pac
 	return nil
 }
 
+// verifyIntroKeyMessage opens an intro-key-sealed out-of-session payload with
+// this listener's own intro key, so the caller can be certain the message was
+// addressed to us and is unmodified.
+//
+// Returns nil when no intro key is configured (test mode, where peers send
+// plaintext headers and payloads) or when the payload opens successfully.
+func (l *SSU2Listener) verifyIntroKeyMessage(packet *SSU2Packet) error {
+	cfg := l.config.Load()
+	if cfg == nil || len(cfg.IntroKey) != HeaderKeySize {
+		return nil // header-protection/test mode: nothing to verify against
+	}
+	if len(packet.Header) < LongHeaderSize {
+		return oops.Errorf("intro-key message requires a %d-byte long header, got %d", LongHeaderSize, len(packet.Header))
+	}
+	if _, err := DecryptIntroKeyAEAD(
+		cfg.IntroKey,
+		packet.Header[:LongHeaderSize],
+		packet.Payload,
+		packet.MAC,
+		packet.PacketNumber,
+	); err != nil {
+		return oops.Wrapf(err, "Token Request AEAD validation failed")
+	}
+	return nil
+}
+
 // generateUniqueConnectionID generates a connection ID and verifies uniqueness
 // among active sessions. It checks the router (the single source of truth) and
 // retries a few times to increase the probability of finding a unique ID
@@ -1102,6 +1128,26 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	if err := validateParam(remoteAddr, "remote address", "NIL_ADDRESS", "ssu2_listener"); err != nil {
 		return err
 	}
+
+	// Validate the message's AEAD before responding.
+	//
+	// ssu2.md §"Packet Integrity": "Inbound packet handlers must always decrypt
+	// the ChaCha20 payload and validate the MAC before processing the message",
+	// and §"Token Request" -> §"Notes": "On most errors, including AEAD, or
+	// apparent replay Bob should halt further message processing and drop the
+	// message without responding." The §"Packet Integrity" exception that permits
+	// answering from header values alone is scoped to the Session Request, not
+	// the Token Request, so an unverified Token Request must not be answered.
+	//
+	// The Token Request payload is sealed with Bob's intro key (the receiver's
+	// own) as k, the 4-byte header packet number as n, and the 32-byte header
+	// before header encryption as ad (ssu2.md §"KDF for Token Request").
+	if err := l.verifyIntroKeyMessage(packet); err != nil {
+		flog("processTokenRequest", logger.Fields{"remote_addr": remoteAddr.String()}).
+			WithError(err).Debug("dropping Token Request that failed AEAD validation")
+		return errNoTokenPresent
+	}
+
 	addrKey := remoteAddr.String()
 
 	// Gate 1 (Strategy 3): first-sight tracker. A brand-new address is

@@ -17,6 +17,30 @@ import (
 // and FollowOnFragment blocks per ssu2.rst "First Fragment"/"Follow-on Fragment".
 //
 // For unfragmented messages, b is sent as-is in a BlockTypeI2NPMessage block.
+// i2npBlockBudget returns the data-phase payload budget in bytes for the peer's
+// address family, per ssu2.md §"MTU" -> §"Max I2NP Message Size": MTU - 60 for
+// IPv4 and MTU - 80 for IPv6. An unknown or dual-stack-wildcard peer falls back
+// to the smaller IPv6 budget, so the conservative case is never exceeded.
+func (h *SSU2Conn) i2npBlockBudget() int {
+	mtu := h.config.MTU
+	if h.peerIsIPv4() {
+		return mtu - 60
+	}
+	return mtu - 80
+}
+
+// peerIsIPv4 reports whether the session's remote address is an IPv4 (or
+// IPv4-mapped) address.
+func (h *SSU2Conn) peerIsIPv4() bool {
+	h.remoteAddrLock.RLock()
+	remote := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+	if remote == nil || remote.IP == nil {
+		return false
+	}
+	return remote.IP.To4() != nil
+}
+
 // Per the SSU2 spec, block type 3 (I2NP) data must already contain the 9-byte
 // I2NP short header: [I2NPType:1][MessageID:4][ShortExpiry:4] followed by the
 // message body. The caller is responsible for prepending this header.
@@ -31,9 +55,20 @@ func (h *SSU2Conn) Write(b []byte) (int, error) {
 	}
 
 	// Maximum block data that fits in a single Data packet.
-	// Available = MTU - IP(40) - UDP(8) - SSU2_header(16) - AEAD_MAC(16) - block_TLV(3)
+	//
+	// ssu2.md §"MTU" -> §"Max I2NP Message Size" gives a per-family budget:
+	//   "IPv4: ... Max message size is MTU - 28. Data phase header is 16 bytes
+	//    and MAC is 16 bytes, totaling 32 bytes. Payload size is MTU - 60.
+	//    Max data phase payload is 1440 for a max 1500 MTU. Max data phase
+	//    payload is 1220 for a min 1280 MTU."
+	//   "IPv6: ... Max message size is MTU - 48. ... Payload size is MTU - 80.
+	//    Max data phase payload is 1420 for a max 1500 MTU. Max data phase
+	//    payload is 1200 for a min 1280 MTU."
+	//
+	// The block TLV header is then subtracted from that payload budget. Using the
+	// IPv6 figure for IPv4 peers under-sizes every IPv4 message by 20 bytes.
 	const blockHdrSize = 3 // wire.minBlockHeaderSize: Type(1)+Length(2)
-	maxBlockData := h.config.MTU - 80 - blockHdrSize
+	maxBlockData := h.i2npBlockBudget() - blockHdrSize
 
 	if len(b) <= maxBlockData {
 		// Fits in a single I2NP message block

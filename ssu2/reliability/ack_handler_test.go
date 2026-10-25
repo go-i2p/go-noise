@@ -67,8 +67,10 @@ func TestACKHandler_ShouldSendACK(t *testing.T) {
 			want:    false,
 		},
 		{
+			// Below defaultACKThreshold (2), so only the delay can trigger a
+			// send; with the delay unelapsed the answer must be no.
 			name:             "delay not elapsed",
-			packets:          []uint32{1, 2, 3},
+			packets:          []uint32{1},
 			rtt:              100 * time.Millisecond,
 			timeSinceLastACK: 5 * time.Millisecond,
 			want:             false,
@@ -82,7 +84,7 @@ func TestACKHandler_ShouldSendACK(t *testing.T) {
 		},
 		{
 			name:    "many packets",
-			packets: make([]uint32, 15), // 15 packets triggers immediate ACK
+			packets: make([]uint32, 15), // well past the 2-packet ack threshold
 			rtt:     100 * time.Millisecond,
 			want:    true,
 		},
@@ -654,4 +656,62 @@ func TestACKHandler_BurstACKAmplification(t *testing.T) {
 
 	// Should still generate some ACKs (not zero)
 	assert.Greater(t, acksGenerated, 0, "Should generate at least some ACKs")
+}
+
+// TestACKHandler_DefaultThresholdIsTwo pins the spec's ACK frequency guidance.
+//
+// ssu2.md §"Congestion Control" -> §"ACK Frequency": "A receiver should send an
+// ACK block after receiving at least two ack-eliciting packets."
+func TestACKHandler_DefaultThresholdIsTwo(t *testing.T) {
+	handler := NewACKHandler()
+	assert.Equal(t, 2, handler.ackThreshold,
+		"default ack threshold must be the spec's two ack-eliciting packets")
+
+	// lastACKTime is set minACKInterval+1ms in the past so the amplification
+	// guard never masks the threshold being tested; rtt=time.Hour clamps the
+	// delay to its 150 ms cap, which that same elapsed time does not satisfy, so
+	// only the packet-count threshold can trigger a send here.
+	past := time.Now().Add(-minACKInterval - time.Millisecond)
+
+	// One packet: below the threshold, and the delay has not elapsed either.
+	handler.RecordReceived(1)
+	handler.lastACKTime = past
+	assert.False(t, handler.ShouldSendACK(time.Hour),
+		"a single ack-eliciting packet must not trigger an ACK")
+
+	// The second packet crosses the spec threshold.
+	handler.RecordReceived(2)
+	handler.lastACKTime = past
+	assert.True(t, handler.ShouldSendACK(time.Hour),
+		"the second ack-eliciting packet must trigger an ACK")
+}
+
+// TestIsAckEliciting pins the block classification from ssu2.md §"Generating
+// ACKs": "In-session data packets containing any block EXCEPT for the following
+// are ack-eliciting: ACK block / Address block / DateTime block / Padding block /
+// Termination block".
+func TestIsAckEliciting(t *testing.T) {
+	tests := []struct {
+		name   string
+		types  []uint8
+		want   bool
+		reason string
+	}{
+		{"ACK only", []uint8{BlockTypeACK}, false, "ACK block is excluded"},
+		{"Address only", []uint8{BlockTypeAddress}, false, "Address block is excluded"},
+		{"DateTime only", []uint8{BlockTypeDateTime}, false, "DateTime block is excluded"},
+		{"Padding only", []uint8{BlockTypePadding}, false, "Padding block is excluded"},
+		{"Termination only", []uint8{BlockTypeTermination}, false, "Termination block is excluded"},
+		{"DateTime plus padding", []uint8{BlockTypeDateTime, BlockTypePadding}, false, "all excluded"},
+		{"I2NP message", []uint8{BlockTypeI2NPMessage}, true, "not in the exclusion list"},
+		{"Options", []uint8{BlockTypeOptions}, true, "not in the exclusion list"},
+		{"Congestion", []uint8{BlockTypeCongestion}, true, "not in the exclusion list"},
+		{"ACK plus I2NP", []uint8{BlockTypeACK, BlockTypeI2NPMessage}, true, "one non-excluded block elicits"},
+		{"empty payload", nil, false, "nothing to elicit an ACK"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsAckEliciting(tt.types), tt.reason)
+		})
+	}
 }

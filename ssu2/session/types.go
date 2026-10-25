@@ -214,6 +214,10 @@ var (
 	DecodeCongestionBlock          = reliability.DecodeCongestionBlock
 	EncodeCongestionBlock          = reliability.EncodeCongestionBlock
 	SortDescDedupPackets           = reliability.SortDescDedupPackets
+
+	// IsAckEliciting classifies a data-phase payload per ssu2.md §"Congestion
+	// Control" -> §"Generating ACKs".
+	IsAckEliciting = reliability.IsAckEliciting
 )
 
 // ─── From ssu2/path ───────────────────────────────────────────────────────────

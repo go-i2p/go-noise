@@ -24,6 +24,20 @@ const (
 	// prevent resource exhaustion from malicious peers sending excessive ranges.
 	MaxNACKRangesPerACK = 200
 
+	// Data-phase block types that are NOT ack-eliciting, per ssu2.md
+	// §"Generating ACKs". Values match ssu2/wire.BlockType* and are repeated here
+	// to keep this package free of a wire dependency.
+	blockTypeDateTime    uint8 = 0
+	blockTypeACK         uint8 = 4
+	blockTypeAddress     uint8 = 13
+	blockTypeTermination uint8 = 6
+	blockTypePadding     uint8 = 254
+
+	// defaultACKThreshold is the number of ack-eliciting packets that triggers an
+	// ACK. ssu2.md §"ACK Frequency": "A receiver should send an ACK block after
+	// receiving at least two ack-eliciting packets."
+	defaultACKThreshold = 2
+
 	// minACKInterval is the minimum time between consecutive ACKs to prevent
 	// ACK amplification under bursty load. Even if ackThreshold is reached,
 	// we won't send another ACK until this interval has elapsed since the last one.
@@ -110,14 +124,40 @@ func NewACKHandler() *ACKHandler {
 	return &ACKHandler{
 		receivedPackets: make([]uint32, 0, 64),
 		pendingACKs:     make(map[uint32]*PendingACK),
-		ackDelay:        10 * time.Millisecond, // Default from ssu2.rst
-		ackThreshold:    10,
-		maxACKDataSize:  504, // ~half of 1280 MTU minus headers
+		ackDelay:        10 * time.Millisecond, // ssu2.md §"Recommended Constants": "ACK delay: max(10, min(rtt/6, 150)) ms"
+		// ssu2.md §"Congestion Control" -> §"ACK Frequency": "A receiver should
+		// send an ACK block after receiving at least two ack-eliciting packets."
+		ackThreshold:   defaultACKThreshold,
+		maxACKDataSize: 504, // ~half of 1280 MTU minus headers
 	}
 }
 
+// IsAckEliciting reports whether a decrypted data-phase payload contains any
+// block that elicits an ACK.
+//
+// ssu2.md §"Congestion Control" -> §"Generating ACKs":
+//
+//	"In-session data packets containing any block EXCEPT for the following are
+//	 ack-eliciting: ACK block / Address block / DateTime block / Padding block /
+//	 Termination block"
+//
+// Out-of-session packets (handshake messages, peer test 5-7) have their own
+// acknowledgement mechanisms and are not classified here.
+func IsAckEliciting(blockTypes []uint8) bool {
+	for _, t := range blockTypes {
+		switch t {
+		case BlockTypeACK, BlockTypeAddress, BlockTypeDateTime, BlockTypePadding, BlockTypeTermination:
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // RecordReceived marks a packet number as received and needing acknowledgment.
-// This should be called for every successfully processed inbound packet.
+// Callers must only record ack-eliciting packets (see IsAckEliciting); packets
+// that are not ack-eliciting are "only acknowledged when an ACK block is sent for
+// other reasons" (§Generating ACKs).
 //
 // Once receivedPackets reaches maxReceivedPackets, further packet numbers are
 // dropped (not appended) rather than growing the slice unboundedly; the

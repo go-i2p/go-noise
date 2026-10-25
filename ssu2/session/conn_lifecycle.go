@@ -51,9 +51,23 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			Data: termData,
 		}
 
+		// ssu2.md §"Session Termination" -> §"Data phase": the termination
+		// message "should also include an ACK block" (and §"#### Termination"
+		// notes "It is recommended that an ACK block be included with the
+		// Termination block"). Include one when there is anything to acknowledge,
+		// so the peer loses nothing by our session going away.
+		//
+		// Ordering follows §"Block Ordering Rules": "Termination, if present,
+		// must be the last block except for Padding", so the ACK precedes it.
+		blocks := make([]*SSU2Block, 0, 2)
+		if ackBlock, ackErr := h.ackHandler.GenerateACK(); ackErr == nil && ackBlock != nil {
+			blocks = append(blocks, ackBlock)
+		}
+		blocks = append(blocks, termBlock)
+
 		// Create Data packet with termination block
 		packet := h.newDataPacket()
-		payload, err := SerializeBlocks([]*SSU2Block{termBlock})
+		payload, err := SerializeBlocks(blocks)
 		socketDead := false // Track if socket is dead
 		if err == nil {
 			packet.Payload = payload

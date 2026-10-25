@@ -1618,3 +1618,58 @@ func TestWriteBlocks_BackwardCompat(t *testing.T) {
 	err = conn.WriteBlocks(blocks)
 	assert.NoError(t, err, "WriteBlocks backward-compat wrapper must not error")
 }
+
+// newMTUTestConn builds a conn sufficient for pure budget arithmetic.
+func newMTUTestConn(t *testing.T) *SSU2Conn {
+	t.Helper()
+	initConn, _, initPriv, _, _, respPub := setupConnPair(t)
+
+	config, err := NewSSU2Config(generateRandomHash(), true)
+	require.NoError(t, err)
+	config.RemoteRouterHash = hashPtr(generateRandomHash())
+	config.RemoteStaticKey = respPub
+	config.ConnectionID = 12345
+	config.MTU = 1500
+	config.DestroyTimeout = 0
+
+	conn, err := NewSSU2Conn(initConn, &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9001}, config, true, initPriv, respPub)
+	require.NoError(t, err)
+	// conn.Close() closes the underlying mock socket, so it must not also be
+	// registered as a separate cleanup (the mock panics on double-close).
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// TestI2NPBlockBudget_PerFamily verifies the data-phase payload budget matches
+// the per-family figures in ssu2.md §"MTU" -> §"Max I2NP Message Size":
+//
+//	IPv4: "Payload size is MTU - 60. Max data phase payload is 1440 for a max
+//	      1500 MTU. Max data phase payload is 1220 for a min 1280 MTU."
+//	IPv6: "Payload size is MTU - 80. Max data phase payload is 1420 for a max
+//	      1500 MTU. Max data phase payload is 1200 for a min 1280 MTU."
+func TestI2NPBlockBudget_PerFamily(t *testing.T) {
+	conn := newMTUTestConn(t)
+
+	cases := []struct {
+		name string
+		ip   string
+		mtu  int
+		want int
+	}{
+		{"ipv4 mtu 1500", "203.0.113.5", 1500, 1440},
+		{"ipv4 mtu 1280", "203.0.113.5", 1280, 1220},
+		{"ipv6 mtu 1500", "2001:db8::1", 1500, 1420},
+		{"ipv6 mtu 1280", "2001:db8::1", 1280, 1200},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn.config.MTU = tc.mtu
+			conn.remoteAddrLock.Lock()
+			conn.remoteAddr = &net.UDPAddr{IP: net.ParseIP(tc.ip), Port: 12345}
+			conn.remoteAddrLock.Unlock()
+
+			assert.Equal(t, tc.want, conn.i2npBlockBudget())
+		})
+	}
+}

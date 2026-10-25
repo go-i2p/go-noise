@@ -444,13 +444,39 @@ func (h *SSU2Conn) collectReadyDataPackets(packet *SSU2Packet) []*SSU2Packet {
 func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	h.validDataPacketsReceived.Add(1)
 
-	// Record for ACK only after window acceptance.
+	// Process the packet first, then decide about the ACK. ssu2.md §"ACK
+	// Frequency" allows exactly this: "A receiver may process multiple available
+	// packets before determining whether to send an ACK block in response."
+	// Processing also yields the block list, which the ack-eliciting
+	// classification below needs.
+	blocks := h.processDataPacket(readyPacket)
+
+	// Record for ACK only after window acceptance, and only for ack-eliciting
+	// packets.
 	//
-	// Every data-phase packet number is meaningful and must be ackable,
-	// including 0: ssu2.rst §"Packet Numbering" gives Bob packet 0 for the
-	// Session Confirmed ACK, so a peer's first Data packet can legitimately be
-	// PN 0 and must not be filtered out.
-	h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+	// ssu2.md §"Generating ACKs": "In-session data packets containing any block
+	// EXCEPT for the following are ack-eliciting: ACK block / Address block /
+	// DateTime block / Padding block / Termination block", and "Routers
+	// acknowledge all packets they receive and process. However, only
+	// ack-eliciting packets cause an ACK block to be sent within the maximum ack
+	// delay. Packets that are not ack-eliciting are only acknowledged when an ACK
+	// block is sent for other reasons."
+	//
+	// Non-ack-eliciting packets are therefore still carried by any ACK that goes
+	// out for another reason (GenerateACK acks the whole received set), but they
+	// do not by themselves push the receiver over the two-packet threshold.
+	//
+	// Every data-phase packet number is meaningful and must be ackable, including
+	// 0: §"Packet Numbering" gives Bob packet 0 for the Session Confirmed ACK.
+	var types []uint8
+	for _, b := range blocks {
+		if b != nil {
+			types = append(types, b.Type)
+		}
+	}
+	if len(blocks) == 0 || IsAckEliciting(types) {
+		h.ackHandler.RecordReceived(readyPacket.PacketNumber)
+	}
 
 	// Check if a delayed ACK should be sent immediately.
 	// If ShouldSendACK returns true (threshold met or delay elapsed), send ACK.
@@ -469,7 +495,6 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	if len(readyPacket.Header) > 13 && readyPacket.Header[13]&0x01 != 0 {
 		h.sendImmediateACK()
 	}
-	h.processDataPacket(readyPacket)
 }
 
 func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
@@ -504,13 +529,15 @@ func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
 	}
 }
 
-// processDataPacket handles a data-phase packet: parses blocks and retires ACKed packets.
-func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) {
+// processDataPacket handles a data-phase packet: parses blocks and retires ACKed
+// packets. It returns the parsed blocks (nil on failure) so the caller can apply
+// the ack-eliciting classification from ssu2.md §"Generating ACKs".
+func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) []*SSU2Block {
 	flog("processDataPacket", logger.Fields{"pkt_num": packet.PacketNumber, "payload_len": len(packet.Payload)}).Debug("processing")
 	blocks, err := h.dataHandler.ProcessDataPacket(packet)
 	if err != nil {
 		flog("processDataPacket", logger.Fields{"error": err.Error()}).Debug("ProcessDataPacket error")
-		return
+		return nil
 	}
 	flog("processDataPacket", logger.Fields{"num_blocks": len(blocks)}).Debug("processed blocks")
 
@@ -526,6 +553,7 @@ func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) {
 			h.pendingMutex.Unlock()
 		}
 	}
+	return blocks
 }
 
 // handlePeerNextNonce is the OnNextNonce callback wired in installCipherStates.
