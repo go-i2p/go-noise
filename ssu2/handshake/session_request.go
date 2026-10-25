@@ -111,11 +111,9 @@ func (h *HandshakeHandler) CreateSessionRequest(sourceConnID, destConnID uint64,
 	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message
 	// if the Destination and Source Connection IDs do not match the Source and
 	// Destination Connection IDs of the Session Request."
-	h.mu.Lock()
 	h.sentSourceConnID = sourceConnID
 	h.sentDestConnID = destConnID
 	h.sessionRequestSent = true
-	h.mu.Unlock()
 
 	return packet, nil
 }

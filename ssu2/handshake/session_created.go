@@ -1,6 +1,8 @@
 package handshake
 
 import (
+	"encoding/binary"
+
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -46,6 +48,34 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 
 	if len(packet.EphemeralKey) != 32 {
 		return oops.Errorf("SessionCreated missing ephemeral key")
+	}
+
+	// Verify the responder echoed our connection IDs back, swapped.
+	//
+	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message
+	// if the Destination and Source Connection IDs do not match the Source and
+	// Destination Connection IDs of the Session Request." The header field table
+	// defines Destination Connection ID as "The Source Connection ID received from
+	// Alice in Session Request" and Source Connection ID as "The Destination
+	// Connection ID received from Alice in Session Request".
+	//
+	// This is checked BEFORE MixHash(header): ssu2.md §"Duplicates and Error
+	// Handling" requires that "Duplicates of the three Noise handshake messages ...
+	// must be detected before MixHash() of the header", because once a corrupted or
+	// bogus message has been hashed the transcript cannot be recovered even with
+	// retransmission.
+	if h.sessionRequestSent && len(packet.Header) >= 24 {
+		gotDest := binary.BigEndian.Uint64(packet.Header[0:8])
+		gotSource := binary.BigEndian.Uint64(packet.Header[16:24])
+		if gotDest != h.sentSourceConnID || gotSource != h.sentDestConnID {
+			return oops.
+				Code("SESSION_CREATED_CONN_ID_MISMATCH").
+				In("ssu2").
+				With("dest_conn_id", gotDest).
+				With("source_conn_id", gotSource).
+				Errorf("SessionCreated connection IDs (%d,%d) do not match the Session Request IDs (%d,%d) swapped",
+					gotDest, gotSource, h.sentDestConnID, h.sentSourceConnID)
+		}
 	}
 
 	// MixHash(header) per ssu2.rst "KDF for Session Created and Session Confirmed part 1" — binds the header into
