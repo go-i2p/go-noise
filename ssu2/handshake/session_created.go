@@ -104,6 +104,12 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 		return oops.Wrapf(err, "failed to process SessionCreated handshake message")
 	}
 
+	// ssu2.md §"SessionCreated (Type 1)" -> §"Payload": "The minimum payload size is 8
+	// bytes."
+	if err := validatePayloadFloor(payload, MessageTypeSessionCreated); err != nil {
+		return err
+	}
+
 	// After processing message 2 (← e, ee), derive "SessionConfirmed" from
 	// the intermediate chainKey per ssu2.rst "KDF for Session Created and Session Confirmed part 1".
 	h.sessionConfirmedHeaderKey = deriveIntermediateHeaderKey(

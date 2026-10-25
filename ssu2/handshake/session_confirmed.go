@@ -63,6 +63,15 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 		return nil, oops.Wrapf(err, "failed to serialize SessionConfirmed blocks")
 	}
 
+	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "The minimum payload
+	// size is 8 bytes." A nil-RouterInfo convenience call serializes to zero
+	// bytes, so pad up to the floor with a Padding block (ignored by
+	// extractPeerRouterInfo).
+	payload, err = PadPayloadToMin(payload)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to pad SessionConfirmed payload")
+	}
+
 	// Build the 16-byte short header before encrypting so it can be
 	// mixed into the handshake hash per ssu2.rst "KDF for Session Confirmed part 2".
 	header := make([]byte, 16)
@@ -172,6 +181,13 @@ func (h *HandshakeHandler) finalizeSessionConfirmed(noiseMessage []byte) error {
 		return oops.Wrapf(err, "failed to process SessionConfirmed handshake message")
 	}
 
+	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "The minimum payload size is 8
+	// bytes. Since the RouterInfo block will be well more than that, the
+	// requirement is met with only that block."
+	if err := validatePayloadFloor(payload, MessageTypeSessionConfirmed); err != nil {
+		return err
+	}
+
 	h.updateCipherStates(cs1, cs2)
 
 	if ps := h.handshakeState.PeerStatic(); len(ps) > 0 {
@@ -247,6 +263,12 @@ func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte,
 	payload, err := SerializeBlocks(blocks)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to serialize SessionConfirmed blocks")
+	}
+	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "The minimum payload
+	// size is 8 bytes." Pad a nil-RouterInfo serialization up to the floor.
+	payload, err = PadPayloadToMin(payload)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to pad SessionConfirmed payload")
 	}
 	return payload, nil
 }

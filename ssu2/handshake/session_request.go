@@ -263,6 +263,13 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 		return nil, oops.Wrapf(err, "failed to process SessionRequest handshake message")
 	}
 
+	// ssu2.md §"SessionRequest (Type 0)" -> §"Payload": "The minimum payload size is 8
+	// bytes. Since the DateTime block is only 7 bytes, at least one other block
+	// must be present."
+	if err := validatePayloadFloor(payload, MessageTypeSessionRequest); err != nil {
+		return nil, err
+	}
+
 	// After processing message 1 (→ e, es), derive "SessCreateHeader" from
 	// the intermediate chainKey per ssu2.rst "KDF for Session Request".
 	h.sessCreateHeaderKey = deriveIntermediateHeaderKey(

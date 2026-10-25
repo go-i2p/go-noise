@@ -51,6 +51,7 @@ const (
 	ShortHeaderSize             = wire.ShortHeaderSize
 	MACSize                     = wire.MACSize
 	MaxPacketNumber             = wire.MaxPacketNumber
+	MinPayloadSize              = wire.MinPayloadSize
 )
 
 // Termination reason aliases
@@ -67,4 +68,5 @@ var (
 	DecodeRouterInfoBlock = wire.DecodeRouterInfoBlock
 	EncodeAddressBlock    = wire.EncodeAddressBlock
 	DecodeAddressBlock    = wire.DecodeAddressBlock
+	PadPayloadToMin       = wire.PadPayloadToMin
 )

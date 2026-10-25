@@ -602,6 +602,18 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 		return nil, oops.Wrapf(err, "failed to serialize handshake blocks")
 	}
 
+	// ssu2.md §"SessionRequest (Type 0)" / §"SessionCreated (Type 1)" ->
+	// §"Payload": "The minimum payload size is 8 bytes." The standard block sets
+	// already clear the floor (DateTime + Options >= 22 bytes), so PadPayloadToMin
+	// is a no-op for them; it only appends a Padding block if a caller supplies an
+	// unusually small block list. The floor is a sender obligation: header
+	// protection extracts its IV from the last 24 bytes of the packet, so a
+	// sub-floor message would be undecryptable by a conformant receiver.
+	payload, err = PadPayloadToMin(payload)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to pad handshake payload to minimum size")
+	}
+
 	// Build the 32-byte long header per ssu2.rst "Packet Header":
 	// dest_conn_id(0-7), pkt_num(8-11), type(12), ver(13), id(14),
 	// flag(15), src_conn_id(16-23), token(24-31).
