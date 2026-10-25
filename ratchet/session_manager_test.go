@@ -503,8 +503,10 @@ func TestCreateSessionInitializesRatchets(t *testing.T) {
 	assert.NotNil(t, session.RecvSymmetricRatchet, "RecvSymmetricRatchet should be initialized")
 	assert.NotNil(t, session.RecvTagRatchet, "RecvTagRatchet should be initialized")
 	assert.Equal(t, pubKey, session.RemotePublicKey)
-	assert.Equal(t, uint32(1), session.MessageCounter, "MessageCounter starts at 1 (msg 0 is New Session)")
-	assert.Equal(t, uint32(1), session.recvWindowBase, "recvWindowBase starts at 1 (msg 0 is New Session)")
+	// ES counters are 0-based: ecies.rst "Existing Session Inputs" says the
+	// nonce "Starts at 0", and the NS/NSR use their own separate tagsets.
+	assert.Equal(t, uint32(0), session.MessageCounter, "MessageCounter starts at 0 (first ES nonce)")
+	assert.Equal(t, uint32(0), session.recvWindowBase, "recvWindowBase starts at 0 (first ES counter)")
 }
 
 func TestCreateSession_DirectionalKeyIsolation(t *testing.T) {
@@ -2268,8 +2270,9 @@ func TestTagCounterIndex_PopulatedOnSessionCreation(t *testing.T) {
 		"tag window should be fully populated")
 }
 
-// TestTagCounterIndex_CountersStartAtOne verifies that tag counters begin at 1
-// (matching recvWindowBase) since counter 0 is reserved for the NS handshake.
+// TestTagCounterIndex_CountersStartAtOne verifies that tag counters begin at 0,
+// matching recvWindowBase. The NS handshake does not consume an ES counter: it
+// uses the separate "SessionReplyTags" tagset (ecies.rst "KDF for Reply TagSet").
 func TestTagCounterIndex_CountersStartAtOne(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
 
@@ -2284,7 +2287,7 @@ func TestTagCounterIndex_CountersStartAtOne(t *testing.T) {
 		counters = append(counters, c)
 	}
 
-	// All counters should be sequential starting from 1.
+	// All counters should be sequential starting from 0.
 	assert.Equal(t, tagWindowSize, len(counters))
 	minCounter := uint32(0xFFFFFFFF)
 	for _, c := range counters {
@@ -2292,8 +2295,8 @@ func TestTagCounterIndex_CountersStartAtOne(t *testing.T) {
 			minCounter = c
 		}
 	}
-	assert.Equal(t, uint32(1), minCounter,
-		"minimum counter should be 1 (recvWindowBase)")
+	assert.Equal(t, uint32(0), minCounter,
+		"minimum counter should be 0 (recvWindowBase)")
 }
 
 // TestTagCounterIndex_O1DecryptPath verifies that ES messages are decrypted

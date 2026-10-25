@@ -120,15 +120,18 @@ func TestReceiveWindow_BaseAdvances(t *testing.T) {
 	receiver.mu.RUnlock()
 	require.NotNil(t, session, "session must exist after NS")
 
-	// Deliver ES messages 1, 2, 3 in order; base should advance after each.
-	assertRecvWindowBase(t, session, uint32(1), "initial recvWindowBase should be 1")
+	// Deliver the ES messages in order; base should advance after each.
+	// ES counters are 0-based (ecies.rst "Existing Session Inputs": the nonce
+	// "Starts at 0"; Java RatchetTagSet _lastKey starts at -1 then ++).
+	assertRecvWindowBase(t, session, uint32(0), "initial recvWindowBase should be 0")
 
 	for i := 1; i < n; i++ {
 		_, _, _, decErr := receiver.DecryptGarlicMessage(encrypted[i])
 		require.NoError(t, decErr, "decrypt message %d", i)
 	}
 
-	assertRecvWindowBase(t, session, uint32(n), "recvWindowBase should be %d after %d ES messages", n, n-1)
+	// encrypted[1..n-1] carry ES counters 0..n-2, so the base lands on n-1.
+	assertRecvWindowBase(t, session, uint32(n-1), "recvWindowBase should be %d after %d ES messages", n-1, n-1)
 }
 
 // TestReceiveWindow_OutOfOrder_BaseAdvancesOnlyAfterGap verifies that the
@@ -147,23 +150,24 @@ func TestReceiveWindow_OutOfOrder_BaseStaysOnGap(t *testing.T) {
 	receiver.mu.RUnlock()
 	require.NotNil(t, session)
 
-	// Deliver message 3 (ES counter 3) — skipping counters 1 and 2.
+	// Deliver encrypted[3] (ES counter 2) — skipping counters 0 and 1.
 	_, _, _, err := receiver.DecryptGarlicMessage(encrypted[3])
 	require.NoError(t, err)
 
-	assertRecvWindowBase(t, session, uint32(1), "base must not advance past pending gap")
+	assertRecvWindowBase(t, session, uint32(0), "base must not advance past pending gap")
 
-	// Now deliver counter 1.
+	// Now deliver counter 0.
 	_, _, _, err = receiver.DecryptGarlicMessage(encrypted[1])
 	require.NoError(t, err)
 
-	assertRecvWindowBase(t, session, uint32(2), "base should advance to 2 after filling counter 1")
+	assertRecvWindowBase(t, session, uint32(1), "base should advance to 1 after filling counter 0")
 
-	// Deliver counter 2 to plug the gap fully.
+	// Deliver counter 1 to plug the gap fully; counter 2 was already consumed,
+	// so the base runs on to 3.
 	_, _, _, err = receiver.DecryptGarlicMessage(encrypted[2])
 	require.NoError(t, err)
 
-	assertRecvWindowBase(t, session, uint32(4), "base should reach 4 after all gaps filled")
+	assertRecvWindowBase(t, session, uint32(3), "base should reach 3 after all gaps filled")
 }
 
 // TestReceiveWindow_RandomOrder tests correctness with a pseudo-random delivery
@@ -240,7 +244,7 @@ func TestReceiveWindow_KeyCachePreFilled(t *testing.T) {
 
 	assert.Equal(t, int(recvWindowSize), cacheLen,
 		"cache should contain exactly recvWindowSize entries")
-	assert.Equal(t, uint32(1)+recvWindowSize, fillMark,
+	assert.Equal(t, uint32(0)+recvWindowSize, fillMark,
 		"fillMark should be recvWindowBase+recvWindowSize after first fill")
 }
 
@@ -259,8 +263,8 @@ func TestRecvWindowReset_AfterNSR(t *testing.T) {
 	cacheNil := senderSess.recvKeyCache == nil
 	senderSess.mu.Unlock()
 
-	assert.Equal(t, uint32(1), base, "recvWindowBase resets to 1 after NSR")
-	assert.Equal(t, uint32(1), fillMark, "recvFillMark resets to 1 after NSR")
+	assert.Equal(t, uint32(0), base, "recvWindowBase resets to 0 after NSR (0-based ES counters)")
+	assert.Equal(t, uint32(0), fillMark, "recvFillMark resets to 0 after NSR (0-based ES counters)")
 	assert.False(t, cacheNil, "recvKeyCache must not be nil after NSR reset")
 
 	// Verify ES messages still work after NSR.
