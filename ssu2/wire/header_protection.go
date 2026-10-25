@@ -154,10 +154,101 @@ func (hp *HeaderProtector) EncryptHeader(packet []byte) error {
 	return hp.applyXORMasks(packet)
 }
 
+// DecryptHeaderForPacket decrypts the header of a received packet whose
+// message family is NOT known in advance, deriving the extension span from the
+// packet itself rather than from the protector's configured header type.
+//
+// This is what the spec prescribes for a receiver (§"Header Validation"):
+//
+//	"Decrypting the next 8 bytes of the header will then reveal the message
+//	 type and be able to determine if it is a short or long header."
+//
+// The type byte lives at offset 12, which the second XOR mask covers, so the
+// family (and therefore how much of the header the ChaCha20 extension protects)
+// is only knowable AFTER removing the masks. Using a pre-configured type here
+// would apply the wrong span: for example a protector built for Session Request
+// would ChaCha20-decrypt bytes 16-63 of a Token Request / Peer Test / Hole Punch
+// (which per §"Header Encryption KDF" only obfuscate bytes 16-31), corrupting
+// any such packet longer than 64 bytes.
+//
+// Order matches DecryptHeader: masks first, then extension.
+func (hp *HeaderProtector) DecryptHeaderForPacket(packet []byte) error {
+	flog("DecryptHeaderForPacket", logger.Fields{"packetLen": len(packet)}).Debug("Decrypting header with type-derived extension span")
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	if err := hp.validatePacketSize(packet); err != nil {
+		return err
+	}
+
+	// Step 1: Remove XOR masks from bytes 0-15. This reveals the type byte.
+	if err := hp.applyXORMasks(packet); err != nil {
+		return err
+	}
+
+	// Step 2: Decrypt the long-header extension over the span the type selects.
+	span, ok := headerExtensionSpan(packet)
+	if !ok {
+		return nil
+	}
+	if err := hp.chaChaOverHeaderExtension(packet, span); err != nil {
+		return oops.Wrapf(err, "failed to decrypt long header extension")
+	}
+	return nil
+}
+
+// headerExtensionSpan returns the byte span of the long-header extension that
+// ChaCha20 protects for the packet's message type, per §"Header Encryption
+// KDF":
+//
+//	"For Session Request and Session Created only: packet[16:63] = ChaCha20..."
+//	"For Retry, Token Request, Peer Test, and Hole Punch only: packet[16:31]"
+//
+// Short-header types (Session Confirmed, Data) have no extension. The type byte
+// must already be de-masked. Returns ok=false when the packet is too short for
+// the span its type implies, in which case there is nothing valid to decrypt.
+func headerExtensionSpan(packet []byte) (span int, ok bool) {
+	if len(packet) < ShortHeaderSize {
+		return 0, false
+	}
+	switch packet[12] {
+	case MessageTypeSessionRequest, MessageTypeSessionCreated:
+		// These carry a 32-byte ephemeral key after the 32-byte header.
+		if len(packet) >= LongHeaderSize+EphemeralKeySize {
+			return LongHeaderSize + EphemeralKeySize, true
+		}
+		return 0, false
+	case MessageTypeRetry, MessageTypeTokenRequest, MessageTypePeerTest, MessageTypeHolePunch:
+		if len(packet) >= LongHeaderSize {
+			return LongHeaderSize, true
+		}
+		return 0, false
+	default:
+		// Short header (SessionConfirmed=2, Data=6) or unknown type: no extension.
+		return 0, false
+	}
+}
+
+// chaChaOverHeaderExtension applies the zero-nonce ChaCha20 transform to
+// packet[16:span], which is its own inverse, so it serves both directions.
+func (hp *HeaderProtector) chaChaOverHeaderExtension(packet []byte, span int) error {
+	nonce := make([]byte, 12) // all-zero nonce; counter set to 1 by StreamEncrypt
+	out, err := chacha20.StreamEncrypt(hp.kHeader2, nonce, packet[16:span])
+	if err != nil {
+		return oops.Wrapf(err, "failed to initialize ChaCha20 for header extension")
+	}
+	copy(packet[16:span], out)
+	return nil
+}
+
 // DecryptHeader decrypts the header bytes of an SSU2 packet in place.
 // Per SSU2 spec, decryption order: XOR masks first, then ChaCha20 extension.
 // Reversing this order would use masked bytes as ChaCha input and produce an
 // invalid long-header extension.
+//
+// Prefer DecryptHeaderForPacket when the received packet's type is not already
+// known: this method trusts hp.headerType, which is only correct when the
+// protector was built for exactly the type the sender used.
 func (hp *HeaderProtector) DecryptHeader(packet []byte) error {
 	flog("DecryptHeader", logger.Fields{"packetLen": len(packet)}).Debug("Decrypting header")
 	hp.mu.Lock()

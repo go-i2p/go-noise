@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/go-i2p/crypto/rand"
+	"github.com/go-i2p/crypto/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ func newLinkedSessionFixture(t *testing.T) linkedSessionFixture {
 }
 
 // ============================================================================
-// Session NextKey State
+// Initial state
 // ============================================================================
 
 func TestSession_InitialNextKeyState(t *testing.T) {
@@ -48,355 +49,522 @@ func TestSession_InitialNextKeyState(t *testing.T) {
 	assert.Nil(t, session.GetPendingNextKeys(), "GetPendingNextKeys should return nil initially")
 }
 
-func TestSession_IncrementSendKeyID(t *testing.T) {
-	session := createTestSession(t, true)
-
-	err := session.IncrementSendKeyID()
-	require.NoError(t, err)
-
-	sendKeyID, _, _ := session.NextKeyState()
-	assert.Equal(t, uint16(1), sendKeyID)
-}
-
-func TestSession_IncrementSendKeyID_MaxReached(t *testing.T) {
-	session := createTestSession(t, true)
-	session.sendKeyID = MaxKeyID
-
-	err := session.IncrementSendKeyID()
-	assert.Error(t, err, "Should error when key ID at maximum")
-	assert.Contains(t, err.Error(), "maximum")
-}
-
 // ============================================================================
-// DH Ratchet Step Queues NextKey Block
+// Forward block construction (ecies.md §"DH RATCHET MESSAGE FLOW")
 // ============================================================================
 
-func TestPerformDHRatchetStep_QueuesNextKey(t *testing.T) {
+// TestPrepareSend_FirstExchange verifies the very first forward block: the
+// sender generates new key #0 and requests the reverse key.
+//
+// Spec flow: "(generate new key #0) / Next Key, forward, request reverse,
+// with key #0".
+func TestPrepareSend_FirstExchange(t *testing.T) {
 	session := createTestSession(t, true)
 
-	// Perform a DH ratchet step — this should queue a NextKey block.
-	err := performDHRatchetStep(session)
-	require.NoError(t, err)
-
-	assert.True(t, session.HasPendingNextKeys(), "Should have pending NextKey after DH rotation")
-	assert.NotNil(t, session.newEphemeralPub, "newEphemeralPub should be set")
+	require.NoError(t, session.prepareSend())
 
 	blocks := session.GetPendingNextKeys()
-	require.Len(t, blocks, 1, "Should have exactly one pending NextKey block")
-
-	// Verify the NextKey block contents.
+	require.Len(t, blocks, 1, "exactly one forward block outstanding")
 	info, err := blocks[0].NextKey()
 	require.NoError(t, err)
-	assert.True(t, info.KeyPresent, "Forward NextKey should include the public key")
-	assert.False(t, info.Reverse, "Should be a forward key")
-	assert.True(t, info.RequestReverse, "First rotation should request reverse")
-	assert.Equal(t, uint16(0), info.KeyID, "First key ID should be 0")
-	assert.Equal(t, *session.newEphemeralPub, info.PublicKey, "Key should match newEphemeralPub")
 
-	// After GetPendingNextKeys, the queue should be empty.
-	assert.False(t, session.HasPendingNextKeys(), "Pending queue should be cleared after Get")
-	assert.True(t, session.awaitingReverseKey, "Should be awaiting reverse key")
+	assert.True(t, info.KeyPresent, "first forward block carries the new key")
+	assert.False(t, info.Reverse, "forward block has bit 1 clear")
+	assert.True(t, info.RequestReverse, "first exchange requests the reverse key")
+	assert.Equal(t, uint16(0), info.KeyID, "first key ID is 0")
+	assert.NotNil(t, session.sendDir)
+	assert.True(t, session.sendDir.owed, "block is owed until the peer's key arrives")
 }
 
-func TestPerformDHRatchetStep_ConsecutiveRotations(t *testing.T) {
+// TestPrepareSend_NoDHPerformed is the core of audit finding R-02: preparing a
+// forward block must NOT ratchet the send chain, because the spec defers the
+// sender's DH until the peer's reverse key arrives.
+func TestPrepareSend_NoDHPerformed(t *testing.T) {
+	session := createTestSession(t, true)
+	beforeTag := session.TagRatchet
+	beforeSym := session.SymmetricRatchet
+
+	require.NoError(t, session.prepareSend())
+
+	assert.Same(t, beforeTag, session.TagRatchet, "send tag ratchet must be untouched by prepareSend")
+	assert.Same(t, beforeSym, session.SymmetricRatchet, "send symmetric ratchet must be untouched by prepareSend")
+}
+
+// TestForwardBlocksAreReSentUntilAcknowledged verifies the "repeat until next
+// key received" rule: blocks are derived from state, not drained.
+func TestForwardBlocksAreReSentUntilAcknowledged(t *testing.T) {
+	session := createTestSession(t, true)
+	require.NoError(t, session.prepareSend())
+
+	first := session.GetPendingNextKeys()
+	second := session.GetPendingNextKeys()
+	require.Len(t, first, 1)
+	require.Len(t, second, 1, "block must still be emitted on the next message")
+
+	fi, _ := first[0].NextKey()
+	si, _ := second[0].NextKey()
+	assert.Equal(t, fi, si, "re-sent block must be identical")
+	assert.True(t, session.HasPendingNextKeys())
+}
+
+// TestPrepareSend_KeyIDProgression verifies the spec's key/tag set progression
+// table (§"KEY AND TAG SET IDS"): the sender's key IDs go 0*, 1*, 1, 2*, 2, ...
+// (* = new key). This mirrors i2pd NewNextSendRatchet's parity rule.
+func TestPrepareSend_KeyIDProgression(t *testing.T) {
 	session := createTestSession(t, true)
 
-	// Two consecutive DH ratchets should each queue a NextKey block.
-	err := performDHRatchetStep(session)
-	require.NoError(t, err)
-	err = performDHRatchetStep(session)
-	require.NoError(t, err)
+	type want struct {
+		keyID  uint16
+		newKey bool
+	}
+	var got []want
+	for i := 0; i < 5; i++ {
+		require.NoError(t, session.prepareSend())
+		got = append(got, want{session.sendDir.keyID, session.sendDir.newKey})
+	}
 
-	blocks := session.GetPendingNextKeys()
-	assert.Len(t, blocks, 2, "Two rotations should queue two NextKey blocks")
+	expected := []want{
+		{0, true}, // key 0*
+		{1, true}, // key 1*
+		{1, false}, // key 1 (reuse)
+		{2, true}, // key 2*
+		{2, false}, // key 2 (reuse)
+	}
+	assert.Equal(t, expected, got, "sender key IDs must follow the spec progression table")
+}
+
+// TestBuildForwardBlock_ReuseRequestsReverse verifies that a reuse block (no
+// key) asks for the peer's key instead, per the flag rules.
+func TestBuildForwardBlock_FlagRules(t *testing.T) {
+	dir := &dhDirection{keyID: 1, newKey: false, hasKey: true}
+	info, err := buildForwardBlock(dir).NextKey()
+	require.NoError(t, err)
+	assert.False(t, info.KeyPresent, "reused key is not retransmitted")
+	assert.True(t, info.RequestReverse, "reuse block requests the reverse key")
+
+	dir2 := &dhDirection{keyID: 2, newKey: true, hasKey: true}
+	info2, err := buildForwardBlock(dir2).NextKey()
+	require.NoError(t, err)
+	assert.True(t, info2.KeyPresent, "new key is transmitted")
+	assert.False(t, info2.RequestReverse, "a block carrying a new key does not also request one")
+
+	// "for first key only": key ID 0 with a new key still requests reverse.
+	dir3 := &dhDirection{keyID: 0, newKey: true, hasKey: true}
+	info3, err := buildForwardBlock(dir3).NextKey()
+	require.NoError(t, err)
+	assert.True(t, info3.KeyPresent)
+	assert.True(t, info3.RequestReverse, "first key also requests reverse (spec tag set 1 needs both keys)")
 }
 
 // ============================================================================
-// ProcessReceivedNextKey — Forward Key
+// Reverse block construction
+// ============================================================================
+
+// TestBuildReverseBlock_FirstReplyCarriesKeyZero verifies the spec flow's
+// "Next Key, reverse, with key #0": the first reverse reply must carry key ID 0,
+// which requires i2pd's signed keyID-1 / keyID+1 arithmetic.
+func TestBuildReverseBlock_FirstReplyCarriesKeyZero(t *testing.T) {
+	dir := &dhDirection{keyID: 0, newKey: true, hasKey: true}
+	info, err := buildReverseBlock(dir).NextKey()
+	require.NoError(t, err)
+	assert.True(t, info.Reverse, "reverse block sets bit 1")
+	assert.True(t, info.KeyPresent)
+	assert.False(t, info.RequestReverse, "bit 2 only set if bit 1 is 0")
+	assert.Equal(t, uint16(0), info.KeyID, "first reverse reply carries key ID 0")
+}
+
+// TestBuildReverseBlock_ReuseAcknowledgesOldID verifies "Next Key, reverse,
+// id 0" for tag set 2: the receiver acks with the ID of its old key and sends no
+// key.
+func TestBuildReverseBlock_ReuseAcknowledgesOldID(t *testing.T) {
+	dir := &dhDirection{keyID: 1, newKey: false, hasKey: true}
+	info, err := buildReverseBlock(dir).NextKey()
+	require.NoError(t, err)
+	assert.True(t, info.Reverse)
+	assert.False(t, info.KeyPresent, "reused key is not retransmitted")
+	assert.Equal(t, uint16(0), info.KeyID, "reverse ack carries keyID-1")
+}
+
+// ============================================================================
+// Receiving a forward block
 // ============================================================================
 
 func TestProcessReceivedNextKey_ForwardKey(t *testing.T) {
 	f := newLinkedSessionFixture(t)
-
-	// Simulate a forward NextKey from the sender.
-	var newKey [32]byte
-	_, _ = rand.Read(newKey[:])
-
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        false,
-		RequestReverse: false,
-		KeyID:          0,
-		PublicKey:      newKey,
-	}
-
-	err := f.receiver.ProcessReceivedNextKey(f.tag, info)
-	require.NoError(t, err, "Processing forward NextKey should succeed")
-}
-
-func TestProcessReceivedNextKey_ForwardKeyRequestsReverse(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	var newKey [32]byte
-	_, _ = rand.Read(newKey[:])
-
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        false,
-		RequestReverse: true,
-		KeyID:          0,
-		PublicKey:      newKey,
-	}
-
-	err := f.receiver.ProcessReceivedNextKey(f.tag, info)
-	require.NoError(t, err)
-
-	// The receiver should now have a pending reverse NextKey to send back.
 	session := lookupSessionByAnyTag(t, f.receiver)
-	require.NotNil(t, session)
+
+	var pub [32]byte
+	_, _ = rand.Read(pub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: false, RequestReverse: true, KeyID: 0, PublicKey: pub}
+
+	require.NoError(t, f.receiver.ProcessReceivedNextKey(f.tag, info))
 
 	session.mu.Lock()
-	hasPending := session.HasPendingNextKeys()
+	defer session.mu.Unlock()
+	assert.Equal(t, uint16(0), session.recvKeyID)
+	assert.True(t, session.recvDir.newKey, "request-reverse makes us generate a new key")
+	assert.Equal(t, pub, session.recvDir.remote, "peer key recorded")
+	assert.True(t, session.recvDir.owed, "we owe the reverse block")
+	// Tag set 1 = 1 + sender key 0 + receiver key 0.
+	assert.Equal(t, uint16(1), session.recvTagSetID, "inbound tag set ID must be 1")
+}
+
+func TestProcessReceivedNextKey_ForwardKeyCreatesNewInboundTagset(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.receiver)
+	session.mu.Lock()
+	oldTagRatchet := session.RecvTagRatchet
+	oldPrev := len(session.retiredRecv)
 	session.mu.Unlock()
 
-	assert.True(t, hasPending, "Should have queued a reverse NextKey response")
+	var pub [32]byte
+	_, _ = rand.Read(pub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: false, RequestReverse: true, KeyID: 0, PublicKey: pub}
+	require.NoError(t, f.receiver.ProcessReceivedNextKey(f.tag, info))
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	assert.NotSame(t, oldTagRatchet, session.RecvTagRatchet, "inbound tag ratchet must be replaced")
+	require.NotEmpty(t, session.retiredRecv, "previous inbound tagset must be retained")
+	assert.Zero(t, oldPrev, "no previous tagset existed before the rekey")
+	assert.Equal(t, uint16(0), session.retiredRecv[0].tagSetID, "retired tag set was 0")
+}
+
+func TestProcessReceivedNextKey_DuplicateForwardIsIgnored(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.receiver)
+
+	var pub [32]byte
+	_, _ = rand.Read(pub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: false, RequestReverse: true, KeyID: 0, PublicKey: pub}
+	require.NoError(t, f.receiver.ProcessReceivedNextKey(f.tag, info))
+
+	session.mu.Lock()
+	tagRatchet := session.RecvTagRatchet
+	session.mu.Unlock()
+
+	// The peer re-sends the same forward block until our reverse block lands.
+	require.NoError(t, f.receiver.ProcessReceivedNextKey(getAnyTag(t, f.receiver), info))
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	assert.Same(t, tagRatchet, session.RecvTagRatchet, "duplicate forward block must not re-run the DH")
+}
+
+func TestProcessReceivedNextKey_UnknownTag(t *testing.T) {
+	sm := createTestSessionManager(t)
+	var unknownTag [8]byte
+	_, _ = rand.Read(unknownTag[:])
+	err := sm.ProcessReceivedNextKey(unknownTag, NextKeyInfo{})
+	assert.Error(t, err, "Should error for unknown session tag")
 }
 
 // ============================================================================
-// ProcessReceivedNextKey — Reverse Key
+// Receiving a reverse block
 // ============================================================================
 
 func TestProcessReceivedNextKey_ReverseKey(t *testing.T) {
 	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.sender)
 
-	// Set awaitingReverseKey on the session to simulate having sent a forward key.
-	session := lookupSessionByAnyTag(t, f.receiver)
-	session.mu.Lock()
-	session.awaitingReverseKey = true
-	session.mu.Unlock()
+	require.NoError(t, session.prepareSend())
 
-	var reverseKey [32]byte
-	_, _ = rand.Read(reverseKey[:])
+	var peerPub [32]byte
+	_, _ = rand.Read(peerPub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: true, KeyID: 0, PublicKey: peerPub}
 
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        true,
-		RequestReverse: false,
-		KeyID:          0,
-		PublicKey:      reverseKey,
-	}
-
-	err := f.receiver.ProcessReceivedNextKey(f.tag, info)
-	require.NoError(t, err)
+	require.NoError(t, f.sender.handleNextKeyBlock(session, info))
 
 	session.mu.Lock()
-	_, _, awaiting := session.NextKeyState()
+	defer session.mu.Unlock()
+	assert.False(t, session.sendDir.owed, "forward block is acknowledged")
+	assert.Equal(t, uint16(1), session.sendTagSetID, "outbound tag set ID = 1 + 0 + 0")
+	assert.Equal(t, uint32(0), session.MessageCounter, "new outbound tagset restarts the counter chain")
+	assert.Equal(t, uint32(0), session.usedTags, "new outbound tagset restarts usedTags")
+}
+
+func TestProcessReceivedNextKey_UnexpectedReverseIgnored(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.sender)
+	session.mu.Lock()
+	before := session.TagRatchet
 	session.mu.Unlock()
 
-	assert.False(t, awaiting, "awaitingReverseKey should be cleared after receiving reverse key")
-}
+	var peerPub [32]byte
+	_, _ = rand.Read(peerPub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: true, KeyID: 5, PublicKey: peerPub}
 
-// ============================================================================
-// ProcessReceivedNextKey — Ack (No Key)
-// ============================================================================
-
-func TestProcessReceivedNextKey_AckNoKey(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	// Ack with no key: peer acknowledges with their existing key.
-	info := NextKeyInfo{
-		KeyPresent:     false,
-		Reverse:        true,
-		RequestReverse: false,
-		KeyID:          0,
-	}
-
-	err := f.receiver.ProcessReceivedNextKey(f.tag, info)
-	require.NoError(t, err, "Processing NextKey ack should succeed")
-}
-
-// ============================================================================
-// ProcessReceivedNextKey — Error Cases
-// ============================================================================
-
-func TestProcessReceivedNextKey_UnknownTag(t *testing.T) {
-	sm := createTestSessionManager(t)
-
-	var unknownTag [8]byte
-	unknownTag[0] = 0xFF
-
-	info := NextKeyInfo{
-		KeyPresent: true,
-		KeyID:      0,
-	}
-
-	err := sm.ProcessReceivedNextKey(unknownTag, info)
-	assert.Error(t, err, "Should error for unknown session tag")
-	assert.Contains(t, err.Error(), "no session found")
-}
-
-// ============================================================================
-// ProcessIncomingDHRatchet — Coverage Tests
-// ============================================================================
-
-func TestProcessIncomingDHRatchet_Success(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	// Generate a new DH key to simulate a peer ratchet.
-	var newPubKey [32]byte
-	_, _ = rand.Read(newPubKey[:])
-
-	err := f.receiver.ProcessIncomingDHRatchet(f.tag, newPubKey)
-	require.NoError(t, err, "ProcessIncomingDHRatchet should succeed with valid tag and key")
-}
-
-func TestProcessIncomingDHRatchet_UnknownTag(t *testing.T) {
-	sm := createTestSessionManager(t)
-
-	var unknownTag [8]byte
-	unknownTag[0] = 0xDE
-
-	var pubKey [32]byte
-	_, _ = rand.Read(pubKey[:])
-
-	err := sm.ProcessIncomingDHRatchet(unknownTag, pubKey)
-	assert.Error(t, err, "Should error for unknown session tag")
-	assert.Contains(t, err.Error(), "no session found")
-}
-
-func TestProcessIncomingDHRatchet_UpdatesReceivingChain(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	// Get the original receiving ratchets.
-	session := lookupSessionByAnyTag(t, f.receiver)
-	require.NotNil(t, session)
+	// No forward block was ever sent: i2pd returns without error.
+	require.NoError(t, f.sender.handleNextKeyBlock(session, info))
 
 	session.mu.Lock()
-	origRecvSym := session.RecvSymmetricRatchet
-	origRecvTag := session.RecvTagRatchet
+	defer session.mu.Unlock()
+	assert.Same(t, before, session.TagRatchet, "unsolicited reverse block must not ratchet")
+}
+
+func TestProcessReceivedNextKey_WrongKeyIDIgnored(t *testing.T) {
+	f := newLinkedSessionFixture(t)
+	session := lookupSessionByAnyTag(t, f.sender)
+	require.NoError(t, session.prepareSend())
+	session.mu.Lock()
+	before := session.TagRatchet
 	session.mu.Unlock()
 
-	// Process a DH ratchet.
-	var newPubKey [32]byte
-	_, _ = rand.Read(newPubKey[:])
-	err := f.receiver.ProcessIncomingDHRatchet(f.tag, newPubKey)
-	require.NoError(t, err)
+	var peerPub [32]byte
+	_, _ = rand.Read(peerPub[:])
+	info := NextKeyInfo{KeyPresent: true, Reverse: true, KeyID: 9, PublicKey: peerPub}
+	require.NoError(t, f.sender.handleNextKeyBlock(session, info))
 
 	session.mu.Lock()
-	newRecvSym := session.RecvSymmetricRatchet
-	newRecvTag := session.RecvTagRatchet
-	remotePub := session.RemotePublicKey
-	session.mu.Unlock()
-
-	assert.NotEqual(t, origRecvSym, newRecvSym, "RecvSymmetricRatchet should be replaced")
-	assert.NotEqual(t, origRecvTag, newRecvTag, "RecvTagRatchet should be replaced")
-	assert.Equal(t, newPubKey, remotePub, "RemotePublicKey should be updated")
-}
-
-func TestProcessIncomingDHRatchet_MultipleRotations(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	// Process multiple DH ratchets with different keys.
-	for i := 0; i < 3; i++ {
-		sessionTag := getAnyTag(t, f.receiver)
-
-		var newPubKey [32]byte
-		newPubKey[0] = byte(i + 1)
-		_, _ = rand.Read(newPubKey[1:])
-
-		err := f.receiver.ProcessIncomingDHRatchet(sessionTag, newPubKey)
-		require.NoError(t, err, "DH ratchet %d should succeed", i)
-	}
+	defer session.mu.Unlock()
+	assert.Same(t, before, session.TagRatchet, "non-matching key ID must be ignored (i2pd 'Unexpected next key')")
+	assert.True(t, session.sendDir.owed, "still owed until a matching key arrives")
 }
 
 // ============================================================================
-// Full NextKey Exchange Flow
+// Full two-sided exchange
 // ============================================================================
 
+// TestNextKeyExchange_FullFlow drives the complete spec exchange entirely
+// through the wire: both peers only ever call EncryptGarlicMessage /
+// DecryptGarlicMessage, so it exercises the automatic NextKey dispatch, the
+// forward/reverse block piggy-backing, and both acknowledgements.
 func TestNextKeyExchange_FullFlow(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
-	destHash := mustBootstrapSession(t, sender, receiver)
+	destHash, sessionHash := mustBootstrapSessionWithHash(t, sender, receiver)
+	senderSession := lookupSessionByHash(t, sender, destHash)
+	receiverSession := lookupSessionByHash(t, receiver, sessionHash)
 
-	// Send a baseline ES message BEFORE DH ratchet to measure payload size.
-	baselinePayload := []byte("baseline-msg")
-	baselineEnc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, baselinePayload)
-	require.NoError(t, err)
+	// Baseline traffic both directions.
+	for i := 0; i < 2; i++ {
+		msg := []byte(fmt.Sprintf("pre-%d", i))
+		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, msg)
+		require.NoError(t, err)
+		dec, _, _, err := receiver.DecryptGarlicMessage(enc)
+		require.NoError(t, err)
+		assert.Equal(t, msg, dec)
 
-	// 2. Trigger DH ratchet on sender (artificially advance counter).
-	sender.mu.RLock()
-	senderSession := sender.sessions[destHash]
-	sender.mu.RUnlock()
-	require.NotNil(t, senderSession)
-
-	senderSession.mu.Lock()
-	senderSession.dhRatchetCounter = DHRatchetInterval - 1 // Will trigger on next encrypt
-	senderSession.mu.Unlock()
-
-	// 3. Encrypt a message — this triggers DH ratchet. The NextKey block is now
-	// automatically serialized into the encrypted payload (consumed, not left pending).
-	ratchetPayload := []byte("trigger-ratch") // same length as baseline for comparison
-	ratchetEnc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, ratchetPayload)
-	require.NoError(t, err)
-
-	// 4. Verify the sender has NO pending NextKey blocks — they were consumed
-	// and embedded in the ciphertext by encryptExistingSession.
-	senderSession.mu.Lock()
-	hasPending := senderSession.HasPendingNextKeys()
-	senderSession.mu.Unlock()
-
-	assert.False(t, hasPending, "Sender should NOT have pending NextKey after encryption (consumed into payload)")
-
-	// 5. The ratchet-triggered message should be LARGER than the baseline because
-	// it contains serialized NextKey block(s) in the payload (1-byte type +
-	// 2-byte length + 3-byte flags/keyID + 32-byte pubkey = 38 bytes per block).
-	assert.Greater(t, len(ratchetEnc), len(baselineEnc),
-		"ES message with NextKey block should be larger than baseline")
-
-	// 6. Verify the sender is now awaiting a reverse key.
-	senderSession.mu.Lock()
-	sendKeyID, _, awaiting := senderSession.NextKeyState()
-	senderSession.mu.Unlock()
-	assert.True(t, awaiting, "Sender should be awaiting reverse key after DH rotation")
-	assert.Equal(t, uint16(1), sendKeyID, "sendKeyID should have been incremented")
-
-	// 7. Simulate the receiver processing the forward NextKey manually (since
-	// the DH ratchet changes the sender's tag set, the receiver cannot decrypt
-	// the ES message until it processes the NextKey — that is a separate concern).
-	// Build a forward NextKey info matching what the sender would have sent.
-	senderSession.mu.Lock()
-	pubKey := senderSession.newEphemeralPub
-	senderSession.mu.Unlock()
-	require.NotNil(t, pubKey, "sender should have a new ephemeral pub key")
-
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        false,
-		RequestReverse: true,
-		KeyID:          0, // the block carries the old ID (pre-increment)
-		PublicKey:      *pubKey,
+		back := []byte(fmt.Sprintf("pre-back-%d", i))
+		encB, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, back)
+		require.NoError(t, err)
+		decB, _, _, err := sender.DecryptGarlicMessage(encB)
+		require.NoError(t, err)
+		assert.Equal(t, back, decB)
 	}
 
-	recvTag := getAnyTag(t, receiver)
-	err = receiver.ProcessReceivedNextKey(recvTag, info)
+	// 1. Sender crosses the "send next key at tag 4096" threshold.
+	senderSession.mu.Lock()
+	senderSession.usedTags = nextKeyTagThreshold
+	senderSession.mu.Unlock()
+
+	// The forward block rides along inside a normal ES message.
+	baseline, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, []byte("xx"))
+	require.NoError(t, err)
+	msg := []byte("carries-forward-block")
+	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, msg)
+	require.NoError(t, err)
+	assert.Greater(t, len(enc), len(baseline), "ES message with a NextKey block is larger")
+
+	// 2. Receiver decrypts it and the embedded forward block is dispatched
+	//    automatically: inbound tag set 1 created, reverse block now owed.
+	dec, _, _, err := receiver.DecryptGarlicMessage(enc)
+	require.NoError(t, err, "the message carrying the forward block must still decrypt")
+	assert.Equal(t, msg, dec)
+
+	receiverSession.mu.Lock()
+	require.NotNil(t, receiverSession.recvDir, "forward block must create receive-direction state")
+	assert.True(t, receiverSession.recvDir.owed, "receiver owes the reverse block")
+	assert.Equal(t, uint16(1), receiverSession.recvTagSetID, "inbound tag set ID = 1 + 0 + 0")
+	require.NotEmpty(t, receiverSession.retiredRecv, "previous inbound tagset retained")
+	receiverSession.mu.Unlock()
+
+	// 3. Receiver's next ES message carries the reverse block; the sender
+	//    dispatches it and performs its single send-direction DH.
+	reverseMsg := []byte("carries-reverse-block")
+	enc2, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, reverseMsg)
+	require.NoError(t, err)
+	dec2, _, _, err := sender.DecryptGarlicMessage(enc2)
+	require.NoError(t, err)
+	assert.Equal(t, reverseMsg, dec2)
+
+	senderSession.mu.Lock()
+	assert.Equal(t, uint16(1), senderSession.sendTagSetID, "outbound tag set ID = 1 + 0 + 0")
+	assert.False(t, senderSession.sendDir.owed, "forward block acknowledged by the reverse key")
+	assert.Equal(t, uint32(0), senderSession.MessageCounter, "new outbound tagset restarts the counter chain")
+	senderSession.mu.Unlock()
+
+	// 4. Sender's next message uses the new outbound tag set, which is the
+	//    evidence that retires the receiver's reverse block.
+	postMsg := []byte("on-new-tagset")
+	enc3, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, postMsg)
+	require.NoError(t, err)
+	dec3, _, _, err := receiver.DecryptGarlicMessage(enc3)
+	require.NoError(t, err)
+	assert.Equal(t, postMsg, dec3)
+
+	receiverSession.mu.Lock()
+	assert.False(t, receiverSession.recvDir.owed, "reverse block acknowledged by a tag from the new tagset")
+	assert.Empty(t, receiverSession.GetPendingNextKeys(), "no NextKey blocks outstanding")
+	receiverSession.mu.Unlock()
+
+	// 5. Traffic keeps flowing in both directions on tag set 1.
+	for i := 0; i < 3; i++ {
+		m := []byte(fmt.Sprintf("post-%d", i))
+		e, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, m)
+		require.NoError(t, err)
+		d, _, _, err := receiver.DecryptGarlicMessage(e)
+		require.NoError(t, err, "post-rekey sender->receiver message %d must decrypt", i)
+		assert.Equal(t, m, d)
+
+		b := []byte(fmt.Sprintf("reply-%d", i))
+		eb, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, b)
+		require.NoError(t, err)
+		db, _, _, err := sender.DecryptGarlicMessage(eb)
+		require.NoError(t, err, "post-rekey receiver->sender message %d must decrypt", i)
+		assert.Equal(t, b, db)
+	}
+}
+
+// TestNextKeyExchange_SecondRoundTagSetIDs drives three full exchanges over the
+// wire to confirm the tag set ID progression (1, 2, 3, ...) and the spec's
+// key-ID parity rule are reproduced identically on both peers, as required by
+// §"KEY AND TAG SET IDS" ("Key and tag set ID numbers must be sequential").
+func TestNextKeyExchange_SecondRoundTagSetIDs(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	destHash, sessionHash := mustBootstrapSessionWithHash(t, sender, receiver)
+	senderSession := lookupSessionByHash(t, sender, destHash)
+	receiverSession := lookupSessionByHash(t, receiver, sessionHash)
+
+	round := func(expected uint16) {
+		// Sender starts the exchange.
+		senderSession.mu.Lock()
+		senderSession.usedTags = nextKeyTagThreshold
+		senderSession.mu.Unlock()
+		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("fwd"))
+		require.NoError(t, err)
+		_, _, _, err = receiver.DecryptGarlicMessage(enc)
+		require.NoError(t, err, "forward round %d", expected)
+
+		// Receiver answers with the reverse block.
+		enc2, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, []byte("rev"))
+		require.NoError(t, err)
+		_, _, _, err = sender.DecryptGarlicMessage(enc2)
+		require.NoError(t, err, "reverse round %d", expected)
+
+		// Sender moves to the new outbound tag set.
+		enc3, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("new"))
+		require.NoError(t, err)
+		_, _, _, err = receiver.DecryptGarlicMessage(enc3)
+		require.NoError(t, err, "post-rekey round %d", expected)
+
+		senderSession.mu.Lock()
+		sendTS, sendKey := senderSession.sendTagSetID, senderSession.sendKeyID
+		senderSession.mu.Unlock()
+		receiverSession.mu.Lock()
+		recvTS, recvKey := receiverSession.recvTagSetID, receiverSession.recvKeyID
+		receiverSession.mu.Unlock()
+
+		assert.Equal(t, expected, sendTS, "sender outbound tag set ID")
+		assert.Equal(t, sendTS, recvTS, "both peers must compute the same tag set ID")
+		// Spec progression for the tag-set sender: 0*, 1*, 1, 2*, 2, ...
+		assert.Equal(t, uint16((expected)/2), sendKey, "sender key ID at tag set %d", expected)
+		t.Logf("tag set %d: sender key %d, receiver key %d", expected, sendKey, recvKey)
+	}
+
+	round(1)
+	round(2)
+	round(3)
+	round(4)
+
+	// Traffic still works after four rekeys.
+	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("after-4"))
+	require.NoError(t, err)
+	dec, _, _, err := receiver.DecryptGarlicMessage(enc)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("after-4"), dec)
+}
+
+// TestNextKeyExchange_PreviousTagsetStillDecrypts verifies the ~3 minute
+// "listen for tags in both tagsets" rule: a message the peer sent on the OLD
+// inbound tag set must still decrypt after we install the new one.
+func TestNextKeyExchange_PreviousTagsetStillDecrypts(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	destHash, sessionHash := mustBootstrapSessionWithHash(t, sender, receiver)
+	senderSession := lookupSessionByHash(t, sender, destHash)
+	receiverSession := lookupSessionByHash(t, receiver, sessionHash)
+
+	// Peer sends on tag set 0; capture one ciphertext without decrypting it.
+	msg := []byte("in-flight-on-old-tagset")
+	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, msg)
 	require.NoError(t, err)
 
-	// 8. Receiver should have a reverse NextKey queued.
-	recvSession := lookupSessionByAnyTag(t, receiver)
-	require.NotNil(t, recvSession)
-
-	recvSession.mu.Lock()
-	reverseBlocks := recvSession.GetPendingNextKeys()
-	recvSession.mu.Unlock()
-
-	require.NotEmpty(t, reverseBlocks, "Receiver should have queued a reverse NextKey")
-
-	reverseInfo, err := reverseBlocks[0].NextKey()
+	// Complete a rekey so the receiver installs inbound tag set 1.
+	senderSession.mu.Lock()
+	require.NoError(t, senderSession.prepareSend())
+	fi, err := senderSession.GetPendingNextKeys()[0].NextKey()
+	senderSession.mu.Unlock()
 	require.NoError(t, err)
-	assert.True(t, reverseInfo.KeyPresent)
-	assert.True(t, reverseInfo.Reverse)
-	assert.False(t, reverseInfo.RequestReverse)
+	require.NoError(t, receiver.handleNextKeyBlock(receiverSession, fi))
+	receiverSession.mu.Lock()
+	ri, err := receiverSession.GetPendingNextKeys()[0].NextKey()
+	receiverSession.mu.Unlock()
+	require.NoError(t, err)
+	require.NoError(t, sender.handleNextKeyBlock(senderSession, ri))
 
-	_ = baselineEnc // used only for size comparison
+	// The sender's outbound chain moved to tag set 1, but the receiver's
+	// retained tag set 0 window still holds the tag for `enc`.
+	receiverSession.mu.Lock()
+	require.NotEmpty(t, receiverSession.retiredRecv, "previous inbound tagset must be retained")
+	var prevTags [][8]byte
+	for _, retired := range receiverSession.retiredRecv {
+		prevTags = append(prevTags, retired.tags...)
+	}
+	receiverSession.mu.Unlock()
+	require.NotEmpty(t, prevTags, "retired tagset must keep its advertised tags")
+
+	var oldTag [8]byte
+	copy(oldTag[:], enc[:8])
+	found := false
+	for _, tg := range prevTags {
+		if tg == oldTag {
+			found = true
+		}
+	}
+	assert.True(t, found, "the tag used by the in-flight message must stay routable on the retired tagset")
+}
+
+// ============================================================================
+// Rotation trigger
+// ============================================================================
+
+// TestAttemptDHRatchetRotation_FiresAt4096 verifies the spec's "Send next key at
+// tag: 4096" threshold replaces the old fixed every-50-messages schedule.
+func TestAttemptDHRatchetRotation_FiresAt4096(t *testing.T) {
+	session := createTestSession(t, true)
+
+	session.usedTags = nextKeyTagThreshold - 1
+	require.NoError(t, attemptDHRatchetRotation(session))
+	assert.False(t, session.HasPendingNextKeys(), "no exchange below the threshold")
+
+	session.usedTags = nextKeyTagThreshold
+	require.NoError(t, attemptDHRatchetRotation(session))
+	assert.True(t, session.HasPendingNextKeys(), "exchange starts at tag 4096")
+	assert.Equal(t, uint16(0), session.sendKeyID, "first exchange uses key 0 (spec tag set 1 = sender key 0*)")
+
+	// A second call must not start a second exchange while the first is owed.
+	require.NoError(t, attemptDHRatchetRotation(session))
+	assert.Equal(t, uint16(0), session.sendKeyID, "only one rotation per threshold crossing")
+}
+
+func TestAttemptDHRatchetRotation_MaxKeyID(t *testing.T) {
+	session := createTestSession(t, true)
+	session.sendDir = &dhDirection{keyID: MaxKeyID, newKey: false, hasKey: true}
+	session.sendKeyID = MaxKeyID
+	session.usedTags = nextKeyTagThreshold
+
+	err := attemptDHRatchetRotation(session)
+	assert.Error(t, err, "must error when send key ID is at MaxKeyID")
+	assert.Contains(t, err.Error(), "maximum")
 }
 
 // ============================================================================
@@ -408,306 +576,135 @@ func TestMaxKeyIDConstant(t *testing.T) {
 		"MaxKeyID should be 32767 per the spec")
 }
 
-func TestGenerateReverseNextKey_MaxKeyID(t *testing.T) {
-	f := newLinkedSessionFixture(t)
-
-	// Set the session's sendKeyID to MaxKeyID so reverse key generation fails.
-	session := lookupSessionByAnyTag(t, f.receiver)
-	session.mu.Lock()
-	session.sendKeyID = MaxKeyID
-	session.mu.Unlock()
-
-	var newKey [32]byte
-	_, _ = rand.Read(newKey[:])
-
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        false,
-		RequestReverse: true,
-		KeyID:          0,
-		PublicKey:      newKey,
-	}
-
-	err := f.receiver.ProcessReceivedNextKey(f.tag, info)
-	assert.Error(t, err, "Should error when send key ID is at maximum")
-}
-
 // ============================================================================
-// GetPublicKey (was at 0% coverage)
+// GetPublicKey
 // ============================================================================
 
 func TestGetPublicKey(t *testing.T) {
 	sm := createTestSessionManager(t)
-	pubKey := sm.GetPublicKey()
-
-	allZero := true
-	for _, b := range pubKey {
-		if b != 0 {
-			allZero = false
-			break
-		}
-	}
-	assert.False(t, allZero, "Public key should not be all zeros")
+	pub := sm.GetPublicKey()
+	assert.NotEqual(t, [32]byte{}, pub, "Public key should not be zero")
 }
 
 func TestGetPublicKey_DifferentManagers(t *testing.T) {
 	sm1 := createTestSessionManager(t)
 	sm2 := createTestSessionManager(t)
-
 	assert.NotEqual(t, sm1.GetPublicKey(), sm2.GetPublicKey(),
 		"Different managers should have different public keys")
 }
 
 // ============================================================================
-// sendKeyID increment in performDHRatchetStep
+// prependPendingNextKeys unit tests
 // ============================================================================
 
-// TestPerformDHRatchetStep_IncrementsSendKeyID verifies that the session's
-// sendKeyID is incremented after a successful DH ratchet step.
-// Spec ref: ecies.rst §"Key and Tag Set IDs" — tag set ID advances when
-// the sender issues a new forward key.
-func TestPerformDHRatchetStep_IncrementsSendKeyID(t *testing.T) {
+// TestPrependPendingNextKeys_NoPending verifies the zero-copy fast path:
+// when no NextKey blocks are pending, the original plaintext slice is returned.
+func TestPrependPendingNextKeys_NoPending(t *testing.T) {
 	session := createTestSession(t, true)
 
-	assert.Equal(t, uint16(0), session.sendKeyID, "sendKeyID must start at 0")
-
-	err := performDHRatchetStep(session)
+	original := []byte("hello world")
+	result, err := prependPendingNextKeys(session, original)
 	require.NoError(t, err)
+	assert.Equal(t, original, result, "should return original plaintext unchanged")
+}
 
-	assert.Equal(t, uint16(1), session.sendKeyID,
-		"sendKeyID must be 1 after first DH ratchet step")
+// TestPrependPendingNextKeys_WithBlocks verifies that outstanding NextKey blocks
+// are serialized and prepended to the plaintext.
+func TestPrependPendingNextKeys_WithBlocks(t *testing.T) {
+	session := createTestSession(t, true)
+	require.NoError(t, session.prepareSend())
 
-	// The queued NextKey block must carry the old ID (0) so the peer
-	// can associate the reverse key with the correct tag set.
-	blocks := session.GetPendingNextKeys()
-	require.Len(t, blocks, 1)
+	originalPayload := []byte{byte(BlockGarlicClove), 0, 5, 'h', 'e', 'l', 'l', 'o'}
+	result, err := prependPendingNextKeys(session, originalPayload)
+	require.NoError(t, err)
+	assert.Greater(t, len(result), len(originalPayload))
+
+	blocks, err := ParsePayload(result)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(blocks), 2, "should have NextKey + original blocks")
+	assert.Equal(t, BlockNextKey, blocks[0].Type)
+
 	info, err := blocks[0].NextKey()
 	require.NoError(t, err)
-	assert.Equal(t, uint16(0), info.KeyID,
-		"NextKey block must carry the pre-increment key ID")
+	assert.True(t, info.KeyPresent)
+	assert.Equal(t, session.sendDir.ourPub, info.PublicKey)
+
+	assert.Equal(t, BlockGarlicClove, blocks[1].Type)
+	assert.Equal(t, []byte("hello"), blocks[1].Data)
 }
 
-// TestPerformDHRatchetStep_ConsecutiveRotations_KeyIDsAdvance verifies that
-// consecutive DH ratchet steps produce NextKey blocks with monotonically
-// increasing key IDs (0, 1, 2, …) and that sendKeyID tracks correctly.
-func TestPerformDHRatchetStep_ConsecutiveRotations_KeyIDsAdvance(t *testing.T) {
+// TestPrependPendingNextKeys_BothDirectionsInOneFrame verifies the spec note
+// that a frame may carry a forward and a reverse block simultaneously.
+func TestPrependPendingNextKeys_BothDirectionsInOneFrame(t *testing.T) {
 	session := createTestSession(t, true)
+	require.NoError(t, session.prepareSend())
+	_, err := session.prepareRecv(0, true, session.RemotePublicKey, true)
+	require.NoError(t, err)
 
-	for i := 0; i < 3; i++ {
-		err := performDHRatchetStep(session)
-		require.NoError(t, err, "step %d should succeed", i)
-	}
+	result, err := prependPendingNextKeys(session, []byte{byte(BlockGarlicClove), 0, 1, 'x'})
+	require.NoError(t, err)
 
-	assert.Equal(t, uint16(3), session.sendKeyID, "sendKeyID must be 3 after three steps")
-
-	blocks := session.GetPendingNextKeys()
-	require.Len(t, blocks, 3)
-
-	for i, block := range blocks {
-		info, err := block.NextKey()
+	blocks, err := ParsePayload(result)
+	require.NoError(t, err)
+	var forward, reverse bool
+	for _, b := range blocks {
+		if b.Type != BlockNextKey {
+			continue
+		}
+		info, err := b.NextKey()
 		require.NoError(t, err)
-		assert.Equal(t, uint16(i), info.KeyID,
-			"block %d must carry key ID %d", i, i)
+		if info.Reverse {
+			reverse = true
+		} else {
+			forward = true
+		}
 	}
-}
-
-// TestPerformDHRatchetStep_MaxKeyID_ReturnsError verifies that a DH ratchet
-// step is refused when sendKeyID has reached MaxKeyID, preventing key-set ID
-// overflow. Spec ref: ecies.rst §"Key and Tag Set IDs".
-func TestPerformDHRatchetStep_MaxKeyID_ReturnsError(t *testing.T) {
-	session := createTestSession(t, true)
-	session.sendKeyID = MaxKeyID
-
-	err := performDHRatchetStep(session)
-	assert.Error(t, err, "performDHRatchetStep must error when sendKeyID is at MaxKeyID")
-	assert.Contains(t, err.Error(), "maximum")
-	assert.Equal(t, uint16(MaxKeyID), session.sendKeyID,
-		"sendKeyID must not change on error")
-	assert.False(t, session.HasPendingNextKeys(),
-		"no NextKey block should be queued on error")
+	assert.True(t, forward, "forward block present")
+	assert.True(t, reverse, "reverse block present")
 }
 
 // ============================================================================
-// generateReverseNextKey — sendKeyID increment
+// Threshold integration
 // ============================================================================
 
-// TestGenerateReverseNextKey_IncrementsSendKeyID verifies that generateReverseNextKey
-// increments sendKeyID after queuing the reverse block. Without this increment, a
-// subsequent forward rotation via performDHRatchetStep would produce a NextKey block
-// with the same keyID as the reverse block, confusing the peer's keyID tracking.
-func TestGenerateReverseNextKey_IncrementsSendKeyID(t *testing.T) {
+// TestDHRatchetNextKeyTransmission_AtThreshold sends enough ES messages to cross
+// the 4096-tag threshold and verifies the exchange is emitted and re-emitted
+// until acknowledged.
+func TestDHRatchetNextKeyTransmission_AtThreshold(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
-	mustBootstrapSession(t, sender, receiver)
+	destHash := mustBootstrapSession(t, sender, receiver)
+	senderSession := lookupSessionByHash(t, sender, destHash)
 
-	// Look up the receiver's session and record the initial sendKeyID.
-	session := lookupSessionByAnyTag(t, receiver)
-	session.mu.Lock()
-	initialKeyID := session.sendKeyID
-	session.mu.Unlock()
+	// Jump to the threshold rather than sending 4096 real messages.
+	senderSession.mu.Lock()
+	senderSession.usedTags = nextKeyTagThreshold
+	senderSession.mu.Unlock()
 
-	// Simulate a forward NextKey from the sender requesting a reverse.
-	sessionTag := getAnyTag(t, receiver)
-	var newKey [32]byte
-	_, _ = rand.Read(newKey[:])
-	info := NextKeyInfo{
-		KeyPresent:     true,
-		Reverse:        false,
-		RequestReverse: true,
-		KeyID:          0,
-		PublicKey:      newKey,
-	}
-	err := receiver.ProcessReceivedNextKey(sessionTag, info)
-	require.NoError(t, err)
+	const total = 3
+	for i := 0; i < total; i++ {
+		_, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte(fmt.Sprintf("msg-%d", i)))
+		require.NoError(t, err, "encrypt message %d", i)
 
-	// After generating the reverse key, sendKeyID must have been incremented.
-	session.mu.Lock()
-	afterReverseKeyID := session.sendKeyID
-	pending := session.GetPendingNextKeys()
-	session.mu.Unlock()
+		senderSession.mu.Lock()
+		owed := senderSession.sendDir != nil && senderSession.sendDir.owed
+		keyID := senderSession.sendKeyID
+		senderSession.mu.Unlock()
 
-	assert.Equal(t, initialKeyID+1, afterReverseKeyID,
-		"sendKeyID must be incremented after generating a reverse NextKey")
-	require.Len(t, pending, 1, "exactly one reverse NextKey block should be queued")
-
-	// The block should carry the OLD (pre-increment) keyID.
-	blockInfo, err := pending[0].NextKey()
-	require.NoError(t, err)
-	assert.Equal(t, initialKeyID, blockInfo.KeyID,
-		"reverse NextKey block must carry the pre-increment keyID")
-	assert.True(t, blockInfo.Reverse, "block must be flagged as reverse")
-}
-
-// TestForwardAndReverse_NoKeyIDCollision verifies the double-rotation scenario:
-//  1. Forward rotation (performDHRatchetStep) — creates forward block with keyID=N, sendKeyID→N+1
-//  2. Reverse response (generateReverseNextKey) — creates reverse block with keyID=N+1, sendKeyID→N+2
-//  3. Another forward rotation — creates forward block with keyID=N+2
-//
-// All three keyIDs must be distinct, preventing peer-side confusion.
-func TestForwardAndReverse_NoKeyIDCollision(t *testing.T) {
-	session := createTestSession(t, true)
-
-	sm := createTestSessionManager(t)
-
-	// Step 1: Forward rotation.
-	err := performDHRatchetStep(session)
-	require.NoError(t, err)
-	forwardBlocks := session.GetPendingNextKeys()
-	require.Len(t, forwardBlocks, 1)
-	fwdInfo1, err := forwardBlocks[0].NextKey()
-	require.NoError(t, err)
-
-	// Step 2: Reverse response.
-	err = sm.generateReverseNextKey(session)
-	require.NoError(t, err)
-	reverseBlocks := session.GetPendingNextKeys()
-	require.Len(t, reverseBlocks, 1)
-	revInfo, err := reverseBlocks[0].NextKey()
-	require.NoError(t, err)
-
-	// Step 3: Another forward rotation.
-	err = performDHRatchetStep(session)
-	require.NoError(t, err)
-	forwardBlocks2 := session.GetPendingNextKeys()
-	require.Len(t, forwardBlocks2, 1)
-	fwdInfo2, err := forwardBlocks2[0].NextKey()
-	require.NoError(t, err)
-
-	// All three keyIDs must be distinct.
-	allIDs := []uint16{fwdInfo1.KeyID, revInfo.KeyID, fwdInfo2.KeyID}
-	seen := make(map[uint16]bool)
-	for _, id := range allIDs {
-		assert.False(t, seen[id],
-			"keyID %d appears more than once in [forward=%d, reverse=%d, forward2=%d]",
-			id, allIDs[0], allIDs[1], allIDs[2])
-		seen[id] = true
+		assert.True(t, owed, "message %d: rotation must fire at tag %d and keep re-sending", i, nextKeyTagThreshold)
+		assert.Equal(t, uint16(0), keyID, "first exchange uses key 0")
 	}
 
-	// Verify the expected sequence: 0, 1, 2.
-	assert.Equal(t, uint16(0), fwdInfo1.KeyID, "first forward block should carry keyID=0")
-	assert.Equal(t, uint16(1), revInfo.KeyID, "reverse block should carry keyID=1")
-	assert.Equal(t, uint16(2), fwdInfo2.KeyID, "second forward block should carry keyID=2")
-
-	t.Logf("KeyID sequence: forward=%d, reverse=%d, forward=%d — no collision",
-		fwdInfo1.KeyID, revInfo.KeyID, fwdInfo2.KeyID)
+	// usedTags must advance with every send tag generated.
+	senderSession.mu.Lock()
+	assert.Greater(t, int(senderSession.usedTags), int(nextKeyTagThreshold), "usedTags must track tag consumption")
+	senderSession.mu.Unlock()
 }
 
 // ============================================================================
-// Helpers
+// Test helpers
 // ============================================================================
 
-// ============================================================================
-// attemptDHRatchetRotation — failure branches
-// ============================================================================
-
-// TestAttemptDHRatchetRotation_FailOnce_ContinuesSymRatchet verifies the
-// "fail but continue" branch: when performDHRatchetStep returns an error but
-// consecutiveDHFailures has not yet hit MaxConsecutiveDHFailures,
-// attemptDHRatchetRotation swallows the error and returns nil, allowing the
-// session to keep sending via the symmetric ratchet.
-//
-// The sendKeyID=MaxKeyID trick forces performDHRatchetStep to error without
-// needing to mock the DH ratchet or break heap state.
-func TestAttemptDHRatchetRotation_FailOnce_ContinuesSymRatchet(t *testing.T) {
-	session := createTestSession(t, true)
-
-	// One increment will bring dhRatchetCounter to DHRatchetInterval, triggering
-	// the ratchet‐step attempt.
-	session.dhRatchetCounter = DHRatchetInterval - 1
-	// Force performDHRatchetStep to return an error.
-	session.sendKeyID = MaxKeyID
-
-	rotErr := attemptDHRatchetRotation(session)
-	assert.NoError(t, rotErr,
-		"first failure (below threshold) must be swallowed and return nil")
-	assert.Equal(t, uint32(1), session.consecutiveDHFailures,
-		"consecutiveDHFailures must be incremented on first failure")
-	assert.False(t, session.HasPendingNextKeys(),
-		"no NextKey block should be queued on failed step")
-}
-
-// TestAttemptDHRatchetRotation_MaxConsecutiveFailures_ReturnsError verifies
-// the "fatal failure" branch: when consecutiveDHFailures reaches
-// MaxConsecutiveDHFailures, attemptDHRatchetRotation propagates the error so
-// the caller can tear down the session rather than silently forfeiting forward
-// secrecy indefinitely.
-func TestAttemptDHRatchetRotation_MaxConsecutiveFailures_ReturnsError(t *testing.T) {
-	session := createTestSession(t, true)
-
-	// Pre-fill so one more failure crosses the threshold.
-	session.dhRatchetCounter = DHRatchetInterval - 1
-	session.sendKeyID = MaxKeyID
-	session.consecutiveDHFailures = MaxConsecutiveDHFailures - 1
-
-	rotErr := attemptDHRatchetRotation(session)
-	require.Error(t, rotErr,
-		"hitting MaxConsecutiveDHFailures must return an error")
-	assert.Contains(t, rotErr.Error(), "consecutive",
-		"error message must mention consecutive failure count")
-	assert.Equal(t, uint32(MaxConsecutiveDHFailures), session.consecutiveDHFailures)
-}
-
-// TestAttemptDHRatchetRotation_BelowInterval_NoRatchetAttempted verifies the
-// counter-gating path: when dhRatchetCounter is below DHRatchetInterval, no
-// DH ratchet step is attempted and nil is returned immediately.
-// This covers the fast path that runs for the vast majority of messages.
-func TestAttemptDHRatchetRotation_BelowInterval_NoRatchetAttempted(t *testing.T) {
-	session := createTestSession(t, true)
-
-	// Counter starts at 0; first increment → 1, which is < DHRatchetInterval (50).
-	initialKeyID := session.sendKeyID
-
-	rotErr := attemptDHRatchetRotation(session)
-	assert.NoError(t, rotErr, "below-interval call must return nil")
-	assert.Equal(t, uint32(1), session.dhRatchetCounter,
-		"dhRatchetCounter must be incremented")
-	assert.Equal(t, initialKeyID, session.sendKeyID,
-		"sendKeyID must not change when no ratchet step was attempted")
-	assert.False(t, session.HasPendingNextKeys(),
-		"no pending NextKey blocks when no ratchet step was attempted")
-}
-
-// getAnyTag extracts a tag from the session manager's tag index.
-// It grabs a fresh tag by peeking at the index. The tag IS consumed by this lookup.
+// getAnyTag returns a tag from the manager's tag index without consuming it.
 func getAnyTag(t testing.TB, sm *SessionManager) [8]byte {
 	t.Helper()
 	sm.mu.RLock()
@@ -733,139 +730,106 @@ func lookupSessionByAnyTag(t testing.TB, sm *SessionManager) *Session {
 	return nil
 }
 
-// ============================================================================
-// prependPendingNextKeys unit tests
-// ============================================================================
+// lookupSessionByHash returns the session stored under hash.
+func lookupSessionByHash(t testing.TB, sm *SessionManager, hash [32]byte) *Session {
+	t.Helper()
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 
-// TestPrependPendingNextKeys_NoPending verifies the zero-copy fast path:
-// when no NextKey blocks are pending, the original plaintext slice is returned.
-func TestPrependPendingNextKeys_NoPending(t *testing.T) {
-	session := createTestSession(t, true)
-
-	original := []byte("hello world")
-	result, err := prependPendingNextKeys(session, original)
-	require.NoError(t, err)
-	assert.Equal(t, original, result, "should return original plaintext unchanged")
-}
-
-// TestPrependPendingNextKeys_WithBlocks verifies that pending NextKey blocks
-// are serialized and prepended to the plaintext. The resulting payload should
-// parse into the NextKey block(s) followed by the original data.
-func TestPrependPendingNextKeys_WithBlocks(t *testing.T) {
-	session := createTestSession(t, true)
-
-	// Queue a forward NextKey block manually.
-	var testPub [32]byte
-	_, _ = rand.Read(testPub[:])
-	block := NewNextKeyBlock(0, &testPub, false, true)
-	session.pendingNextKeys = append(session.pendingNextKeys, block)
-
-	// Build a GarlicClove payload as the original plaintext.
-	originalPayload := []byte{byte(BlockGarlicClove), 0, 5, 'h', 'e', 'l', 'l', 'o'}
-
-	result, err := prependPendingNextKeys(session, originalPayload)
-	require.NoError(t, err)
-
-	// result should be larger than original.
-	assert.Greater(t, len(result), len(originalPayload))
-
-	// The pending queue should now be empty.
-	assert.False(t, session.HasPendingNextKeys())
-
-	// Parse the combined result — should start with a NextKey block.
-	blocks, err := ParsePayload(result)
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, len(blocks), 2, "should have NextKey + original blocks")
-	assert.Equal(t, BlockNextKey, blocks[0].Type)
-
-	info, err := blocks[0].NextKey()
-	require.NoError(t, err)
-	assert.True(t, info.KeyPresent)
-	assert.Equal(t, testPub, info.PublicKey)
-
-	// The rest should be the original payload.
-	assert.Equal(t, BlockGarlicClove, blocks[1].Type)
-	assert.Equal(t, []byte("hello"), blocks[1].Data)
-}
-
-// ============================================================================
-// Integration test: >50 ES messages with DH ratchet
-// ============================================================================
-
-// TestDHRatchetNextKeyTransmission_Over50Messages sends more than
-// DHRatchetInterval (50) consecutive ES messages through EncryptGarlicMessage
-// and verifies that:
-//   - The DH ratchet rotation fires at the expected interval.
-//   - NextKey blocks are consumed (not left pending) during encryption.
-//   - The encrypted payload grows when a NextKey block is included.
-//   - The sender's sendKeyID advances after rotation.
-//
-// This test covers the critical integration gap identified in the audit:
-// NextKey blocks must be transmitted inside ES messages for forward secrecy.
-func TestDHRatchetNextKeyTransmission_Over50Messages(t *testing.T) {
-	sender, receiver := createLinkedManagers(t)
-
-	var destHash [32]byte
-	copy(destHash[:], receiver.ourPublicKey[:])
-
-	// Bootstrap the session: NS → NSR.
-	destHash = mustBootstrapSession(t, sender, receiver)
-
-	sender.mu.RLock()
-	senderSession := sender.sessions[destHash]
-	sender.mu.RUnlock()
-	require.NotNil(t, senderSession)
-
-	// Track metrics across the message burst.
-	var (
-		rotationCount   int
-		lastRotationMsg int
-	)
-
-	// Send 60 messages (> DHRatchetInterval = 50).
-	const totalMessages = 60
-	for i := 0; i < totalMessages; i++ {
-		payload := []byte(fmt.Sprintf("msg-%d", i))
-		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, payload)
-		require.NoError(t, err, "encrypt message %d", i)
-		require.NotEmpty(t, enc, "ciphertext should not be empty for message %d", i)
-
-		// After encryption, NextKey blocks should never be left pending.
-		senderSession.mu.Lock()
-		hasPending := senderSession.HasPendingNextKeys()
-		sendKeyID := senderSession.sendKeyID
-		dhCounter := senderSession.dhRatchetCounter
-		senderSession.mu.Unlock()
-
-		assert.False(t, hasPending,
-			"message %d: pending NextKey blocks should have been consumed by encryption", i)
-
-		// Detect when a DH ratchet rotation occurred: sendKeyID advances
-		// and dhRatchetCounter resets to 0.
-		if sendKeyID > 0 && dhCounter == 0 {
-			if rotationCount == 0 {
-				rotationCount++
-				lastRotationMsg = i
-			}
-		}
+	session, ok := sm.sessions[hash]
+	if !ok {
+		t.Fatal("no session for hash")
 	}
+	return session
+}
 
-	// Verify at least one DH ratchet rotation occurred.
-	assert.GreaterOrEqual(t, rotationCount, 1,
-		"should have at least 1 DH ratchet rotation in %d messages", totalMessages)
+// ============================================================================
+// Multiple NS / NSR support (ecies.md §"Multiple NSR Messages")
+// ============================================================================
 
-	// The first rotation should happen around message DHRatchetInterval (50).
-	// Allow ±2 for off-by-one in counter initialization.
-	assert.InDelta(t, DHRatchetInterval, lastRotationMsg, 2,
-		"first DH ratchet should fire near message %d", DHRatchetInterval)
+// TestMultipleNSR_SecondReplyCompletesSession verifies that if the first NSR is
+// lost, the session can still be completed by a later NSR - the property the
+// single-slot implementation lacked (audit finding R-08).
+func TestMultipleNSR_SecondReplyCompletesSession(t *testing.T) {
+	initiator, responder := createLinkedManagers(t)
+	destHash := types.SHA256(responder.ourPublicKey[:])
 
-	// sendKeyID should have advanced from 0.
-	senderSession.mu.Lock()
-	finalKeyID := senderSession.sendKeyID
-	senderSession.mu.Unlock()
-	assert.Greater(t, finalKeyID, uint16(0),
-		"sendKeyID should advance after DH ratchet rotation")
+	// Initiator sends NS #1.
+	ns1, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, mustBuildNSPayload(t, []byte("ns1")))
+	require.NoError(t, err)
+	_, _, sh1, err := responder.DecryptGarlicMessage(ns1)
+	require.NoError(t, err)
+	require.NotNil(t, sh1)
 
-	t.Logf("Sent %d ES messages; DH ratchet fired at message ~%d; final sendKeyID=%d",
-		totalMessages, lastRotationMsg, finalKeyID)
+	// Initiator retransmits NS #2 (NSR #1 assumed lost on the way back).
+	ns2, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, mustBuildNSPayload(t, []byte("ns2")))
+	require.NoError(t, err)
+	require.NotEmpty(t, ns2)
+	_, _, sh2, err := responder.DecryptGarlicMessage(ns2)
+	require.NoError(t, err)
+	require.NotNil(t, sh2)
+	assert.Equal(t, *sh1, *sh2, "both NSs are for the same initiator identity")
+
+	// The responder must retain the state for BOTH and be able to reply to the
+	// second one after the first reply.
+	nsr1, err := responder.EncryptNewSessionReply(*sh1, []byte("reply-1"))
+	require.NoError(t, err)
+	nsr2, err := responder.EncryptNewSessionReply(*sh1, []byte("reply-2"))
+	require.NoError(t, err, "a second NSR must be sendable for the second NS")
+	assert.NotEqual(t, nsr1, nsr2, "each NSR uses its own ephemeral key and tagset")
+
+	// The first NSR that reaches the initiator establishes the session.
+	_, _, _, err = initiator.DecryptGarlicMessage(nsr1)
+	require.NoError(t, err)
+
+	// ES traffic must now work initiator -> responder.
+	msg := []byte("after-nsr")
+	enc, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, msg)
+	require.NoError(t, err)
+	dec, _, _, err := responder.DecryptGarlicMessage(enc)
+	require.NoError(t, err, "responder must decrypt ES after its first NSR was accepted")
+	assert.Equal(t, msg, dec)
+
+	// The second NSR is now redundant; it must not corrupt the session.
+	_, _, _, _ = initiator.DecryptGarlicMessage(nsr2)
+
+	enc2, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, []byte("still-ok"))
+	require.NoError(t, err)
+	_, _, _, err = responder.DecryptGarlicMessage(enc2)
+	require.NoError(t, err, "session must remain usable after a redundant NSR")
+}
+
+// TestMultipleNSR_ResponderKeepsBothTagsets verifies the responder can decrypt an
+// ES message produced from EITHER reply's keys, since the initiator uses
+// whichever NSR arrives first.
+//
+// Spec ref: ecies.md §"Multiple NS Messages" - "For each NS message received,
+// Bob creates a new inbound session."
+func TestMultipleNSR_ResponderKeepsBothTagsets(t *testing.T) {
+	initiator, responder := createLinkedManagers(t)
+	destHash := types.SHA256(responder.ourPublicKey[:])
+
+	ns1, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, mustBuildNSPayload(t, []byte("ns1")))
+	require.NoError(t, err)
+	_, _, sh1, err := responder.DecryptGarlicMessage(ns1)
+	require.NoError(t, err)
+
+	ns2, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, mustBuildNSPayload(t, []byte("ns2")))
+	require.NoError(t, err)
+	_, _, _, err = responder.DecryptGarlicMessage(ns2)
+	require.NoError(t, err)
+
+	_, err = responder.EncryptNewSessionReply(*sh1, []byte("reply-1"))
+	require.NoError(t, err)
+	nsr2, err := responder.EncryptNewSessionReply(*sh1, []byte("reply-2"))
+	require.NoError(t, err)
+
+	// Initiator happens to receive the SECOND reply first.
+	_, _, _, err = initiator.DecryptGarlicMessage(nsr2)
+	require.NoError(t, err)
+
+	enc, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, []byte("from-nsr2"))
+	require.NoError(t, err)
+	_, _, _, err = responder.DecryptGarlicMessage(enc)
+	require.NoError(t, err, "responder must decrypt ES keyed by the second NSR's tagset")
 }

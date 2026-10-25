@@ -6,6 +6,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
 
@@ -165,6 +166,99 @@ func clockSkewWithinTolerance(ts uint64, maxSkew time.Duration) (skew time.Durat
 	}
 	skew = time.Duration(delta) * time.Second
 	return skew, skew <= maxSkew
+}
+
+// recheckClockSkewAfterConfirm performs the responder's post-SessionConfirmed
+// clock-skew recheck, closing the connection with a clock-skew termination
+// block when the RTT-adjusted skew exceeds the maximum D.
+//
+// ntcp2.md §"Clock Skew Guidelines": "If Alice does reply with Session
+// Confirmed (probably because the skew is very close to the 60s limit, and the
+// Alice and Bob calculations are not exactly the same due to RTT), Bob should
+// adjust the calculated clock skew by subtracting half the RTT. If the adjusted
+// clock skew exceeds the maximum, Bob should then reply with a Disconnect
+// message containing a clock skew reason code, and close the connection."
+//
+// Reference: Java i2p.i2p InboundEstablishState.java (verifyInbound(), called
+// after message 3 / RouterInfo receipt):
+//
+//	long rtt = _context.clock().now() - _con.getCreated();
+//	_peerSkew -= ((rtt / 2) + 500) / 1000;
+//	long diff = 1000*Math.abs(_peerSkew);
+//	boolean skewOK = diff < Router.CLOCK_FUDGE_FACTOR;   // 1*60*1000 ms
+//	→ fail(NTCPConnection.REASON_SKEW)                  // reason 7
+//
+// The initial `_peerSkew` is set at message-1 arrival to (now - tsA); we
+// reproduce it from cfg.msg1ReceivedAt and cfg.peerTimestampSecs, and the RTT
+// as (msg3 arrival - msg1 arrival) — Java measures from connection creation,
+// the same interval in practice for an inbound NTCP2 connection. Java rounds
+// each term to whole seconds (+500 ms); we keep full duration precision, which
+// only makes the boundary decision slightly more accurate.
+//
+// The tolerance comparison uses `<= maxSkew` (pass), matching this package's
+// message-1/message-2 checks in clockSkewWithinTolerance, so a connection that
+// passed the initial check at exactly D does not fail here for a zero-RTT peer.
+//
+// i2pd has no handshake-phase recheck — it re-validates DateTime-block
+// timestamps in the data phase instead (libi2pd/NTCP2.cpp ProcessPacket
+// DateTime handling) — so the dev spec's explicit requirement and Java decide.
+//
+// On failure the spec's "Disconnect message" is a data-phase Termination block
+// (§"Termination": "rsn :: reason, 1 byte: … 7: clock skew"; reference i2pd
+// libi2pd/NTCP2.h NTCP2TerminationReason eNTCP2BlkTermination reason 7 /
+// SendTermination), sealed here with the just-derived data-phase keys and sent
+// via sendTerminationBlock, followed by a graceful close so the frame flushes.
+// A failure to seal or write the frame falls back to the abnormal close.
+func (c *Conn) recheckClockSkewAfterConfirm(cfg *Config, raw net.Conn) error {
+	msg3At := cfg.msg3ReceivedAt
+	if msg3At.IsZero() {
+		// Defensive: if the responder path did not record msg3 arrival, the
+		// recheck runs immediately after it, so "now" is the arrival time.
+		msg3At = time.Now()
+	}
+
+	// Signed peer skew at message-1 arrival: (our clock) - tsA.
+	skew := cfg.msg1ReceivedAt.Sub(time.Unix(int64(cfg.peerTimestampSecs), 0))
+	rtt := msg3At.Sub(cfg.msg1ReceivedAt)
+	if rtt < 0 {
+		rtt = 0
+	}
+	adjusted := skew - rtt/2
+	if adjusted < 0 {
+		adjusted = -adjusted
+	}
+
+	maxSkew := cfg.maxClockSkew()
+	if adjusted <= maxSkew {
+		return nil
+	}
+
+	flog("recheckClockSkewAfterConfirm", logger.Fields{
+		"remote":   raw.RemoteAddr().String(),
+		"skew":     skew.String(),
+		"rtt":      rtt.String(),
+		"adj_skew": adjusted.String(),
+		"max_skew": maxSkew.String(),
+	}).Warn("NTCP2 responder: RTT-adjusted clock skew exceeds maximum after SessionConfirmed")
+
+	// Spec: reply with the disconnect (termination) message, then close.
+	if err := c.sendTerminationBlock(TerminationReasonClockSkew); err != nil {
+		flog("recheckClockSkewAfterConfirm", logger.Fields{"error": err.Error()}).
+			Debug("could not seal clock-skew termination frame; using abnormal close")
+		c.broken.Store(true)
+		c.sendTCPRST(raw)
+	} else {
+		c.broken.Store(true)
+		c.gracefulClose(raw)
+	}
+
+	return oops.
+		Code("MSG3_CLOCK_SKEW_RECHECK").
+		In("ntcp2").
+		With("adjusted_skew", adjusted.String()).
+		With("max_skew", maxSkew.String()).
+		Errorf("RTT-adjusted clock skew %s exceeds tolerance %s after SessionConfirmed (termination block sent, reason %d)",
+			adjusted, maxSkew, TerminationReasonClockSkew)
 }
 
 // probeNoMoreData verifies that the peer sent nothing beyond the end of a

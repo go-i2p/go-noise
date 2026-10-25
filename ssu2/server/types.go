@@ -41,12 +41,36 @@ var (
 // ─── From ssu2/wire ───────────────────────────────────────────────────────────
 
 type (
-	SSU2Block       = wire.SSU2Block
-	SSU2Packet      = wire.SSU2Packet
-	TokenCache      = wire.TokenCache
-	Token           = wire.Token
-	NewTokenBlock   = wire.NewTokenBlock
-	HeaderProtector = wire.HeaderProtector
+	SSU2Block           = wire.SSU2Block
+	SSU2Packet          = wire.SSU2Packet
+	TokenCache          = wire.TokenCache
+	Token               = wire.Token
+	NewTokenBlock       = wire.NewTokenBlock
+	HeaderProtector     = wire.HeaderProtector
+	HeaderType          = wire.HeaderType
+	IntroKeyMessageSpec = wire.IntroKeyMessageSpec
+
+	// TerminationReason is the 1-byte reason code in a Termination block.
+	// See ssu2.md §"Termination".
+	TerminationReason = wire.TerminationReason
+)
+
+const (
+	// Termination reason codes re-exported from ssu2/wire. Values are defined by
+	// ssu2.md §"Termination" ("rsn :: reason, 1 byte").
+	TerminationNormalClose          = wire.TerminationNormalClose
+	TerminationReceived             = wire.TerminationReceived
+	TerminationIdleTimeout          = wire.TerminationIdleTimeout
+	TerminationRouterShutdown       = wire.TerminationRouterShutdown
+	TerminationDataPhaseAEADFailure = wire.TerminationDataPhaseAEADFailure
+	TerminationIncompatibleOptions  = wire.TerminationIncompatibleOptions
+	TerminationClockSkew            = wire.TerminationClockSkew
+	TerminationPaddingViolation     = wire.TerminationPaddingViolation
+	TerminationSessionRequestError  = wire.TerminationSessionRequestError
+	TerminationBadToken             = wire.TerminationBadToken
+	TerminationConnectionLimits     = wire.TerminationConnectionLimits
+	TerminationWrongNetID           = wire.TerminationWrongNetID
+	TerminationBanned               = wire.TerminationBanned
 )
 
 const (
@@ -114,4 +138,9 @@ var (
 	DecodeAddressBlock             = wire.DecodeAddressBlock
 	EncryptIntroKeyAEAD            = wire.EncryptIntroKeyAEAD
 	DecryptIntroKeyAEAD            = wire.DecryptIntroKeyAEAD
+	BuildIntroKeyMessage           = wire.BuildIntroKeyMessage
+	OpenIntroKeyMessage            = wire.OpenIntroKeyMessage
+	NonceConnectionIDs             = wire.NonceConnectionIDs
+	NewDateTimeBlock               = wire.NewDateTimeBlock
+	NewAddressBlockForAddr         = wire.NewAddressBlockForAddr
 )

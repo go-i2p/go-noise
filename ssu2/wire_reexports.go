@@ -18,6 +18,8 @@ type (
 	HeaderType             = wire.HeaderType
 	HeaderProtector        = wire.HeaderProtector
 	HeaderProtectorManager = wire.HeaderProtectorManager
+	// IntroKeyMessageSpec describes one intro-key protected out-of-session message.
+	IntroKeyMessageSpec = wire.IntroKeyMessageSpec
 )
 
 // ChaCha / padding modifier types
@@ -160,6 +162,11 @@ const (
 const (
 	TokenSize         = wire.TokenSize
 	MaxTokenCacheSize = wire.MaxTokenCacheSize
+
+	// RetryTokenTTL is the lifetime of a token issued in a Retry message.
+	// Spec ref: ssu2.md §"Tokens" - "expires in a few seconds"; i2pd
+	// SSU2_TOKEN_EXPIRATION_TIMEOUT = 9.
+	RetryTokenTTL = wire.RetryTokenTTL
 )
 
 // ─── Function re-exports ───────────────────────────────────────────────────────
@@ -185,10 +192,14 @@ var (
 	NewHeaderProtectorFromIntroKey = wire.NewHeaderProtectorFromIntroKey
 	NewHeaderProtectorManager      = wire.NewHeaderProtectorManager
 
-	ExtractConnectionID = wire.ExtractConnectionID
-	EncodeConnectionID  = wire.EncodeConnectionID
-	ExtractPacketNumber = wire.ExtractPacketNumber
-	EncodePacketNumber  = wire.EncodePacketNumber
+	ExtractConnectionID    = wire.ExtractConnectionID
+	BuildIntroKeyMessage   = wire.BuildIntroKeyMessage
+	OpenIntroKeyMessage    = wire.OpenIntroKeyMessage
+	NewDateTimeBlock       = wire.NewDateTimeBlock
+	NewAddressBlockForAddr = wire.NewAddressBlockForAddr
+	EncodeConnectionID     = wire.EncodeConnectionID
+	ExtractPacketNumber    = wire.ExtractPacketNumber
+	EncodePacketNumber     = wire.EncodePacketNumber
 
 	// ChaCha obfuscation modifier constructor
 	NewChaChaObfuscationModifier = wire.NewChaChaObfuscationModifier

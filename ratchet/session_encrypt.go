@@ -16,8 +16,13 @@ import (
 // the destination already exists, it uses the fast Existing Session format;
 // otherwise it starts a new session with the Noise IK handshake.
 //
-// The plaintext must be non-empty; the I2P spec requires at least one
-// payload block. Returns an error if plaintext is nil or zero-length.
+// An empty plaintext is allowed and required for Existing Session messages:
+// ecies.md §"Retransmissions and State Transistions" -> §"Ratchet-layer
+// Responses" instructs implementations to "generate an 'empty' (no Garlic Clove
+// block) response at the ECIES layer if no reverse traffic is sent in a short
+// period of time", and §"Multiple NSR Messages" says Alice "should set a timer,
+// and send an empty ES message". New Session messages still require a payload
+// (the mandatory DateTime block), which ValidateNewSessionPayload enforces.
 //
 // Thread safety: when an existing session is found, sm.mu.RLock is held
 // through the entire encryptExistingSession call. This prevents concurrent
@@ -31,10 +36,6 @@ func (sm *SessionManager) EncryptGarlicMessage(
 	destinationHash, destinationPubKey [32]byte,
 	plaintextGarlic []byte,
 ) ([]byte, error) {
-	if len(plaintextGarlic) == 0 {
-		return nil, oops.Errorf("plaintext must be non-empty: garlic messages require at least one payload block")
-	}
-
 	flog("EncryptGarlicMessage", logger.Fields{"plaintext_size": len(plaintextGarlic)}).Debug("Encrypting garlic message")
 
 	// Hold RLock through the encrypt dispatch to prevent concurrent session
@@ -42,12 +43,29 @@ func (sm *SessionManager) EncryptGarlicMessage(
 	// holding RLock during encryption does not create a bottleneck.
 	sm.mu.RLock()
 	session, exists := sm.sessions[destinationHash]
+	// An initiator whose NSR has not arrived yet must keep retransmitting New
+	// Session messages rather than attempt Existing Session traffic.
+	//
+	// Spec ref: ecies.md §"4a) DH Ratchet" - "Alice continues sending New
+	// Session (NS) messages to Bob until receiving one of Bob's New Session
+	// Reply (NSR) messages. She then uses the NSR's Payload Section KDF results
+	// as inputs for the session ratchets ... and begins sending Existing Session
+	// (ES) messages."
+	//
+	// Each retransmission uses a fresh ephemeral key, so each produces a
+	// different NSR tag and the responder can answer all of them
+	// (§"Multiple NS Messages").
+	needsNS := false
 	if exists {
-		result, err := sm.encryptExistingSession(session, plaintextGarlic)
-		sm.mu.RUnlock()
-		return result, err
+		session.mu.Lock()
+		needsNS = session.isInitiator && session.handshakeState != nil
+		session.mu.Unlock()
 	}
 	sm.mu.RUnlock()
+
+	if exists && !needsNS {
+		return sm.encryptExistingSession(session, plaintextGarlic)
+	}
 
 	return sm.encryptNewSession(destinationHash, destinationPubKey, plaintextGarlic)
 }
@@ -62,6 +80,13 @@ func (sm *SessionManager) encryptNewSession(
 ) ([]byte, error) {
 	flog("encryptNewSession", logger.Fields{"plaintext_len": len(plaintextGarlic)}).Debug("Encrypting new session message")
 	if err := ValidateNewSessionPayload(plaintextGarlic); err != nil {
+		// A caller whose NSR has not arrived yet is routed here to retransmit NS
+		// (§"4a) DH Ratchet"). If its payload is not an NS payload it was trying
+		// to send ES, so report the ordering violation that actually explains the
+		// problem.
+		if oopsErr := sm.pendingInitiatorESAttemptError(destinationHash); oopsErr != nil {
+			return nil, oopsErr
+		}
 		return nil, oops.Wrapf(err, "new session payload rejected")
 	}
 
@@ -97,6 +122,21 @@ func (sm *SessionManager) storeNewSessionState(
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	// A retransmitted New Session must NOT replace the session of an NS that is
+	// still unanswered: each NS carries a fresh ephemeral key, so each produces a
+	// different NSR tag, and the initiator must be able to accept whichever NSR
+	// arrives. Replacing the state meant only the last NS could ever be answered.
+	//
+	// Spec ref: ecies.md §"4a) DH Ratchet" - "Alice continues sending New Session
+	// (NS) messages to Bob until receiving one of Bob's New Session Reply (NSR)
+	// messages"; §"Multiple NS Messages" - "Each NSR uses the handshake state and
+	// tagset corresponding to the incoming NS."
+	if isInitiator {
+		if existing, ok := sm.sessions[destinationHash]; ok && existing.isInitiator && existing.handshakeState != nil {
+			return sm.addInitiatorNSLocked(existing, hs)
+		}
+	}
+
 	if len(sm.sessions) >= MaxGarlicSessions {
 		sm.evictLRUSessionLocked()
 	}
@@ -104,6 +144,10 @@ func (sm *SessionManager) storeNewSessionState(
 	// loop that keeps re-initiating to the same destination cannot displace
 	// sessions for other peers.
 	sm.enforcePerPeerQuotaLocked(destinationPubKey)
+
+	if session.pendingNSRs == nil {
+		session.pendingNSRs = make(map[[8]byte]*noiseHandshakeState)
+	}
 
 	// Register the expected NSR tag for initiator sessions BEFORE storing the
 	// session, so that if NSR tag registration fails, we don't create an unusable
@@ -122,6 +166,50 @@ func (sm *SessionManager) storeNewSessionState(
 
 	flog("storeNewSessionState", logger.Fields{"session_count": len(sm.sessions)}).Debug("New session state stored")
 
+	return nil
+}
+
+// addInitiatorNSLocked records an additional retransmitted New Session on an
+// existing initiator session, keeping its handshake state and expected NSR tag
+// alongside the previous ones.
+//
+// Must be called with sm.mu held for writing.
+func (sm *SessionManager) addInitiatorNSLocked(session *Session, hs *noiseHandshakeState) error {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
+	if len(session.pendingNSRs) >= maxPendingNSReplies {
+		// Spec §"Multiple NS Messages" permits limiting NS sends to avoid a
+		// resource-exhaustion attack; the caller's NS is dropped.
+		flog("addInitiatorNSLocked", logger.Fields{"pending": len(session.pendingNSRs)}).
+			Debug("Initiator NSR pending set full, not retransmitting state for this NS")
+		return nil
+	}
+	if err := sm.registerNSRTagLocked(session, hs); err != nil {
+		return oops.Wrapf(err, "failed to register NSR tag for retransmitted NS")
+	}
+	flog("addInitiatorNSLocked", logger.Fields{"pending": len(session.pendingNSRs)}).
+		Debug("Registered additional NSR tag for retransmitted New Session")
+	return nil
+}
+
+// pendingInitiatorESAttemptError returns the §1g ordering error when an
+// established initiator session is still awaiting its New Session Reply, or nil
+// when that is not the case.
+func (sm *SessionManager) pendingInitiatorESAttemptError(destinationHash [32]byte) error {
+	sm.mu.RLock()
+	session, exists := sm.sessions[destinationHash]
+	sm.mu.RUnlock()
+	if !exists {
+		return nil
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.isInitiator && session.handshakeState != nil {
+		return oops.Errorf(
+			"spec violation (ecies.md §1g): initiator must receive New Session Reply before sending Existing Session messages",
+		)
+	}
 	return nil
 }
 
@@ -179,6 +267,7 @@ func (sm *SessionManager) encryptExistingSession(
 	msg := buildExistingSessionMessage(sessionTag, ciphertext, tag)
 
 	session.LastUsed = time.Now()
+	session.lastSent = time.Now()
 	session.MessageCounter++
 
 	return msg, nil
@@ -204,8 +293,11 @@ func (sm *SessionManager) EncryptUnboundGarlicMessage(
 	destinationPubKey [32]byte,
 	plaintextGarlic []byte,
 ) ([]byte, error) {
+	// An unbound New Session must carry a payload with the mandatory DateTime
+	// block, so an empty plaintext is rejected here (ValidateNewSessionPayload
+	// enforces the block requirement).
 	if len(plaintextGarlic) == 0 {
-		return nil, oops.Errorf("plaintext must be non-empty: garlic messages require at least one payload block")
+		return nil, oops.Errorf("unbound new session plaintext must not be empty: an NS payload requires a DateTime block")
 	}
 
 	flog("EncryptUnboundGarlicMessage", logger.Fields{"plaintext_size": len(plaintextGarlic)}).Debug("Encrypting unbound garlic message")
@@ -255,17 +347,29 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	// Phase 1: crypto under session lock only (no sm.mu needed for key derivation).
 	session.mu.Lock()
 
-	if session.handshakeState == nil {
-		session.mu.Unlock()
-		return nil, oops.Errorf("session has no pending handshake state for NSR")
-	}
 	if session.isInitiator {
 		session.mu.Unlock()
 		return nil, oops.Errorf("only the responder can send a New Session Reply")
 	}
 
-	_, wireMsg, nsrKeys, err := writeNoiseIKMessage2(session.handshakeState, payload)
-	session.handshakeState = nil // consumed; NSR can only be sent once
+	// Take the handshake state of the NS we are replying to: the original one
+	// first, then each additional queued NS. Each NSR must use the state and
+	// tagset of the NS it answers.
+	//
+	// Spec ref: ecies.md §"Multiple NSR Messages" - "Each NSR uses the handshake
+	// state and tagset corresponding to the incoming NS."
+	hs := session.handshakeState
+	if hs == nil && len(session.awaitingNSRReplies) > 0 {
+		hs = session.awaitingNSRReplies[0]
+		session.awaitingNSRReplies = session.awaitingNSRReplies[1:]
+	}
+	if hs == nil {
+		session.mu.Unlock()
+		return nil, oops.Errorf("session has no pending handshake state for NSR")
+	}
+	session.handshakeState = nil // the head NS is now answered
+
+	_, wireMsg, nsrKeys, err := writeNoiseIKMessage2(hs, payload)
 	session.mu.Unlock()
 
 	if err != nil {
@@ -276,6 +380,19 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	// Responder sends in keyBA direction (B→A) and receives in keyAB direction (A→B).
 	sm.mu.Lock()
 	session.mu.Lock()
+	// When replying to an ADDITIONAL NS, the inbound tag set derived from the
+	// previous reply must keep being accepted: the initiator uses whichever NSR
+	// arrives first, so until an ES message identifies the live one, every
+	// reply's tag set has to be decryptable.
+	//
+	// Spec ref: ecies.md §"Multiple NS Messages" - "For each NS message received,
+	// Bob creates a new inbound session, using the KDF results of the reply
+	// Payload Section for inputs to the new inbound and outbound ES DH Ratchet."
+	additionalReply := session.nsrSent
+	if additionalReply {
+		session.archiveRecvTagset()
+	}
+	session.nsrSent = true
 	if applyErr := sm.applyNSRKeysToSessionWhileLocked(session, nsrKeys, false); applyErr != nil {
 		session.mu.Unlock()
 		sm.mu.Unlock()
@@ -283,6 +400,7 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	}
 	session.awaitingFirstES = true
 	session.LastUsed = time.Now()
+	session.lastSent = time.Now()
 	session.mu.Unlock()
 	sm.mu.Unlock()
 

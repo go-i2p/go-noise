@@ -14,7 +14,7 @@ func TestNewTokenCache(t *testing.T) {
 	t.Run("default TTL", func(t *testing.T) {
 		cache := NewTokenCache(0)
 		require.NotNil(t, cache)
-		assert.Equal(t, 60*time.Second, cache.GetTTL())
+		assert.Equal(t, RetryTokenTTL, cache.GetTTL(), "Retry tokens expire in a few seconds per ssu2.md §\"Tokens\"")
 		assert.Equal(t, 0, cache.Size())
 	})
 
@@ -27,7 +27,7 @@ func TestNewTokenCache(t *testing.T) {
 	t.Run("negative TTL uses default", func(t *testing.T) {
 		cache := NewTokenCache(-5 * time.Second)
 		require.NotNil(t, cache)
-		assert.Equal(t, 60*time.Second, cache.GetTTL())
+		assert.Equal(t, RetryTokenTTL, cache.GetTTL(), "Retry tokens expire in a few seconds per ssu2.md §\"Tokens\"")
 	})
 }
 
@@ -36,7 +36,7 @@ func TestTokenCache_GenerateToken(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
 	t.Run("valid token generation", func(t *testing.T) {
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 		require.NotNil(t, token)
 		assert.Equal(t, TokenSize, len(token))
@@ -44,7 +44,7 @@ func TestTokenCache_GenerateToken(t *testing.T) {
 	})
 
 	t.Run("nil address", func(t *testing.T) {
-		token, err := cache.GenerateToken(nil)
+		token, err := cache.GenerateToken(nil, nil)
 		assert.Error(t, err)
 		assert.Nil(t, token)
 		assert.Contains(t, err.Error(), "address cannot be nil")
@@ -55,10 +55,10 @@ func TestTokenCache_GenerateToken(t *testing.T) {
 		addr1 := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 		addr2 := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
 
-		token1, err := cache.GenerateToken(addr1)
+		token1, err := cache.GenerateToken(addr1, nil)
 		require.NoError(t, err)
 
-		token2, err := cache.GenerateToken(addr2)
+		token2, err := cache.GenerateToken(addr2, nil)
 		require.NoError(t, err)
 
 		assert.NotEqual(t, token1, token2)
@@ -69,10 +69,10 @@ func TestTokenCache_GenerateToken(t *testing.T) {
 		cache := NewTokenCache(60 * time.Second)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		token1, err := cache.GenerateToken(addr)
+		token1, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
-		token2, err := cache.GenerateToken(addr)
+		token2, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		// Returns the same token to prevent retry-storm eviction.
@@ -86,49 +86,49 @@ func TestTokenCache_ValidateToken(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
 	t.Run("valid token", func(t *testing.T) {
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
-		valid := cache.ValidateToken(token, addr)
+		valid := cache.ValidateToken(token, addr, nil)
 		assert.True(t, valid)
 	})
 
 	t.Run("invalid token value", func(t *testing.T) {
-		_, err := cache.GenerateToken(addr)
+		_, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		wrongToken := make([]byte, TokenSize)
-		valid := cache.ValidateToken(wrongToken, addr)
+		valid := cache.ValidateToken(wrongToken, addr, nil)
 		assert.False(t, valid)
 	})
 
 	t.Run("wrong address", func(t *testing.T) {
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		wrongAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
-		valid := cache.ValidateToken(token, wrongAddr)
+		valid := cache.ValidateToken(token, wrongAddr, nil)
 		assert.False(t, valid)
 	})
 
 	t.Run("nil address", func(t *testing.T) {
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
-		valid := cache.ValidateToken(token, nil)
+		valid := cache.ValidateToken(token, nil, nil)
 		assert.False(t, valid)
 	})
 
 	t.Run("wrong token length", func(t *testing.T) {
-		_, err := cache.GenerateToken(addr)
+		_, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		shortToken := make([]byte, 8)
-		valid := cache.ValidateToken(shortToken, addr)
+		valid := cache.ValidateToken(shortToken, addr, nil)
 		assert.False(t, valid)
 
 		longToken := make([]byte, 32)
-		valid = cache.ValidateToken(longToken, addr)
+		valid = cache.ValidateToken(longToken, addr, nil)
 		assert.False(t, valid)
 	})
 
@@ -136,13 +136,13 @@ func TestTokenCache_ValidateToken(t *testing.T) {
 		cache := NewTokenCache(50 * time.Millisecond)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		// Wait for token to expire
 		time.Sleep(60 * time.Millisecond)
 
-		valid := cache.ValidateToken(token, addr)
+		valid := cache.ValidateToken(token, addr, nil)
 		assert.False(t, valid)
 	})
 
@@ -151,7 +151,7 @@ func TestTokenCache_ValidateToken(t *testing.T) {
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
 		fakeToken := make([]byte, TokenSize)
-		valid := cache.ValidateToken(fakeToken, addr)
+		valid := cache.ValidateToken(fakeToken, addr, nil)
 		assert.False(t, valid)
 	})
 }
@@ -161,16 +161,16 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
 	t.Run("valid token consumption", func(t *testing.T) {
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 		assert.Equal(t, 1, cache.Size())
 
-		consumed := cache.ConsumeToken(token, addr)
+		consumed := cache.ConsumeToken(token, addr, nil)
 		assert.True(t, consumed)
 		assert.Equal(t, 0, cache.Size())
 
 		// Token should not be valid after consumption
-		valid := cache.ValidateToken(token, addr)
+		valid := cache.ValidateToken(token, addr, nil)
 		assert.False(t, valid)
 	})
 
@@ -179,7 +179,7 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
 		fakeToken := make([]byte, TokenSize)
-		consumed := cache.ConsumeToken(fakeToken, addr)
+		consumed := cache.ConsumeToken(fakeToken, addr, nil)
 		assert.False(t, consumed)
 	})
 
@@ -187,11 +187,11 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 		cache := NewTokenCache(60 * time.Second)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		wrongAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
-		consumed := cache.ConsumeToken(token, wrongAddr)
+		consumed := cache.ConsumeToken(token, wrongAddr, nil)
 		assert.False(t, consumed)
 
 		// Original token should still exist
@@ -202,13 +202,13 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 		cache := NewTokenCache(50 * time.Millisecond)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		// Wait for token to expire
 		time.Sleep(60 * time.Millisecond)
 
-		consumed := cache.ConsumeToken(token, addr)
+		consumed := cache.ConsumeToken(token, addr, nil)
 		assert.False(t, consumed)
 		assert.Equal(t, 0, cache.Size()) // Expired token should be removed
 	})
@@ -217,10 +217,10 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 		cache := NewTokenCache(60 * time.Second)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
-		consumed := cache.ConsumeToken(token, nil)
+		consumed := cache.ConsumeToken(token, nil, nil)
 		assert.False(t, consumed)
 	})
 
@@ -228,11 +228,11 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 		cache := NewTokenCache(60 * time.Second)
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 
-		_, err := cache.GenerateToken(addr)
+		_, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		shortToken := make([]byte, 8)
-		consumed := cache.ConsumeToken(shortToken, addr)
+		consumed := cache.ConsumeToken(shortToken, addr, nil)
 		assert.False(t, consumed)
 	})
 }
@@ -246,9 +246,9 @@ func TestTokenCache_Cleanup(t *testing.T) {
 		addr2 := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
 		addr3 := &net.UDPAddr{IP: net.ParseIP("192.168.1.3"), Port: 9003}
 
-		_, err := cache.GenerateToken(addr1)
+		_, err := cache.GenerateToken(addr1, nil)
 		require.NoError(t, err)
-		_, err = cache.GenerateToken(addr2)
+		_, err = cache.GenerateToken(addr2, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, 2, cache.Size())
@@ -257,7 +257,7 @@ func TestTokenCache_Cleanup(t *testing.T) {
 		time.Sleep(60 * time.Millisecond)
 
 		// Add a fresh token
-		_, err = cache.GenerateToken(addr3)
+		_, err = cache.GenerateToken(addr3, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, 3, cache.Size())
@@ -274,9 +274,9 @@ func TestTokenCache_Cleanup(t *testing.T) {
 		addr1 := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 		addr2 := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
 
-		_, err := cache.GenerateToken(addr1)
+		_, err := cache.GenerateToken(addr1, nil)
 		require.NoError(t, err)
-		_, err = cache.GenerateToken(addr2)
+		_, err = cache.GenerateToken(addr2, nil)
 		require.NoError(t, err)
 
 		removed := cache.Cleanup()
@@ -299,11 +299,11 @@ func TestTokenCache_Size(t *testing.T) {
 	addr1 := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
 	addr2 := &net.UDPAddr{IP: net.ParseIP("192.168.1.2"), Port: 9002}
 
-	_, err := cache.GenerateToken(addr1)
+	_, err := cache.GenerateToken(addr1, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, cache.Size())
 
-	_, err = cache.GenerateToken(addr2)
+	_, err = cache.GenerateToken(addr2, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, cache.Size())
 
@@ -317,7 +317,7 @@ func TestTokenCache_Clear(t *testing.T) {
 	// Add some tokens
 	for i := 0; i < 5; i++ {
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001 + i}
-		_, err := cache.GenerateToken(addr)
+		_, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 	}
 
@@ -341,7 +341,7 @@ func TestTokenCache_Concurrent(t *testing.T) {
 			go func(id int) {
 				defer wg.Done()
 				addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001 + id}
-				_, err := cache.GenerateToken(addr)
+				_, err := cache.GenerateToken(addr, nil)
 				assert.NoError(t, err)
 			}(i)
 		}
@@ -354,7 +354,7 @@ func TestTokenCache_Concurrent(t *testing.T) {
 	t.Run("concurrent validation", func(t *testing.T) {
 		cache.Clear()
 		addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001}
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
 		numGoroutines := 50
@@ -362,7 +362,7 @@ func TestTokenCache_Concurrent(t *testing.T) {
 		for i := 0; i < numGoroutines; i++ {
 			go func() {
 				defer wg.Done()
-				valid := cache.ValidateToken(token, addr)
+				valid := cache.ValidateToken(token, addr, nil)
 				assert.True(t, valid)
 			}()
 		}
@@ -375,7 +375,7 @@ func TestTokenCache_Concurrent(t *testing.T) {
 		// Add tokens
 		for i := 0; i < 50; i++ {
 			addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.1"), Port: 9001 + i}
-			_, err := cache.GenerateToken(addr)
+			_, err := cache.GenerateToken(addr, nil)
 			require.NoError(t, err)
 		}
 
@@ -396,7 +396,7 @@ func TestTokenCache_IPv6Addresses(t *testing.T) {
 
 	t.Run("IPv6 token generation", func(t *testing.T) {
 		addr := &net.UDPAddr{IP: net.ParseIP("2001:db8::1"), Port: 9001}
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 		require.NotNil(t, token)
 		assert.Equal(t, TokenSize, len(token))
@@ -404,10 +404,10 @@ func TestTokenCache_IPv6Addresses(t *testing.T) {
 
 	t.Run("IPv6 token validation", func(t *testing.T) {
 		addr := &net.UDPAddr{IP: net.ParseIP("2001:db8::1"), Port: 9001}
-		token, err := cache.GenerateToken(addr)
+		token, err := cache.GenerateToken(addr, nil)
 		require.NoError(t, err)
 
-		valid := cache.ValidateToken(token, addr)
+		valid := cache.ValidateToken(token, addr, nil)
 		assert.True(t, valid)
 	})
 }
@@ -415,7 +415,7 @@ func TestTokenCache_IPv6Addresses(t *testing.T) {
 func TestTokenCache_GetTTL(t *testing.T) {
 	t.Run("default TTL", func(t *testing.T) {
 		cache := NewTokenCache(0)
-		assert.Equal(t, 60*time.Second, cache.GetTTL())
+		assert.Equal(t, RetryTokenTTL, cache.GetTTL(), "Retry tokens expire in a few seconds per ssu2.md §\"Tokens\"")
 	})
 
 	t.Run("custom TTL", func(t *testing.T) {

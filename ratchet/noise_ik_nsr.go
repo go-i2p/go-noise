@@ -284,8 +284,11 @@ func readNoiseIKMessage2(
 // tag") and the reference implementation (Java I2P ECIESAEADEngine.java,
 // encryptNewSessionReply / decryptNewSessionReply, which use
 // SplitKeys.k_ba + HKDF(k_ba, ZEROLEN, "AttachPayloadKDF", 32) with
-// AEAD AD = handshake hash). The correct construction — used here and in
-// Java I2P — is the post-split form:
+// AEAD AD = handshake hash; ECIESAEADEngine.java:1298-1305). i2pd confirms the
+// same construction (ECIESX25519AEADRatchetSession.cpp:609 and :702,
+// HKDF(keydata + 32, nullptr, 0, "AttachPayloadKDF", ..., 32)), so both
+// references agree and the dev-spec paragraph is an erratum. The correct
+// construction — used here and in both references — is the post-split form:
 //
 //	keydata     = HKDF(chainKey, ZEROLEN, "", 64)
 //	k_ab        = keydata[0:32]

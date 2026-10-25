@@ -80,7 +80,7 @@ func TestSendRetry_IsAEADSealedAndHeaderProtected(t *testing.T) {
 	// Alice's source conn ID (bytes 16-23) becomes Bob's dest conn ID.
 	originalHeader[16] = 0xAA
 
-	require.NoError(t, listener.sendRetry(remoteAddr, token, originalHeader, 0))
+	require.NoError(t, listener.sendRetry(remoteAddr, token, originalHeader, 0, nil))
 
 	wire, ok := cap.last()
 	require.True(t, ok, "Retry must be written to the socket")
@@ -132,7 +132,7 @@ func TestSendRetry_FailsClosedWithoutIntroKey(t *testing.T) {
 	t.Cleanup(func() { listener.Close() })
 
 	remoteAddr := &net.UDPAddr{IP: net.ParseIP("203.0.113.9"), Port: 8877}
-	err := listener.sendRetry(remoteAddr, []byte{1, 2, 3, 4, 5, 6, 7, 8}, make([]byte, LongHeaderSize), 0)
+	err := listener.sendRetry(remoteAddr, []byte{1, 2, 3, 4, 5, 6, 7, 8}, make([]byte, LongHeaderSize), 0, nil)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "IntroKey")

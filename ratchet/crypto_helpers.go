@@ -169,6 +169,11 @@ func generateAndTrackSessionTag(session *Session) ([8]byte, error) {
 	if err != nil {
 		return [8]byte{}, oops.Wrapf(err, "failed to generate session tag")
 	}
+	// Track consumption so the dynamic look-ahead and the "send next key at tag
+	// 4096" threshold operate on real values.
+	// Spec ref: ecies.md §"Parameters" - "Tagset look ahead of tag N",
+	// "Send next key at tag: 4096".
+	session.usedTags++
 	return sessionTag, nil
 }
 
@@ -191,83 +196,61 @@ func deriveTagAndSymKeysFromChainKey(chainKey [32]byte) (tagKey, symKey [32]byte
 	return tagKey, symKey, nil
 }
 
-// applyRatchetKeysInternal performs one DH ratchet step in a single direction
-// and applies the resulting chain key to that direction's symmetric and tag
-// ratchets.
+// installSendTagset performs the send direction's DH and installs the resulting
+// chains. It is called only when the peer's reverse NextKey arrives, which is
+// when the spec says the tag sender does its single DH.
 //
-// Per the spec's DH Ratchet KDF (ecies.rst §"DH Ratchet KDF"), each direction
-// maintains its own nextRootKey: "rootKey = nextRootKey // from previous
-// tagset in this direction". The conformant DHRatchet.PerformRatchet performs
-// the X25519 DH, derives tagsetKey = HKDF(sharedSecret, ZEROLEN,
-// "XDHRatchetTagSet", 32), then runs DH_INITIALIZE(rootKey, tagsetKey) and
-// returns (nextRootKey, ck) for ONE direction. The Session therefore:
+// Spec ref: ecies.md §"4a) DH Ratchet" -> §"DH RATCHET MESSAGE FLOW":
+// "(do DH, create OB Tagset #N)".
 //
-//  1. selects the target direction's root key via DHRatchet.SetRootKey,
-//  2. calls PerformRatchet to obtain (nextRootKey, ck),
-//  3. persists nextRootKey back into that direction's root key, and
-//  4. derives (sessTag_ck, symmKey_ck) from ck via TagAndKeyGenKeys and
-//     installs them into the direction's ratchets.
+// Per the same section, "After the DH ratchet is complete for an outbound
+// tagset ... it should be used immediately, and the old outbound tagset may be
+// deleted" - so, unlike the inbound direction, nothing is archived here.
 //
 // Must be called with session.mu held.
-func applyRatchetKeysInternal(session *Session, isReceiving bool) error {
-	var logFunc string
-	if isReceiving {
-		logFunc = "applyRecvRatchetKeys"
-	} else {
-		logFunc = "applySendRatchetKeys"
-	}
-	flog(logFunc).Debug("performing DH ratchet step and applying derived keys")
-
-	// Select the target direction's root key as the KDF input.
-	var rootKey *[32]byte
-	if isReceiving {
-		rootKey = &session.recvRootKey
-	} else {
-		rootKey = &session.sendRootKey
-	}
-	session.DHRatchet.SetRootKey(*rootKey)
-
-	// Perform the single-direction ratchet step.
-	nextRootKey, chainKey, err := session.DHRatchet.PerformRatchet()
+func (s *Session) installSendTagset(tagSetID uint16) error {
+	flog("installSendTagset", logger.Fields{"tag_set_id": tagSetID}).Debug("Performing send-direction DH ratchet")
+	tagKey, symKey, err := s.sendDir.ratchet(&s.sendRootKey)
 	if err != nil {
-		if isReceiving {
-			return oops.Wrapf(err, "failed to perform receiving DH ratchet")
-		} else {
-			return oops.Wrapf(err, "failed to perform DH ratchet")
-		}
+		return err
 	}
-
-	// Persist the direction's next root key for the subsequent ratchet step.
-	*rootKey = nextRootKey
-
-	tagKey, symKey, err := deriveTagAndSymKeysFromChainKey(chainKey)
-	if err != nil {
-		if isReceiving {
-			return oops.Wrapf(err, "failed to derive receiving tag and symmetric keys after DH ratchet")
-		} else {
-			return oops.Wrapf(err, "failed to derive keys after DH ratchet step")
-		}
-	}
-
-	// Assign to appropriate session fields based on direction
-	if isReceiving {
-		session.RecvSymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
-		session.RecvTagRatchet = ratchet.NewTagRatchet(tagKey)
-	} else {
-		session.SymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
-		session.TagRatchet = ratchet.NewTagRatchet(tagKey)
-	}
+	s.TagRatchet = ratchet.NewTagRatchet(tagKey)
+	s.SymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
+	s.sendTagSetID = tagSetID
+	// The outbound tagset restarts its message-number chain at 0: §"4b) Session
+	// Tag Ratchet" defines N as "the message number of the message in the
+	// current chain", and both references reset the counter with each new
+	// tagset (i2pd RatchetTagSet::m_NextIndex, Java RatchetTagSet._lastKey).
+	s.MessageCounter = 0
+	s.usedTags = 0
 	return nil
 }
 
-// applyRecvRatchetKeys performs a DH ratchet step and applies the derived keys
-// to the session's receiving ratchet state.
-func applyRecvRatchetKeys(session *Session) error {
-	return applyRatchetKeysInternal(session, true)
-}
+// installRecvTagset performs the receive direction's DH, archives the tagset it
+// replaces, and installs the new inbound chains with a fresh tagset-local
+// receive window.
+//
+// Spec ref: ecies.md §"4a) DH Ratchet" -> §"DH RATCHET MESSAGE FLOW":
+// "(generate new key #N, do DH, create IB Tagset #N)".
+func (s *Session) installRecvTagset(tagSetID uint16) error {
+	flog("installRecvTagset", logger.Fields{"tag_set_id": tagSetID}).Debug("Performing receive-direction DH ratchet")
+	tagKey, symKey, err := s.recvDir.ratchet(&s.recvRootKey)
+	if err != nil {
+		return err
+	}
+	// Keep listening on the superseded tagset for ~3 minutes.
+	s.archiveRecvTagset()
 
-// applySendRatchetKeys performs a DH ratchet step and applies the derived keys
-// to the session's sending ratchet state.
-func applySendRatchetKeys(session *Session) error {
-	return applyRatchetKeysInternal(session, false)
+	s.RecvTagRatchet = ratchet.NewTagRatchet(tagKey)
+	s.RecvSymmetricRatchet = ratchet.NewSymmetricRatchet(symKey)
+	s.recvTagSetID = tagSetID
+	// The new inbound tagset has its own tagset-local message-number chain
+	// starting at 0, so the receive window and tag->counter map restart. The
+	// old tags moved to prevRecv and stay in the manager's index, so the peer
+	// can keep sending on the old tag set; the session's own pending list must
+	// be emptied to let the caller generate the new tag set's window.
+	s.recvTagCounter = make(map[[8]byte]uint32)
+	s.pendingTags = nil
+	resetRecvWindow(s)
+	return nil
 }

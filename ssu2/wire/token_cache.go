@@ -1,16 +1,23 @@
 package wire
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"crypto/subtle"
 	"net"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/internal/eviction"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
+
+// RetryTokenTTL is the lifetime of a token issued in a Retry message.
+// Spec ref: ssu2.md §"Tokens" - "expires in a few seconds".
+// i2pd: SSU2_TOKEN_EXPIRATION_TIMEOUT = 9 (libi2pd/SSU2Session.h:SSU2_TOKEN_EXPIRATION_TIMEOUT).
+const RetryTokenTTL = 9 * time.Second
 
 // MaxTokenCacheSize is the maximum number of tokens that can be stored.
 // This prevents unbounded growth from peers rapidly changing addresses.
@@ -18,11 +25,25 @@ const MaxTokenCacheSize = 10000
 
 // TokenCache manages tokens for SSU2 retry mechanism.
 // Tokens are used to prevent address spoofing attacks during connection establishment.
-// Per SSU2 specification, tokens are short-lived (typically 60 seconds) and tied to
-// a specific UDP address. The cache enforces a maximum size of MaxTokenCacheSize
-// entries; when full, the oldest token is evicted.
+//
+// A token is bound to the combination of source IP/port AND destination IP/port.
+// ssu2.md §"Tokens": "A token is bound to the combination of source IP/port and
+// destination IP/port. A token received on IPv4 may not be used for IPv6 or vice
+// versa." and "If a router's IP or port changes, it must delete all saved tokens
+// (both inbound and outbound) for the old IP or port, as they are no longer valid."
+//
+// The cache enforces a maximum size of MaxTokenCacheSize entries; when full, the
+// oldest token is evicted.
+//
+// Retry tokens are short-lived - see RetryTokenTTL - not the 60 seconds previously
+// used here. ssu2.md §"Tokens": "A token sent from Bob to Alice in a Retry message
+// must be used immediately, and expires in a few seconds." i2pd's
+// SSU2_TOKEN_EXPIRATION_TIMEOUT is 9 seconds (libi2pd/SSU2Session.h), which is what
+// RetryTokenTTL takes; the longer "several minutes minimum, one or more hours
+// maximum" lifetime in the same paragraph applies only to New Token blocks in
+// established sessions, which are a different token class.
 type TokenCache struct {
-	tokens  map[string]*Token // Key: address string, Value: token data
+	tokens  map[string]*Token // Key: source + destination address pair, Value: token data
 	ttl     time.Duration     // Token time-to-live
 	maxSize int               // Maximum number of cached tokens
 	mutex   sync.RWMutex
@@ -30,13 +51,19 @@ type TokenCache struct {
 
 // Token represents a retry token issued to a specific address.
 type Token struct {
-	Value     []byte       // Token value (8 bytes)
-	Address   *net.UDPAddr // UDP address this token was issued to
-	CreatedAt time.Time    // When token was created
+	Value []byte // Token value (8 bytes)
+	// Address is the peer (source) address the token was issued to.
+	Address *net.UDPAddr
+	// LocalAddress is the destination address (this router's IP/port) the token was
+	// issued on. Spec ref: ssu2.md §"Tokens" - a token is bound to the combination of
+	// source AND destination IP/port.
+	LocalAddress *net.UDPAddr
+	CreatedAt    time.Time // When token was created
 }
 
 // NewTokenCache creates a new token cache with the specified TTL.
-// If ttl is zero or negative, defaults to 60 seconds.
+// If ttl is zero or negative, defaults to RetryTokenTTL (9 seconds), the Retry-token
+// lifetime required by ssu2.md §"Tokens".
 // Uses the default maximum cache size MaxTokenCacheSize.
 func NewTokenCache(ttl time.Duration) *TokenCache {
 	flog("NewTokenCache", logger.Fields{"ttl": ttl}).Debug("Creating new TokenCache")
@@ -49,7 +76,7 @@ func NewTokenCache(ttl time.Duration) *TokenCache {
 func NewTokenCacheWithMaxSize(ttl time.Duration, maxSize int) *TokenCache {
 	flog("NewTokenCacheWithMaxSize", logger.Fields{"ttl": ttl, "maxSize": maxSize}).Debug("Creating new TokenCache with custom max size")
 	if ttl <= 0 {
-		ttl = 60 * time.Second
+		ttl = RetryTokenTTL
 	}
 	if maxSize <= 0 {
 		maxSize = MaxTokenCacheSize
@@ -62,12 +89,27 @@ func NewTokenCacheWithMaxSize(ttl time.Duration, maxSize int) *TokenCache {
 	}
 }
 
+// tokenKey builds the cache key binding a token to the source IP/port and the
+// destination IP/port it was issued on.
+//
+// Spec ref: ssu2.md §"Tokens" - "A token is bound to the combination of source IP/port and
+// destination IP/port. A token received on IPv4 may not be used for IPv6 or vice versa."
+//
+// localAddr may be nil for callers that have no destination address to assert (for example
+// unit tests); the key then covers only the source, matching the previous behaviour.
+func tokenKey(addr, localAddr *net.UDPAddr) string {
+	if localAddr == nil {
+		return addr.String()
+	}
+	return addr.String() + "|" + localAddr.String()
+}
+
 // GenerateToken creates a new token for the specified address.
 // The token is cryptographically random and stored in the cache.
 // Returns the token value.
 // If a valid (non-expired) token already exists for this address, returns
 // the existing token instead of generating a new one to prevent retry storms.
-func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
+func (tc *TokenCache) GenerateToken(addr *net.UDPAddr, localAddr *net.UDPAddr) ([]byte, error) {
 	flog("GenerateToken").Debug("Generating new token")
 	if addr == nil {
 		return nil, oops.
@@ -79,7 +121,7 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 
-	addrStr := addr.String()
+	addrStr := tokenKey(addr, localAddr)
 
 	// Check if valid token already exists for this address
 	if existingToken, ok := tc.lookupToken(addrStr); ok && !tc.isExpired(existingToken) {
@@ -98,9 +140,10 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 	}
 
 	token := &Token{
-		Value:     tokenValue,
-		Address:   addr,
-		CreatedAt: time.Now(),
+		Value:        tokenValue,
+		Address:      addr,
+		LocalAddress: localAddr,
+		CreatedAt:    time.Now(),
 	}
 
 	// Evict oldest token if at capacity
@@ -116,7 +159,7 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr) ([]byte, error) {
 
 // ValidateToken checks if a token is valid for the specified address.
 // Returns true if the token exists, matches the address, and hasn't expired.
-func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
+func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr, localAddr *net.UDPAddr) bool {
 	flog("ValidateToken", logger.Fields{"addr": addr}).Debug("Validating token for address")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false
@@ -125,7 +168,7 @@ func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 
-	token, exists := tc.lookupToken(addr.String())
+	token, exists := tc.lookupToken(tokenKey(addr, localAddr))
 	if !exists || tc.isExpired(token) {
 		return false
 	}
@@ -137,7 +180,7 @@ func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr) bool {
 // ConsumeToken validates and removes a token from the cache.
 // This should be called when a valid SessionRequest with token is received.
 // Returns true if the token was valid and consumed.
-func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
+func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr, localAddr *net.UDPAddr) bool {
 	flog("ConsumeToken", logger.Fields{"addr": addr}).Debug("Validating and consuming token")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false
@@ -146,7 +189,7 @@ func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 
-	addrStr := addr.String()
+	addrStr := tokenKey(addr, localAddr)
 	token, exists := tc.lookupToken(addrStr)
 	if !exists {
 		return false
@@ -164,6 +207,59 @@ func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr) bool {
 	// Token is valid, consume it (remove from cache)
 	delete(tc.tokens, addrStr)
 	return true
+}
+
+// DeleteToken discards the token outstanding for a source/destination pair.
+//
+// Spec ref: ssu2.md §"Handshake Retransmission" -> "### Retry" - "If a second Session
+// Request message is received with a different but still-invalid token, drop the
+// pending session and do not respond." Dropping the cached token is what drops the
+// pending session's issuance state, so the peer cannot complete the handshake with
+// the token it was previously given.
+//
+// Returns true if a token was removed.
+func (tc *TokenCache) DeleteToken(addr, localAddr *net.UDPAddr) bool {
+	if addr == nil {
+		return false
+	}
+	flog("DeleteToken", logger.Fields{"addr": addr.String()}).Debug("Dropping pending token")
+
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+
+	key := tokenKey(addr, localAddr)
+	if _, ok := tc.tokens[key]; !ok {
+		return false
+	}
+	delete(tc.tokens, key)
+	return true
+}
+
+// DeleteLocalTokens removes every token that was issued on the given local
+// (destination) IP/port.
+//
+// Spec ref: ssu2.md §"Tokens" - "If a router's IP or port changes, it must delete all saved
+// tokens (both inbound and outbound) for the old IP or port, as they are no longer valid."
+//
+// Returns the number of tokens removed.
+func (tc *TokenCache) DeleteLocalTokens(localAddr *net.UDPAddr) int {
+	if localAddr == nil {
+		return 0
+	}
+	flog("DeleteLocalTokens", logger.Fields{"local_addr": localAddr.String()}).Debug("Deleting tokens bound to a retired local address")
+
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+
+	suffix := "|" + localAddr.String()
+	removed := 0
+	for key, token := range tc.tokens {
+		if strings.HasSuffix(key, suffix) || (token.LocalAddress != nil && token.LocalAddress.String() == localAddr.String()) {
+			delete(tc.tokens, key)
+			removed++
+		}
+	}
+	return removed
 }
 
 // Cleanup removes expired tokens from the cache.
@@ -236,4 +332,14 @@ func (tc *TokenCache) lookupToken(addrStr string) (*Token, bool) {
 // isExpired reports whether token has exceeded the cache TTL.
 func (tc *TokenCache) isExpired(token *Token) bool {
 	return time.Since(token.CreatedAt) > tc.ttl
+}
+
+// AdjustCreatedAtForTest ages every cached token by the given delta so expiry
+// behaviour can be tested without sleeping. Test-only.
+func (tc *TokenCache) AdjustCreatedAtForTest(delta time.Duration) {
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+	for _, token := range tc.tokens {
+		token.CreatedAt = token.CreatedAt.Add(delta)
+	}
 }

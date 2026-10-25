@@ -2,6 +2,7 @@ package session
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 
 	"github.com/go-i2p/common/data"
 	i2phkdf "github.com/go-i2p/crypto/hkdf"
@@ -102,7 +103,18 @@ func (h *SSU2Conn) warnMissingSignatureVerifiers(cbs *DataHandlerCallbacks) {
 	}
 }
 
-// wrapTerminationCallback wraps the Termination callback to log packet-loss diagnostics.
+// wrapTerminationCallback wraps the Termination callback to send the mandatory
+// "Termination Received" acknowledgement and log packet-loss diagnostics.
+//
+// ssu2.rst §"Session Termination" / Data phase: "When receiving a Termination
+// block with any reason except \"Termination Received\", the peer responds with
+// a data message containing a Termination block with the reason \"Termination
+// Received\"." Without that reply the sender cannot distinguish a lost
+// termination packet from an ignored one, and it keeps retransmitting.
+//
+// The reply is emitted BEFORE the application callback runs: the callback for a
+// terminated session typically cancels and detaches the conn, after which the
+// write would fail and the ack would never go out.
 func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 	existingOnTermination := cbs.OnTermination
 	cbs.OnTermination = func(peerReceived uint64, reason uint8, additionalData []byte) {
@@ -111,9 +123,49 @@ func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 			lost := int64(sent) - int64(peerReceived)
 			flog("wrapTerminationCallback", logger.Fields{"sent": sent, "peerReceived": peerReceived, "lost": lost, "reason": reason}).Info("Termination packet loss summary")
 		}
+		if TerminationReason(reason) != TerminationReceived {
+			h.sendTerminationReceived()
+		}
 		if existingOnTermination != nil {
 			existingOnTermination(peerReceived, reason, additionalData)
 		}
+	}
+}
+
+// sendTerminationReceived emits the §"Session Termination" acknowledgement: a
+// Data message carrying a Termination block with reason 1 ("Termination
+// Received") whose count field reports the valid data packets we received.
+//
+// Best-effort by design. The session is already being torn down, so a failure
+// here (socket closed, peer unreachable) is logged and ignored rather than
+// propagated -- the spec makes no attempt to retransmit this message, and the
+// peer's own closing-state retransmits cover the loss.
+func (h *SSU2Conn) sendTerminationReceived() {
+	// §"Session Termination": the message is not ack-eliciting, and a session
+	// already in the closing phase has acknowledged the termination by other
+	// means; do not add a second one.
+	h.stateMutex.Lock()
+	state := h.state
+	h.stateMutex.Unlock()
+	if state != StateEstablished {
+		return
+	}
+
+	termData := make([]byte, 9)
+	binary.BigEndian.PutUint64(termData[0:8], h.validDataPacketsReceived.Load())
+	termData[8] = byte(TerminationReceived)
+
+	packet := h.newDataPacket()
+	payload, err := SerializeBlocks([]*SSU2Block{{Type: BlockTypeTermination, Data: termData}})
+	if err != nil {
+		flog("sendTerminationReceived", logger.Fields{"error": err.Error()}).Debug("could not serialize termination ack")
+		return
+	}
+	packet.Payload = payload
+	// sendPacketDirect already accounts the packet in validDataPacketsSent for
+	// MessageTypeData, so no counter update is needed here.
+	if err := h.sendPacketDirect(packet); err != nil {
+		flog("sendTerminationReceived", logger.Fields{"error": err.Error()}).Debug("could not send termination ack")
 	}
 }
 

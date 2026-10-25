@@ -2,6 +2,7 @@ package handshake
 
 import (
 	"encoding/binary"
+	"net"
 	"time"
 
 	"github.com/go-i2p/crypto/curve25519"
@@ -88,10 +89,19 @@ type HandshakeHandler struct {
 	peerRouterInfo []byte
 
 	// maxClockSkew is the maximum allowed difference between local and
-	// remote timestamps. If > 0, validateHandshakeBlocks rejects
-	// DateTime blocks whose timestamp differs from local time by more
-	// than this value. Set from SSU2Config.MaxClockSkew.
+	// remote timestamps. validateHandshakeBlocks rejects DateTime blocks
+	// whose timestamp differs from local time by more than this value.
+	// Set from SSU2Config.MaxClockSkew; never zero, because ssu2.md
+	// §"Replay Prevention" makes the check mandatory (see DefaultMaxClockSkew).
 	maxClockSkew time.Duration
+
+	// peerAddress is the observed source IP of the peer, reported back to it in
+	// the Address block of an outbound SessionCreated / Retry.
+	// Zero when unknown; ssu2.md §"Session Created" -> §"Payload" makes the
+	// Address block mandatory in message 2.
+	peerAddress net.IP
+	// peerPort is the observed UDP source port of the peer (see peerAddress).
+	peerPort uint16
 
 	// peerSessionRequestEphemeral is the inbound initiator ephemeral key from
 	// the most recently validated SessionRequest (responder side only).
@@ -299,8 +309,32 @@ func (h *HandshakeHandler) SetLocalOptions(opts *OptionsParams) {
 	h.localOptions = opts
 }
 
+// DefaultMaxClockSkew is the skew window applied when a handler is created
+// without an explicit configuration.
+//
+// ssu2.md §"Replay Prevention": "Both Alice and Bob validate that the time for
+// these messages is within a valid skew (recommended +/- 2 minutes)."
+// ssu2.md §"Session Request" -> §"Notes" names the window "D" and requires both
+// the timestamp rejection and the 2*D replay cache derived from it, so the
+// validation is mandatory and only its width is configurable.
+//
+// Reference: i2pd computes the same window from its config default of 120 s
+// (libi2pd/SSU2Session.cpp ProcessSessionRequest ->
+// `if (i2p::context.GetClockSkew () ...)` / SSU2_MAX_SKEW usage), and Java I2P
+// enforces ±2 minutes in net.i2p.crypto.handshake.HandshakeState /
+// SSU2Payload.DateTimeBlock consumers (see EstablishmentManager's
+// `MAX_SKEW = 2 * 60 * 1000`).
+const DefaultMaxClockSkew = 2 * time.Minute
+
 // SetMaxClockSkew configures the maximum allowed clock skew for DateTime validation.
+// A zero or negative value restores the spec default of DefaultMaxClockSkew
+// (±2 minutes, ssu2.md §"Replay Prevention"); it does not disable validation,
+// because the spec makes the DateTime check mandatory. Use a deliberately huge
+// duration if a deployment truly needs to accept arbitrary timestamps.
 func (h *HandshakeHandler) SetMaxClockSkew(d time.Duration) {
+	if d <= 0 {
+		d = DefaultMaxClockSkew
+	}
 	h.maxClockSkew = d
 }
 
@@ -389,6 +423,23 @@ func (h *HandshakeHandler) GetReplayToken() []byte {
 	return copyBytes(h.peerSessionRequestReplayToken)
 }
 
+// SetPeerAddress records the peer's observed source IP and UDP port so that an
+// outbound SessionCreated can report it back in the mandatory Address block.
+//
+// ssu2.md §"Session Created" -> §"Payload": "DateTime block / Address block /
+// Relay Tag block (optional) / ...". §"Address": "Alice's address, sent to Alice
+// by Bob". Reference: Java PacketBuilder2.encryptSessionCreated() always adds
+// `new SSU2Payload.AddressBlock(ip, port)` to the message-2 block list
+// (router/java/src/net/i2p/router/transport/udp/PacketBuilder2.java,
+// buildSessionCreatedPacket passing state.getSentIP()/getSentPort()).
+func (h *HandshakeHandler) SetPeerAddress(ip net.IP, port uint16) {
+	if len(ip) == 0 {
+		return
+	}
+	h.peerAddress = append(net.IP(nil), ip...)
+	h.peerPort = port
+}
+
 // createHandshakeBlocks creates the standard blocks for handshake messages.
 // Currently creates DateTime block with current timestamp.
 func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block {
@@ -401,6 +452,18 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 	binary.BigEndian.PutUint32(dateTimeData, uint32(time.Now().Unix()))
 
 	blocks = append(blocks, NewSSU2Block(BlockTypeDateTime, dateTimeData))
+
+	// Address block (Type 13) - required in SessionCreated and Retry, optional
+	// elsewhere. ssu2.md §"Session Created" -> §"Payload" lists "DateTime block /
+	// Address block / ..." with no "(optional)" marker on Address, and §"Retry"
+	// -> §"Payload" does the same; §"Session Request" -> §"Payload" does NOT list
+	// an Address block, so message 1 must not carry one.
+	//
+	// Reference: Java PacketBuilder2.encryptSessionCreated() and encryptRetry()
+	// both append an AddressBlock built from the peer's observed IP/port.
+	if messageType == MessageTypeSessionCreated && h.peerAddress != nil {
+		blocks = append(blocks, EncodeAddressBlock(h.peerAddress, h.peerPort))
+	}
 
 	// Options block (Type 1) - SHOULD be included per SSU2 spec
 	// Communicates version and padding negotiation parameters.
@@ -420,6 +483,7 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageType uint8) error {
 	flog("validateHandshakeBlocks", logger.Fields{"messageType": messageType, "blockCount": len(blocks)}).Debug("validating required blocks")
 	hasDateTime := false
+	hasAddress := false
 
 	for _, block := range blocks {
 		if block.Type == BlockTypeDateTime {
@@ -431,6 +495,9 @@ func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageT
 				return err
 			}
 		}
+		if block.Type == BlockTypeAddress {
+			hasAddress = true
+		}
 	}
 
 	// Per spec §Session Request/Created, DateTime is required.
@@ -438,23 +505,46 @@ func (h *HandshakeHandler) validateHandshakeBlocks(blocks []*SSU2Block, messageT
 		return oops.Errorf("DateTime block required in message type %d per SSU2 spec", messageType)
 	}
 
+	// ssu2.md §"Session Created" -> §"Payload" lists "DateTime block / Address
+	// block / Relay Tag block (optional) / ..." — Address carries no
+	// "(optional)" marker, and the section's own note ("Since the DateTime and
+	// Address blocks total more than that, the requirement is met with only
+	// those two blocks") treats both as present. §"Session Created" opening line
+	// likewise says "Noise payload: DateTime, Address, and other blocks".
+	// Reference: Java PacketBuilder2.encryptSessionCreated() unconditionally adds
+	// new SSU2Payload.AddressBlock(ip, port).
+	//
+	// The same requirement does not apply to SessionRequest: §"Session Request"
+	// -> §"Payload" lists only DateTime / Options (optional) / Relay Tag Request
+	// (optional) / Padding (optional).
+	if messageType == MessageTypeSessionCreated && !hasAddress {
+		return oops.Errorf("Address block required in SessionCreated per SSU2 spec §\"Session Created\" -> §\"Payload\"")
+	}
+
 	return nil
 }
 
-// validateTimestampSkew checks that the remote timestamp is within
-// maxClockSkew of local time. If maxClockSkew is 0, skew validation
-// is disabled.
+// validateTimestampSkew checks that the remote timestamp is within maxClockSkew
+// of local time.
+//
+// ssu2.md §"Replay Prevention": "Both Alice and Bob validate that the time for
+// these messages is within a valid skew (recommended +/- 2 minutes)." The check
+// is mandatory, so an unset window falls back to DefaultMaxClockSkew rather than
+// disabling validation (audit finding F-07: previously `maxClockSkew <= 0`
+// silently skipped the check, so inbound handshake messages were accepted with
+// arbitrary DateTime values).
 func (h *HandshakeHandler) validateTimestampSkew(dateTimeData []byte) error {
-	if h.maxClockSkew <= 0 {
-		return nil
+	window := h.maxClockSkew
+	if window <= 0 {
+		window = DefaultMaxClockSkew
 	}
 	remoteTime := time.Unix(int64(binary.BigEndian.Uint32(dateTimeData[:4])), 0)
 	skew := time.Since(remoteTime)
 	if skew < 0 {
 		skew = -skew
 	}
-	if skew > h.maxClockSkew {
-		return oops.Errorf("clock skew %s exceeds maximum %s", skew, h.maxClockSkew)
+	if skew > window {
+		return oops.Errorf("clock skew %s exceeds maximum %s", skew, window)
 	}
 	return nil
 }

@@ -9,6 +9,9 @@ type (
 	// Acceptor is the consumer-facing interface for accepting SSU2 connections.
 	// *SSU2Listener satisfies this interface.
 	Acceptor = server.Acceptor
+	// OutOfSessionMessage is an intro-key protected out-of-session message
+	// (Peer Test type 7 / Hole Punch type 11) delivered to the transport layer.
+	OutOfSessionMessage = server.OutOfSessionMessage
 )
 
 // ─── Function re-exports ──────────────────────────────────────────────────────

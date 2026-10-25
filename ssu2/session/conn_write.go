@@ -1,8 +1,8 @@
 package session
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"encoding/binary"
+	"github.com/go-i2p/crypto/rand"
 	"net"
 	"time"
 
@@ -332,27 +332,14 @@ func (h *SSU2Conn) retransmitExpired() {
 // For data packets in the established state, the payload is encrypted with AEAD.
 func (h *SSU2Conn) sendPacketDirect(packet *SSU2Packet) error {
 	flog("sendPacketDirect", logger.Fields{"pktNum": packet.PacketNumber, "msgType": packet.MessageType}).Debug("sending packet")
-	plaintextPayload, err := h.encryptDataPayload(packet)
-	if err != nil {
-		return err
-	}
-
-	h.applyDataHeaderMoreFlags(packet)
-
-	data, err := packet.Serialize()
-	if err != nil {
-		return oops.Wrapf(err, "failed to serialize packet")
-	}
-
-	if err := h.applyOutboundHeaderProtection(data, packet.MessageType); err != nil {
-		return err
-	}
 
 	h.remoteAddrLock.RLock()
-	_, err = h.underlying.WriteTo(data, h.remoteAddr)
+	addr := h.remoteAddr
 	h.remoteAddrLock.RUnlock()
+
+	_, plaintextPayload, err := h.sealPacket(packet, addr)
 	if err != nil {
-		return oops.Wrapf(err, "failed to write to UDP")
+		return err
 	}
 
 	if packet.MessageType == MessageTypeData {
@@ -362,6 +349,46 @@ func (h *SSU2Conn) sendPacketDirect(packet *SSU2Packet) error {
 	h.trackPendingPacket(packet, plaintextPayload)
 
 	return nil
+}
+
+// sealPacket applies the full outbound protection pipeline to a packet and
+// writes the resulting datagram to addr:
+//
+//  1. AEAD-seal the payload (data-phase keys, nonce = packet number,
+//     associated data = the cleartext header)
+//  2. zero the header's unused moreflags field
+//  3. serialize header || payload || MAC
+//  4. apply header protection (ChaCha20 masks/extension)
+//  5. write the datagram to the underlying socket
+//
+// Returns the wire bytes and the plaintext payload (needed for retransmission
+// tracking). A packet whose payload cannot be sealed is never written: an
+// unencrypted Data packet is not a valid SSU2 message and would be dropped by
+// any conformant peer, so sealPacket fails closed instead.
+func (h *SSU2Conn) sealPacket(packet *SSU2Packet, addr *net.UDPAddr) ([]byte, []byte, error) {
+	plaintextPayload, err := h.encryptDataPayload(packet)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	h.applyDataHeaderMoreFlags(packet)
+
+	data, err := packet.Serialize()
+	if err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to serialize packet")
+	}
+
+	if err := h.applyOutboundHeaderProtection(data, packet.MessageType); err != nil {
+		return nil, nil, err
+	}
+
+	if addr == nil {
+		return nil, nil, oops.Errorf("no destination address for packet")
+	}
+	if _, err := h.underlying.WriteTo(data, addr); err != nil {
+		return nil, nil, oops.Wrapf(err, "failed to write to UDP")
+	}
+	return data, plaintextPayload, nil
 }
 
 // encryptDataPayload encrypts the payload for data packets using AEAD.

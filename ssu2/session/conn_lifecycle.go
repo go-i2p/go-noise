@@ -176,28 +176,47 @@ func (h *SSU2Conn) RemoteAddr() net.Addr {
 }
 
 // SendToAddress sends a block to a specific UDP address (implements PathValidationConn).
+//
+// ssu2.rst §"Initiating Path Validation" requires the Path Challenge sent to a
+// new IP/port to be "a data packet ... [that] uses the same connection ID and
+// encryption keys as the current session", and §"Data Message (Type 6)" states
+// that from Session Confirmed onward "all messages are inside an authenticated
+// and encrypted ChaChaPoly payload". Sending the block in a cleartext 16-byte
+// Data header would be rejected by every conformant peer (and could not be
+// decrypted by the intended recipient, which holds only session keys), so this
+// runs the packet through the normal seal-and-send pipeline, addressed to the
+// peer's new path instead of the session's current one.
+//
+// The packet consumes a real send-sequence number and is tracked for
+// retransmission exactly like any other Data packet: Path Challenge/Response
+// blocks are ack-eliciting per the spec.
 func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
-	pktNum := h.nextSendSequence()
-	hdr := make([]byte, ShortHeaderSize)
-	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
-	binary.BigEndian.PutUint32(hdr[8:12], pktNum)
-	packet := &SSU2Packet{
-		MessageType:  MessageTypeData,
-		PacketNumber: pktNum,
-		Header:       hdr,
-		MAC:          make([]byte, MACSize),
+	if block == nil {
+		return oops.Errorf("SendToAddress: block is nil")
 	}
+	if addr == nil {
+		return oops.Errorf("SendToAddress: address is nil")
+	}
+	if err := h.validateReadyForIO(); err != nil {
+		return oops.Wrapf(err, "SendToAddress")
+	}
+
+	packet := h.newDataPacket()
 	payload, err := SerializeBlocks([]*SSU2Block{block})
 	if err != nil {
 		return oops.Wrapf(err, "failed to serialize block for path validation")
 	}
 	packet.Payload = payload
-	data, err := packet.Serialize()
+
+	_, plaintextPayload, err := h.sealPacket(packet, addr)
 	if err != nil {
-		return oops.Wrapf(err, "failed to serialize packet for path validation")
+		return err
 	}
-	_, err = h.underlying.WriteTo(data, addr)
-	return err
+
+	h.validDataPacketsSent.Add(1)
+	h.updateActivity()
+	h.trackPendingPacket(packet, plaintextPayload)
+	return nil
 }
 
 // GetRemoteAddr returns the current remote UDP address (implements PathValidationConn).

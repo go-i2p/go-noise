@@ -103,14 +103,33 @@ type Conn struct {
 	// Only accessed under readMu.
 	readNonce uint64
 
-	// OnAEADError is an optional callback invoked during AEAD failure handling,
-	// after the probing-resistance junk-read phase but before the TCP RST.
-	// The router transport layer can use this to send a termination block
-	// (type 4, reason 4 = "AEAD failure") before the connection is killed.
-	// The callback receives the underlying net.Conn for direct writing;
-	// the NTCP2Conn's broken flag is already set, so normal Write() is blocked.
-	// If nil, no termination block is sent (current behaviour).
-	OnAEADError func(conn net.Conn)
+	// OnAEADError is an optional callback invoked during data-phase AEAD
+	// failure handling, after the probing-resistance junk-read phase but
+	// before the connection is killed. It lets the transport layer override
+	// the spec's default teardown.
+	//
+	// The transport layer uses it to emit a spec-compliant Termination frame
+	// (block type 4) by calling SendTerminationFrame on the supplied Conn —
+	// which seals a real data-phase frame (SipHash-masked length + AEAD) even
+	// though the connection is marked broken. A receive-side AEAD failure only
+	// desynchronises the inbound state; the outbound cipher, nonce, and SipHash
+	// mask are still in sync, so exactly one more outbound frame is valid and
+	// meaningful to the peer.
+	//
+	// validFramesReceived is the count of successfully-decrypted data-phase
+	// frames so far (the current receive nonce), which the spec requires the
+	// termination block to carry.
+	//
+	// Returning nil tells applyProbingResistance the frame was sent, so the
+	// socket is closed gracefully (FIN) to let it flush; returning an error
+	// falls back to the abnormal TCP RST. When the callback is nil,
+	// applyProbingResistance sends the spec's default termination block
+	// (reason 4 = "data phase AEAD failure") itself — ntcp2.md §"AEAD Error
+	// Handling": "the recipient should send a payload with a termination block
+	// containing an 'AEAD failure' reason code, and close the connection."
+	//
+	// The callback runs while the read lock is held; it must not call Read.
+	OnAEADError func(conn *Conn, validFramesReceived uint64) error
 
 	// logger for connection events (pointer so runtime log-level changes are visible)
 	logger *logger.Logger

@@ -172,6 +172,25 @@ type Config struct {
 	// disable it. See maxClockSkew.
 	// Default: ClockSkewTolerance (60 seconds).
 	MaxClockSkew time.Duration
+
+	// peerTimestampSecs and msg1ReceivedAt are per-connection scratch state
+	// captured by the responder during message 1, for the mandatory post-
+	// SessionConfirmed clock-skew recheck.
+	//
+	// ntcp2.md §"Clock Skew Guidelines": "If Alice does reply with Session
+	// Confirmed ... Bob should adjust the calculated clock skew by subtracting
+	// half the RTT. If the adjusted clock skew exceeds the maximum, Bob should
+	// then reply with a Disconnect message containing a clock skew reason code,
+	// and close the connection." Reference: Java InboundEstablishState.verifyInbound()
+	// (net/i2p/router/transport/ntcp/InboundEstablishState.java:218-246,
+	// `_peerSkew -= ((rtt / 2) + 500) / 1000` then REASON_SKEW).
+	//
+	// Not exported and not copied by Clone(): each accepted connection gets a
+	// fresh clone, so these fields are written and read only by that
+	// connection's handshake goroutine.
+	peerTimestampSecs uint64
+	msg1ReceivedAt    time.Time
+	msg3ReceivedAt    time.Time
 }
 
 // NewNTCP2Config creates a new Config with sensible defaults.
@@ -510,9 +529,16 @@ func (nc *Config) validateCoreConfiguration() error {
 	}
 
 	// Validate LocalRouterInfo size to prevent uint16 overflow in m3p2Len
-	// m3p2Len = BlockHeaderSize (3) + flag (1) + len(riBytes) + Poly1305Overhead (16)
-	// Maximum safe size: 65535 - 20 = 65515 bytes
-	const maxRouterInfoSize = 0xFFFF - (BlockHeaderSize + 1 + Poly1305Overhead)
+	// m3p2Len = BlockHeaderSize (3) + flag (1) + len(riBytes)
+	//         + BlockHeaderSize (3) + msg3OptionsSize (12)
+	//         + Poly1305Overhead (16)
+	// Maximum safe size: 65535 - 35 = 65500 bytes.
+	// ntcp2.md §"3) SessionConfirmed" Notes: the message 3 part 2 frame carries
+	// the RouterInfo block and the (recommended) Options block; §"Options"
+	// fixes the options data at "12 bytes minimum".
+	// Reference: Java i2p.i2p OutboundNTCP2State.java:416-418 (prepareOutbound3)
+	// adds BLOCK_HEADER_SIZE + OPTIONS3_SIZE for the Options block.
+	const maxRouterInfoSize = 0xFFFF - (BlockHeaderSize + 1 + BlockHeaderSize + msg3OptionsSize + Poly1305Overhead)
 	if len(nc.LocalRouterInfo) > maxRouterInfoSize {
 		return oops.
 			Code("ROUTER_INFO_TOO_LARGE").
@@ -579,17 +605,32 @@ func (nc *Config) validateFrameConfiguration() error {
 	return nil
 }
 
-// validateModifiers rejects incompatible modifiers in the NTCP2 modifier chain.
+// validateModifiers rejects modifiers that cannot be used with NTCP2.
+//
+// NTCP2's only padding extension is the block-format padding defined in
+// ntcp2.md §"Padding" ("the padding (if any) is optional, but the total length
+// must be the m3p2len specified in message 1"; "All padding for message 3 and
+// the data phase are inside AEAD frames"), implemented by NTCP2PaddingModifier.
+//
+// The generic [handshake.GenericPaddingModifier] was removed from the codebase:
+// it framed messages as "[4-byte big-endian length][data][padding]", a layout no
+// I2P specification defines, so no type exists left to reject by identity. The
+// remaining guard rejects any modifier that is not an NTCP2-specific one, which
+// keeps the same protection against a caller injecting a non-conformant
+// transform into the handshake.
 func (nc *Config) validateModifiers() error {
 	flog("NTCP2Config.validateModifiers", logger.Fields{"modifier_count": len(nc.Modifiers)}).Debug("Validating NTCP2 modifiers")
 	for _, mod := range nc.Modifiers {
-		if _, ok := mod.(*handshake.GenericPaddingModifier); ok {
-			return oops.
-				Code("INCOMPATIBLE_MODIFIER").
-				In("ntcp2").
-				With("modifier", mod.Name()).
-				Errorf("GenericPaddingModifier is not NTCP2-compatible; use NTCP2PaddingModifier")
+		switch mod.(type) {
+		case *NTCP2PaddingModifier, *AESObfuscationModifier, *SipHashLengthModifier:
+			// The three extensions ntcp2.md §"Additions to the Framework" defines.
+			continue
 		}
+		return oops.
+			Code("INCOMPATIBLE_MODIFIER").
+			In("ntcp2").
+			With("modifier", mod.Name()).
+			Errorf("modifier %q is not an NTCP2 handshake modifier; NTCP2 supports only the AES obfuscation, SipHash length obfuscation, and block padding extensions defined in ntcp2.md §Additions to the Framework", mod.Name())
 	}
 	return nil
 }

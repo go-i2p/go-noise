@@ -56,6 +56,11 @@ var handshakeErrorCodes = map[string]bool{
 
 	// Apparent replay
 	"MSG1_REPLAY": true,
+	// ntcp2.md §"2) SessionCreated" Notes: "On any error, including AEAD, DH,
+	// timestamp, apparent replay, or key validation failure, Alice must halt
+	// further message processing and close the connection without responding.
+	// This should be an abnormal close (TCP RST)."
+	"MSG2_REPLAY": true,
 
 	// Timestamp failures are deliberately excluded. ntcp2.rst §"Clock Skew
 	// Guidelines" requires Bob to answer with a Session Created "even if the
@@ -71,6 +76,7 @@ var handshakeErrorCodes = map[string]bool{
 	"MSG1_OPTIONS_TOO_SHORT": true,
 	"MSG1_PADDING_TOO_LARGE": true,
 	"MSG2_OPTIONS_TOO_SHORT": true,
+	"MSG2_PADDING_TOO_LARGE": true,
 
 	// Message 3 part 2 frame violations
 	"MSG3_PART2_TOO_LARGE":        true,
@@ -160,16 +166,57 @@ func (nc *Conn) applyProbingResistance(underlying net.Conn, sendTermination bool
 		underlying.Read(junk) //nolint:errcheck // best effort
 	}
 
-	// If the router transport layer registered a hook, let it send a termination
-	// block (type 4, reason 4 = "AEAD failure") before we RST the socket.
-	// Per the spec Data Phase / AEAD Error Handling sections: "the recipient should send a payload with a termination block
-	// containing an 'AEAD failure' reason code, and close the connection."
-	if sendTermination && nc.OnAEADError != nil {
-		nc.OnAEADError(underlying)
+	// Send a termination frame (block type 4) before the socket is killed. Per
+	// the spec Data Phase / AEAD Error Handling sections: "the recipient should
+	// send a payload with a termination block containing an 'AEAD failure'
+	// reason code, and close the connection."
+	//
+	// The transport layer may override the whole teardown by registering the
+	// OnAEADError hook (it then controls the frame contents and the close).
+	// Otherwise this package sends the spec's default itself: a genuine
+	// data-phase frame sealed via sendTerminationBlock, exactly like i2pd's
+	// SendTermination (libi2pd/NTCP2.cpp:1655-1673) which is invoked
+	// unconditionally on a data-phase AEAD failure (NTCP2.cpp:1280).
+	//
+	// If a frame went out we close gracefully so it actually reaches the peer —
+	// an RST with SO_LINGER(0) would discard it. If no frame went out, the
+	// spec's abnormal close applies.
+	if sendTermination {
+		terminationSent := false
+		if nc.OnAEADError != nil {
+			if err := nc.OnAEADError(nc, nc.readNonce); err == nil {
+				terminationSent = true
+			} else {
+				flog("NTCP2Conn.applyProbingResistance", logger.Fields{"error": err.Error()}).
+					Debug("transport did not send a termination frame; using abnormal close")
+			}
+		} else if err := nc.sendTerminationBlock(TerminationReasonDataPhaseAEAD); err == nil {
+			terminationSent = true
+		} else {
+			flog("NTCP2Conn.applyProbingResistance", logger.Fields{"error": err.Error()}).
+				Debug("could not seal a default termination frame; using abnormal close")
+		}
+
+		if terminationSent {
+			nc.gracefulClose(underlying)
+			return
+		}
 	}
 
 	// Per the spec: "This should be an abnormal close (TCP RST)"
 	nc.sendTCPRST(underlying)
+}
+
+// gracefulClose closes the underlying socket normally (FIN), letting any
+// already-written data — such as a final termination frame — flush to the
+// peer. It mirrors sendTCPRST's bookkeeping so Close() skips the socket
+// afterwards, but without SO_LINGER(0), which would discard queued data.
+func (nc *Conn) gracefulClose(underlying net.Conn) {
+	flog("NTCP2Conn.gracefulClose").Debug("closing connection gracefully after sending termination frame")
+	// Give the frame a bounded chance to flush even on a slow/stalled peer.
+	_ = underlying.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	underlying.Close() //nolint:errcheck // best effort
+	nc.underlyingClosed.Store(true)
 }
 
 // handleAEADError implements probing-resistance behaviour on AEAD authentication

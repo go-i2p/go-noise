@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"net"
@@ -476,89 +477,146 @@ func TestSSU2Listener_ProcessTokenRequest(t *testing.T) {
 	})
 }
 
-// TestSSU2Listener_ValidateSessionRequestToken tests token validation
+// TestSSU2Listener_ValidateSessionRequestToken verifies the token gate reads the
+// 8-byte Token field at SessionRequest header bytes 24-31, not a payload block.
+//
+// Spec ref: ssu2.md §"Inbound Packet Handling" step 2a - "If the token at header
+// bytes 24-31 is accepted, then MixHash() the decrypted 32 byte header and decrypt
+// the message with Noise ... If the token is not accepted, send a Retry message ...
+// Do not attempt to decrypt the message with Noise to avoid DDoS attacks"; §"Tokens"
+// - "If Bob does not accept the token in the Session Request message, Bob does NOT
+// decrypt the message". A Session Request payload may not even carry a New Token
+// block (§"Session Request" -> §"Payload" allows only DateTime / Options / Relay Tag
+// Request / Padding).
 func TestSSU2Listener_ValidateSessionRequestToken(t *testing.T) {
-	t.Run("EmptyPayloadReturnsNoToken", func(t *testing.T) {
+	remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
+
+	// sessionRequestWithToken builds a SessionRequest whose header carries token in
+	// bytes 24-31.
+	sessionRequestWithToken := func(token []byte) *SSU2Packet {
+		packet := NewSSU2Packet(MessageTypeSessionRequest, 0)
+		packet.Header = make([]byte, 32)
+		packet.Header[13] = 2 // version
+		packet.Header[14] = 2 // network ID
+		if len(token) > 0 {
+			copy(packet.Header[24:32], token)
+		}
+		return packet
+	}
+
+	t.Run("ShortHeaderReturnsNoToken", func(t *testing.T) {
 		listener := createTestListener(t)
 		defer listener.Close()
 
-		remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
 		packet := NewSSU2Packet(MessageTypeSessionRequest, 0)
-		packet.Payload = nil
+		packet.Header = make([]byte, 16)
 
 		err := listener.validateSessionRequestToken(packet, remoteAddr)
 		assert.ErrorIs(t, err, errNoTokenPresent)
 	})
 
-	t.Run("NoTokenBlockReturnsNoToken", func(t *testing.T) {
+	t.Run("ZeroTokenReturnsNoToken", func(t *testing.T) {
 		listener := createTestListener(t)
 		defer listener.Close()
 
-		remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
-
-		// Create packet with a padding block (not a token)
-		paddingBlock := NewSSU2Block(BlockTypePadding, make([]byte, 10))
-		payload, err := paddingBlock.Serialize()
-		require.NoError(t, err)
-
-		packet := NewSSU2Packet(MessageTypeSessionRequest, 0)
-		packet.Payload = payload
-
-		err = listener.validateSessionRequestToken(packet, remoteAddr)
+		// "Token :: 0 if not previously received from Bob" - §Session Request.
+		err := listener.validateSessionRequestToken(sessionRequestWithToken(make([]byte, TokenSize)), remoteAddr)
 		assert.ErrorIs(t, err, errNoTokenPresent)
 	})
 
-	t.Run("ValidTokenPasses", func(t *testing.T) {
+	t.Run("PayloadTokenBlockIsIgnored", func(t *testing.T) {
 		listener := createTestListener(t)
 		defer listener.Close()
 
-		remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
-
-		// Generate a token for this address
-		token, err := listener.tokenCache.GenerateToken(remoteAddr)
+		// A New Token block in the payload must NOT satisfy the gate: the token is a
+		// header field, and honouring the payload form would require decrypting.
+		token, err := listener.tokenCache.GenerateToken(remoteAddr, listener.localUDPAddress())
 		require.NoError(t, err)
-
-		// Create NewToken block with the token
-		expiration := time.Now().Add(60 * time.Second)
-		tokenBlock, err := NewNewTokenBlock(expiration, token)
+		tokenBlock, err := NewNewTokenBlock(time.Now().Add(60*time.Second), token)
 		require.NoError(t, err)
-
 		payload, err := tokenBlock.Serialize()
 		require.NoError(t, err)
 
-		// Create packet with token
-		packet := NewSSU2Packet(MessageTypeSessionRequest, 0)
+		packet := sessionRequestWithToken(nil)
 		packet.Payload = payload
 
 		err = listener.validateSessionRequestToken(packet, remoteAddr)
+		assert.ErrorIs(t, err, errNoTokenPresent, "payload New Token block must not satisfy the header token gate")
+	})
+
+	t.Run("ValidHeaderTokenPassesAndIsConsumed", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		// Tokens are bound to source + destination, so issue against the listener's
+		// own local address, which is what validateSessionRequestToken compares with.
+		token, err := listener.tokenCache.GenerateToken(remoteAddr, listener.localUDPAddress())
+		require.NoError(t, err)
+
+		require.NoError(t, listener.validateSessionRequestToken(sessionRequestWithToken(token), remoteAddr))
+
+		// "Tokens may only be used once."
+		err = listener.validateSessionRequestToken(sessionRequestWithToken(token), remoteAddr)
+		assert.Error(t, err, "token must be single-use")
+		assert.Contains(t, err.Error(), "token validation failed")
+	})
+
+	t.Run("WrongTokenFails", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		_, err := listener.tokenCache.GenerateToken(remoteAddr, listener.localUDPAddress())
+		require.NoError(t, err)
+
+		wrong := bytes.Repeat([]byte{0xAB}, TokenSize)
+		err = listener.validateSessionRequestToken(sessionRequestWithToken(wrong), remoteAddr)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "token validation failed")
 	})
 
 	t.Run("ExpiredTokenFails", func(t *testing.T) {
 		listener := createTestListener(t)
 		defer listener.Close()
 
-		remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
+		// Issue a token, then force it past the Retry-token lifetime.
+		token, err := listener.tokenCache.GenerateToken(remoteAddr, listener.localUDPAddress())
+		require.NoError(t, err)
+		listener.tokenCache.AdjustCreatedAtForTest(-time.Hour)
 
-		// Create token with past expiration
-		expiration := time.Now().Add(-1 * time.Hour) // Expired
-		token := make([]byte, TokenSize)             // 8 bytes per SSU2 spec
+		err = listener.validateSessionRequestToken(sessionRequestWithToken(token), remoteAddr)
+		assert.Error(t, err, "expired token must be rejected")
+	})
 
-		tokenBlock, err := NewNewTokenBlock(expiration, token)
+	t.Run("TokenNotReusableOnDifferentSourceAddress", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		token, err := listener.tokenCache.GenerateToken(remoteAddr, listener.localUDPAddress())
 		require.NoError(t, err)
 
-		payload, err := tokenBlock.Serialize()
+		other := &net.UDPAddr{IP: net.ParseIP("192.168.1.200"), Port: 12345}
+		err = listener.validateSessionRequestToken(sessionRequestWithToken(token), other)
+		assert.Error(t, err, "token is bound to its source address")
+	})
+
+	t.Run("TokenBoundToDestinationAddress", func(t *testing.T) {
+		listener := createTestListener(t)
+		defer listener.Close()
+
+		// Spec: "A token is bound to the combination of source IP/port and destination
+		// IP/port." A token issued on one local address must not validate on another.
+		localA := &net.UDPAddr{IP: net.ParseIP("10.0.0.1"), Port: 9000}
+		localB := &net.UDPAddr{IP: net.ParseIP("10.0.0.2"), Port: 9000}
+
+		token, err := listener.tokenCache.GenerateToken(remoteAddr, localA)
 		require.NoError(t, err)
 
-		packet := NewSSU2Packet(MessageTypeSessionRequest, 0)
-		packet.Payload = payload
-
-		err = listener.validateSessionRequestToken(packet, remoteAddr)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "expired")
+		assert.False(t, listener.tokenCache.ValidateToken(token, remoteAddr, localB),
+			"token issued for localA must not validate on localB")
+		assert.True(t, listener.tokenCache.ValidateToken(token, remoteAddr, localA))
 	})
 }
 
-// TestSSU2Listener_SendRetry tests Retry message construction
 func TestSSU2Listener_SendRetry(t *testing.T) {
 	t.Run("TokenTooShortReturnsError", func(t *testing.T) {
 		listener := createTestListener(t)
@@ -567,7 +625,7 @@ func TestSSU2Listener_SendRetry(t *testing.T) {
 		remoteAddr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
 		shortToken := make([]byte, 5) // Too short
 
-		err := listener.sendRetry(remoteAddr, shortToken, nil, 0)
+		err := listener.sendRetry(remoteAddr, shortToken, nil, 0, nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "token must be exactly")
 	})
@@ -585,7 +643,7 @@ func TestSSU2Listener_SendRetry(t *testing.T) {
 		originalHeader := make([]byte, 32)
 
 		// This may fail to send (no peer listening) but should construct packet
-		err := listener.sendRetry(remoteAddr, token, originalHeader, 0)
+		err := listener.sendRetry(remoteAddr, token, originalHeader, 0, nil)
 		// The send might fail, but packet construction should work
 		// We verify no panic occurs
 		_ = err
@@ -722,6 +780,15 @@ func TestRetransmittedSessionRequestDedup(t *testing.T) {
 			ephemeralKey[i] = byte(i + 1)
 		}
 
+		// Two distinct sessions must arrive as two distinct handshakes: ssu2.md
+		// §"Session Request" -> §"Notes" says "Diffie-Hellman ephemeral keys may never
+		// be reused, to prevent cryptographic attacks, and reuse will be rejected as a
+		// replay attack", so each packet needs its own ephemeral key.
+		ephemeralKey2 := make([]byte, 32)
+		for i := range ephemeralKey2 {
+			ephemeralKey2[i] = byte(200 - i)
+		}
+
 		// First packet with initiator conn ID = 0x1111111111111111
 		packet1 := &SSU2Packet{
 			MessageType:  MessageTypeSessionRequest,
@@ -740,7 +807,7 @@ func TestRetransmittedSessionRequestDedup(t *testing.T) {
 		packet2 := &SSU2Packet{
 			MessageType:  MessageTypeSessionRequest,
 			Header:       make([]byte, 32),
-			EphemeralKey: ephemeralKey,
+			EphemeralKey: ephemeralKey2,
 			Payload:      nil,
 			MAC:          make([]byte, 16),
 		}
@@ -779,9 +846,23 @@ func TestRetransmittedSessionRequestDedup(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 1, listener.SessionCount())
 
-		// Second request from same initiator ID but different address
+		// Second request from a different address is a different handshake and must
+		// carry a fresh ephemeral key: ssu2.md §"Session Request" -> §"Notes" -
+		// "Diffie-Hellman ephemeral keys may never be reused ... and reuse will be
+		// rejected as a replay attack."
 		addr2 := &net.UDPAddr{IP: net.IPv4(192, 168, 1, 101), Port: 12346}
-		conn2, err := listener.handleNewSession(addr2, packet)
+		packet2 := &SSU2Packet{
+			MessageType:  MessageTypeSessionRequest,
+			Header:       make([]byte, 32),
+			EphemeralKey: make([]byte, 32),
+			Payload:      nil,
+			MAC:          make([]byte, 16),
+		}
+		for i := range packet2.EphemeralKey {
+			packet2.EphemeralKey[i] = byte(100 + i)
+		}
+		binary.BigEndian.PutUint64(packet2.Header[16:24], initiatorConnID)
+		conn2, err := listener.handleNewSession(addr2, packet2)
 		require.NoError(t, err)
 
 		// Should have two different sessions

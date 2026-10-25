@@ -195,36 +195,6 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	flog("RegisterOneTimeKey", logger.Fields{"tag": fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
 }
 
-// ProcessIncomingDHRatchet processes a DH ratchet key received from a
-// peer. When a peer rotates its DH ratchet key, it sends the new public
-// key in a NextKey block; this method applies that rotation so both sides
-// keep deriving fresh message keys (forward secrecy).
-//
-// The session is found by tag lookup using the sessionTag parameter.
-//
-// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
-func (sm *SessionManager) ProcessIncomingDHRatchet(sessionTag [8]byte, newRemotePubKey [32]byte) error {
-	session, err := sm.lookupLockedSession(sessionTag)
-	if err != nil {
-		return err
-	}
-	defer session.mu.Unlock()
-
-	if err := session.DHRatchet.UpdateKeys(newRemotePubKey[:]); err != nil {
-		return oops.Wrapf(err, "failed to update remote DH public key")
-	}
-
-	if err := applyRecvRatchetKeys(session); err != nil {
-		return err
-	}
-
-	session.RemotePublicKey = newRemotePubKey
-
-	flog("ProcessIncomingDHRatchet", logger.Fields{"message_counter": session.MessageCounter}).Debug("Processed incoming DH ratchet from peer")
-
-	return nil
-}
-
 // tagReplenishThreshold computes the minimum number of pending tags remaining
 // after which replenishment is triggered. The threshold is half the current
 // target window size, so it grows with the window.
@@ -341,6 +311,12 @@ func generateTagsOutsideLock(session *Session, count int) ([]tagWithCounter, err
 		counter := session.nextRecvTagCounter
 		session.nextRecvTagCounter++
 		newTags = append(newTags, tagWithCounter{tag: tag, counter: counter})
+		// Record the tag -> tagset-local message counter so the retained
+		// previous tag set can be routed independently after a receiving DH
+		// ratchet. Spec ref: ecies.md §"4b) Session Tag Ratchet".
+		if session.recvTagCounter != nil {
+			session.recvTagCounter[tag] = counter
+		}
 	}
 	return newTags, nil
 }
@@ -350,6 +326,9 @@ func generateTagsOutsideLock(session *Session, count int) ([]tagWithCounter, err
 // different session are logged and skipped.  Must be called with both
 // sm.mu (write) and session.mu held.
 func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags []tagWithCounter) {
+	if session.recvTagCounter == nil {
+		session.recvTagCounter = make(map[[8]byte]uint32)
+	}
 	target := targetTagWindowSize(session.usedTags)
 	for _, tc := range newTags {
 		if len(session.pendingTags) >= target {
@@ -363,6 +342,7 @@ func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags [
 		session.pendingTags = append(session.pendingTags, tc.tag)
 		sm.tagIndex[tc.tag] = session
 		sm.tagCounterIndex[tc.tag] = tc.counter
+		session.recvTagCounter[tc.tag] = tc.counter
 	}
 }
 
@@ -375,6 +355,9 @@ func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags [
 // incoming existing-session messages to fail lookup silently.
 // Must be called with sm.mu held for writing.
 func (sm *SessionManager) generateTagWindow(session *Session) error {
+	if session.recvTagCounter == nil {
+		session.recvTagCounter = make(map[[8]byte]uint32)
+	}
 	tagRatchet := session.RecvTagRatchet
 	if tagRatchet == nil {
 		return oops.Errorf("RecvTagRatchet is nil for session — cannot populate incoming tag index")
@@ -394,6 +377,7 @@ func (sm *SessionManager) generateTagWindow(session *Session) error {
 		session.pendingTags = append(session.pendingTags, tag)
 		sm.tagIndex[tag] = session
 		sm.tagCounterIndex[tag] = counter
+		session.recvTagCounter[tag] = counter
 	}
 	return nil
 }

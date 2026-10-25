@@ -29,6 +29,35 @@ const (
 	// the real size of a message.
 	PaddingBlockType = 254
 
+	// Data-phase block type numbers.
+	// ntcp2.md §"4) Data Phase" / §"Unencrypted data": "blk :: 0 (datetime),
+	// 1 (options), 2 (RouterInfo), 3 (I2NP), 4 (termination), 254 (padding)".
+	// Reference: i2pd libi2pd/NTCP2.h enum NTCP2BlockTypes (eNTCP2BlkDateTime
+	// = 0 … eNTCP2BlkTermination = 4, eNTCP2BlkPadding = 254).
+	DateTimeBlockType    = 0
+	OptionsBlockTypeSpec = 1
+	I2NPBlockType        = 3
+	TerminationBlockType = 4
+
+	// Termination reason codes.
+	// ntcp2.md §"Termination": "rsn :: reason, 1 byte: 0: normal close or
+	// unspecified … 4: data phase AEAD failure … 7: clock skew … 9: AEAD
+	// framing error …".
+	// Reference: i2pd libi2pd/NTCP2.h enum NTCP2TerminationReason (same
+	// numbering); Java NTCPConnection.java REASON_* constants.
+	TerminationReasonNormal           = 0
+	TerminationReasonDataPhaseAEAD    = 4
+	TerminationReasonClockSkew        = 7
+	TerminationReasonAEADFramingError = 9
+	TerminationReasonIncorrectSParam  = 16
+
+	// TerminationBlockSize is the size of a minimal termination block's data:
+	// 8 bytes valid-data-frames-received + 1 byte reason.
+	// ntcp2.md §"Termination": "size :: 2 bytes, big endian, value = 9 or
+	// more". Reference: i2pd libi2pd/NTCP2.cpp:1666-1670 (SendTermination
+	// writes block size 9: 8-byte BE sequence number + 1-byte reason).
+	TerminationBlockSize = 9
+
 	// MaxBlockDataSize is the largest amount of data a single I2P block can
 	// carry, in bytes.
 	MaxBlockDataSize = 65516

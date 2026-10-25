@@ -170,6 +170,32 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 			}
 			return
 		}
+		// Peer Test (7) and Hole Punch (11) are out-of-session by design:
+		// ssu2.rst §"Peer Test Process" sends messages 5-7 in a Peer Test
+		// message and §"Relay Process" step 5 sends the Hole Punch directly,
+		// with connection IDs derived from the test/relay nonce rather than a
+		// session, so they can never match a registered session. Open them with
+		// our intro key and hand them to the transport layer.
+		if packet.MessageType == MessageTypePeerTest || packet.MessageType == MessageTypeHolePunch {
+			if err := l.handleOutOfSessionIntroKeyMessage(packet, remoteAddr); err != nil {
+				var oopsErr oops.OopsError
+				if errors.As(err, &oopsErr) && oopsErr.Code() == "NO_OUT_OF_SESSION_HANDLER" {
+					// No consumer wired (NAT subsystem not initialised): expected
+					// at startup, and the spec requires a silent drop.
+					flog("handleIncomingPacket", logger.Fields{
+						"remote_addr":  remoteAddr.String(),
+						"message_type": packet.MessageType,
+					}).Debug("dropping out-of-session message: no handler registered")
+					return
+				}
+				atomic.AddUint64(&l.routingErrors, 1)
+				flog("handleIncomingPacket", logger.Fields{
+					"remote_addr":  remoteAddr.String(),
+					"message_type": packet.MessageType,
+				}).WithError(err).Debug("dropping out-of-session message")
+			}
+			return
+		}
 		atomic.AddUint64(&l.routingErrors, 1)
 		// Handshake-type packets (SessionRequest) that fail to route indicate
 		// a session-creation error — these must be visible even without debug

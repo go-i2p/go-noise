@@ -391,6 +391,45 @@ func ParsePayload(data []byte) ([]PayloadBlock, error) {
 	return blocks, nil
 }
 
+// ParsePayloadLenient parses as many leading blocks as it can and stops at the
+// first malformed one, returning what was parsed so far.
+//
+// Used only for control-block extraction from a decrypted ES payload: the
+// payload is already AEAD-authenticated, so a framing failure cannot come from
+// an unauthenticated attacker — it means the local caller supplied a payload
+// that is not itself a block sequence (prependPendingNextKeys puts our control
+// blocks in front of whatever the caller handed us). Dropping the whole parse
+// would silently discard a peer's NextKey or Ack blocks, which ecies.md
+// §"4a) DH Ratchet" requires us to act on ("each do a DH ratchet for every
+// NextKey block received").
+func ParsePayloadLenient(data []byte) []PayloadBlock {
+	blocks, err := ParsePayload(data)
+	if err == nil {
+		return blocks
+	}
+	// Re-parse, stopping where the error occurred.
+	var out []PayloadBlock
+	offset := 0
+	for offset < len(data) {
+		if len(out) >= maxPayloadBlocks {
+			break
+		}
+		if len(data)-offset < blockHeaderSize {
+			break
+		}
+		blockType := BlockType(data[offset])
+		blockLen := int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
+		if blockLen > len(data)-offset-blockHeaderSize {
+			break
+		}
+		blockData := make([]byte, blockLen)
+		copy(blockData, data[offset+blockHeaderSize:offset+blockHeaderSize+blockLen])
+		out = append(out, PayloadBlock{Type: blockType, Data: blockData})
+		offset += blockHeaderSize + blockLen
+	}
+	return out
+}
+
 // FindBlock returns the first block of the given type, or nil if not found.
 func FindBlock(blocks []PayloadBlock, blockType BlockType) *PayloadBlock {
 	for i := range blocks {

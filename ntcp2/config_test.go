@@ -1029,8 +1029,13 @@ func TestNTCP2ConfigValidatesOversizedRouterInfo(t *testing.T) {
 		WithRemoteRouterHash(m.remoteHash).
 		WithRemoteStaticKey(generateRandomBytes(32))
 
-	// Maximum safe size: 65535 - (BlockHeaderSize=3 + flag=1 + Poly1305Overhead=16) = 65515
-	const maxSafeSize = 0xFFFF - (BlockHeaderSize + 1 + Poly1305Overhead)
+	// Maximum safe size accounts for the RouterInfo block AND the Options
+	// block the initiator now sends in message 3 part 2, per ntcp2.md
+	// §Message 3 Part 2 Notes ("Options block ... SHOULD be included") and
+	// Java OutboundNTCP2State.java (OPTIONS3_SIZE = 12):
+	// 65535 - (RI block header 3 + flag 1 + Options block header 3 +
+	//          Options data 12 + Poly1305Overhead 16) = 65500
+	const maxSafeSize = 0xFFFF - (BlockHeaderSize + 1 + BlockHeaderSize + msg3OptionsSize + Poly1305Overhead)
 
 	// Test case 1: exactly at the limit should pass
 	config.LocalRouterInfo = make([]byte, maxSafeSize)

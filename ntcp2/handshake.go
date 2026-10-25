@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-i2p/crypto/curve25519"
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/cryptorand"
-	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 
@@ -26,6 +26,23 @@ const (
 	msg1Size = 64
 
 	// msg2Size is the fixed size of NTCP2 message 2 AEAD frame (before cleartext padding).
+	// 32 bytes (AES-obfuscated ephemeral key) + 16 bytes (encrypted options) + 16 bytes (Poly1305 tag).
+	//
+	// SPEC ERRATUM (documented, not "fixed"): ntcp2.md §"Encryption for for
+	// handshake message 3 part 1, using message 2 KDF)" says
+	// "h = SHA256(h || 24 byte encrypted payload from message 2)", but the same
+	// document defines the message 2 options payload as 16 bytes (§"2)
+	// SessionCreated" Options block) which Noise EncryptAndHash turns into
+	// 16 + 16(tag) = 32 encrypted bytes, giving the 64-byte frame of
+	// §"2) SessionCreated" ("ChaChaPoly encrypted data (options) 16 bytes").
+	// The "24" only fits an 8-byte payload and contradicts both halves of the
+	// document. Per the audit adjudication rule, the reference implementations
+	// decide: i2pd libi2pd/NTCP2.cpp:466-478 (ProcessSessionCreatedMessage)
+	// decrypts 16 options bytes and MixHashes 32 bytes (the ciphertext+tag),
+	// and Java OutboundNTCP2State.java:60 OPTIONS2_SIZE = 16 with
+	// MSG2_SIZE = KEY_SIZE + OPTIONS2_SIZE + MAC_SIZE = 64. Noise's
+	// EncryptAndHash already performs the spec's "MixHash(ciphertext)" inside
+	// SymmetricState.ReadMessage, so no extra MixHash is added here either.
 	msg2Size = 64
 
 	// msg3Part1Size is the fixed size of NTCP2 message 3 part 1.
@@ -47,6 +64,26 @@ const (
 	// optionsBlockType is the NTCP2 block type for Options (type 1), permitted
 	// in message 3 part 2 and in data-phase frames.
 	optionsBlockType = 0x01
+
+	// msg3OptionsSize is the size of the Options block data sent in message 3
+	// part 2: tmin(1) tmax(1) rmin(1) rmax(1) tdmy(2) rdmy(2) tdelay(2) rdelay(2).
+	// ntcp2.md §"Options": "size :: 2 bytes, big endian, size of options to
+	// follow, 12 bytes minimum".
+	// Reference: Java i2p.i2p router/java/src/net/i2p/router/transport/ntcp/
+	// OutboundNTCP2State.java:63 "OPTIONS3_SIZE = 12" and :429-433
+	// (prepareOutbound3 writes exactly 12 option bytes).
+	msg3OptionsSize = 12
+
+	// maxMsg2CleartextPaddingBytes is the largest message-2 cleartext padding
+	// this implementation accepts as initiator.
+	// ntcp2.md §"2) SessionCreated" Notes: "Alice may reject connections with
+	// excessive padding." and "As of API 0.9.69 (release 2.12.0), Java I2P
+	// implements the same max padding for non-PQ connections as for MLKEM-512.
+	// The maximum padding is 848 bytes."
+	// Reference: i2pd libi2pd/NTCP2.h:36 NTCP2_SESSION_HANDSHAKE_LONG_MAX_SIZE
+	// = 944 (64-byte frame + 880 padding) and NTCP2.cpp:864 which rejects a
+	// SessionCreated whose padding exceeds its max message size.
+	maxMsg2CleartextPaddingBytes = 848
 )
 
 // Handshake performs the NTCP2 three-way handshake (SessionRequest,
@@ -193,6 +230,33 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	// are installed. Read() and Write() gate on this flag.
 	c.established.Store(true)
 
+	// Post-SessionConfirmed clock-skew recheck (responder only).
+	//
+	// ntcp2.md §"Clock Skew Guidelines": "If Alice does reply with Session
+	// Confirmed (probably because the skew is very close to the 60s limit, and
+	// the Alice and Bob calculations are not exactly the same due to RTT), Bob
+	// should adjust the calculated clock skew by subtracting half the RTT. If
+	// the adjusted clock skew exceeds the maximum, Bob should then reply with a
+	// Disconnect message containing a clock skew reason code, and close the
+	// connection."
+	//
+	// Reference: Java InboundEstablishState.verifyInbound()
+	// (router/transport/ntcp/InboundEstablishState.java:218-246):
+	//   long rtt = now - _con.getCreated();
+	//   _peerSkew -= ((rtt / 2) + 500) / 1000;
+	//   if (1000*abs(_peerSkew) > CLOCK_FUDGE_FACTOR) -> REASON_SKEW (7)
+	// i2pd rechecks DateTime-block timestamps in the data phase instead
+	// (libi2pd/NTCP2.cpp:1308-1323) and has no handshake-phase recheck.
+	//
+	// This runs only after RunPostHandshakeHook/PropagateSipHash so the
+	// termination frame can be sealed with real data-phase keys, exactly when
+	// the spec says the disconnect message is possible.
+	if !cfg.Initiator && !cfg.msg1ReceivedAt.IsZero() && cfg.maxClockSkew() > 0 {
+		if err := c.recheckClockSkewAfterConfirm(cfg, raw); err != nil {
+			return err
+		}
+	}
+
 	flog("Handshake", logger.Fields{
 		"event":      "handshake_complete",
 		"role":       role,
@@ -314,9 +378,21 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time
 	t0 := time.Now()
 	raw := nc.Underlying()
 	riBytes := cfg.LocalRouterInfo
-	// m3p2Len includes the block header (3B), flag byte (1B), RouterInfo bytes, and the AEAD tag (16B).
+	// m3p2Len includes the RouterInfo block (header 3B + flag 1B + RI bytes),
+	// the Options block (header 3B + 12B) and the AEAD tag (16B).
 	// Per the NTCP2 spec, the RouterInfo block (type 2) data starts with a 1-byte flag field.
-	m3p2Len := uint16(BlockHeaderSize + 1 + len(riBytes) + Poly1305Overhead)
+	//
+	// ntcp2.md §"3) SessionConfirmed" Notes: "Options should be included, to
+	// specify padding parameters", and the frame "must contain 1 to 3 blocks in
+	// the following order: 1) Alice's Router Info block (required) 2) Options
+	// block (optional) 3) Padding block (optional)".
+	// Reference: Java i2p.i2p OutboundNTCP2State.java:416-418 computes
+	// msg3p2len = BLOCK_HEADER + 1 + riSize + BLOCK_HEADER + OPTIONS3_SIZE +
+	// BLOCK_HEADER + padlen3 + MAC_SIZE.
+	// No AEAD padding block is emitted here: §"SessionConfirmed" Notes
+	// recommends appending a data-phase frame instead, and the padding size must
+	// be committed in message 1's m3p2Len before the frame is built.
+	m3p2Len := uint16(BlockHeaderSize + 1 + len(riBytes) + BlockHeaderSize + msg3OptionsSize + Poly1305Overhead)
 
 	// Defense-in-depth: verify the public key derived from our Noise static
 	// private key actually appears in the LocalRouterInfo we are about to
@@ -396,27 +472,80 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 	}
 	raw := nc.Underlying()
 	dumpMsg1IfEnabled(cfg, raw, opts1, msg1)
-	if _, err := raw.Write(msg1); err != nil {
-		return oops.Code("MSG1_SEND_FAILED").In("ntcp2").
-			Wrapf(err, "failed to send NTCP2 message 1")
-	}
 
 	// Send the cleartext padding bytes (if padLen > 0) and MixHash them into
 	// the handshake state. The padding content is random per the spec to prevent
 	// plaintext fingerprinting. This matches i2pd's CreateSessionRequestMessage.
+	//
+	// The message and its padding are concatenated into ONE buffer and flushed
+	// with a single Write (with TCP_NODELAY forced on): ntcp2.md §"1)
+	// SessionRequest" Notes requires that "implementations must ensure that
+	// Alice buffers and then flushes the entire contents of the first message at
+	// once, including the padding", and §"Version Detection" repeats the
+	// requirement because Bob's NTCP/NTCP2 version detection keys off receiving
+	// the whole first message in one segment. Two separate Write calls could
+	// land in two TCP segments.
+	// Reference: i2pd libi2pd/NTCP2.cpp:227-232 builds msg1 + padding in one
+	// buffer (m_Buffer/m_BufferLen) and libi2pd/NTCP2.cpp:661-663
+	// (SendSessionRequest) writes it with a single async_write.
 	if padLen > 0 {
 		pad, err := cryptorand.RandomBytes(padLen)
 		if err != nil {
 			return oops.Code("MSG1_PAD_GEN_FAILED").In("ntcp2").
 				Wrapf(err, "failed to generate %d padding bytes for message 1", padLen)
 		}
-		if _, err := raw.Write(pad); err != nil {
-			return oops.Code("MSG1_PAD_SEND_FAILED").In("ntcp2").
-				Wrapf(err, "failed to send %d padding bytes after message 1", padLen)
-		}
 		nc.MixHashData(pad)
+		if _, err := writeMessageAtOnce(raw, msg1, pad); err != nil {
+			return oops.Code("MSG1_SEND_FAILED").In("ntcp2").
+				Wrapf(err, "failed to send NTCP2 message 1 with %d padding bytes", padLen)
+		}
+		return nil
+	}
+	if _, err := writeMessageAtOnce(raw, msg1, nil); err != nil {
+		return oops.Code("MSG1_SEND_FAILED").In("ntcp2").
+			Wrapf(err, "failed to send NTCP2 message 1")
 	}
 	return nil
+}
+
+// writeMessageAtOnce concatenates the handshake message frame and its
+// cleartext padding into a single buffer and flushes it with one Write on the
+// underlying socket. ntcp2.md §"1) SessionRequest" / §"2) SessionCreated" /
+// §"Version Detection" Notes: the entire contents of messages 1 and 2,
+// "including the padding", must be buffered and flushed at once, and
+// §"3) SessionConfirmed"
+// requires message 3's two AEAD frames to be flushed at once as well, so that
+// (a) Bob's version detection sees the full first message in one segment and
+// (b) the random padding cannot be stripped by segmentation.
+//
+// TCP_NODELAY is forced on for the duration: Nagling would let the kernel
+// coalesce this frame with unrelated later writes rather than guaranteeing
+// this single flush.
+// Reference: i2pd libi2pd/NTCP2.cpp SendSessionRequest / SendSessionCreated /
+// SendSessionConfirmed each hand one assembled buffer to a single
+// boost::asio::async_write.
+func writeMessageAtOnce(raw net.Conn, frame, padding []byte) (int, error) {
+	if tcp, ok := raw.(*net.TCPConn); ok {
+		// Best-effort: a SetNoDelay failure does not change the required
+		// single-flush outcome, only the kernel-side latency of that flush.
+		_ = tcp.SetNoDelay(true)
+	}
+	out := frame
+	if len(padding) > 0 {
+		out = make([]byte, 0, len(frame)+len(padding))
+		out = append(out, frame...)
+		out = append(out, padding...)
+	}
+	n, err := raw.Write(out)
+	if err != nil {
+		return n, err
+	}
+	if n != len(out) {
+		return n, oops.Code("MSG_PARTIAL_WRITE").In("ntcp2").
+			With("expected", len(out)).With("written", n).
+			Errorf("partial handshake write: wrote %d of %d bytes", n, len(out))
+	}
+	return n, nil
 }
 
 // receiveResponderMsg2 reads and processes the NTCP2 message 2 (Noise exchange step).
@@ -466,6 +595,34 @@ func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn, hsD
 			Wrapf(err, "peer started msg2 but closed after %d bytes", n1+n2)
 	}
 
+	// Replay detection: check whether Bob's ephemeral key Y has been seen
+	// before. ntcp2.md §"2) SessionCreated" Notes: "Alice must maintain a local
+	// cache of previously-used handshake values and reject duplicates, to
+	// prevent replay attacks. Values in the cache must have a lifetime of at
+	// least 2*D... the 32-byte Y value (or its encrypted equivalent) may be
+	// used." We key on the encrypted Y (first 32 bytes of message 2), the same
+	// "encrypted equivalent" approach the responder uses for X and Java I2P
+	// uses inbound (NTCP2TransportImpl.isHXHIValid, checked on the encrypted
+	// key before decryption). The check runs BEFORE AEAD processing so a
+	// replayed frame is rejected even if its crypto state were still valid.
+	//
+	// Protection is mandatory, so an initiator with no configured detector
+	// falls back to the same shared process-wide cache as the responder.
+	detector := cfg.ReplayDetector
+	if detector == nil {
+		detector = fallbackReplayDetector(cfg.maxClockSkew())
+		warnMissingReplayDetector()
+	}
+	var encryptedY [32]byte
+	copy(encryptedY[:], buf2[:32])
+	if detector.CheckAndAdd(encryptedY) {
+		return nil, 0, oops.
+			Code("MSG2_REPLAY").
+			In("ntcp2").
+			With("remote", raw.RemoteAddr().String()).
+			Errorf("replay detected: message 2 ephemeral key has been seen before within TTL window")
+	}
+
 	bobOpts, err := nc.ReadHandshakeMsgFromBytes(handshake.PhaseExchange, buf2)
 	if err != nil {
 		return nil, 0, oops.Code("MSG2_PROCESS_FAILED").In("ntcp2").
@@ -484,6 +641,22 @@ func readMessage2WithPadding(cfg *Config, raw net.Conn, nc *noise.NoiseConn, hsD
 	// Read and MixHash Bob's cleartext padding. The SessionCreated section
 	// requires this padding to be included in the KDF for message 3 part 1 so
 	// tampering is detected; padLen 0 means no bytes to read.
+	//
+	// Reject an excessive padLen BEFORE allocating: ntcp2.md §"2) SessionCreated"
+	// Notes — "Padding should be limited to a reasonable amount. Alice may reject
+	// connections with excessive padding." ... "The maximum padding is 848
+	// bytes." Without this cap a peer declares any uint16 and forces a
+	// 65535-byte allocation plus a blocking read on every connection.
+	// Reference: i2pd libi2pd/NTCP2.cpp:864 (ProcessSessionCreated) refuses to
+	// read padding beyond its max message size and terminates the session.
+	if bobPadLen > maxMsg2CleartextPaddingBytes {
+		return nil, 0, oops.
+			Code("MSG2_PADDING_TOO_LARGE").
+			In("ntcp2").
+			With("padLen", bobPadLen).
+			With("max", maxMsg2CleartextPaddingBytes).
+			Errorf("message 2 padding too large: %d > %d", bobPadLen, maxMsg2CleartextPaddingBytes)
+	}
 	if bobPadLen > 0 {
 		pad := make([]byte, bobPadLen)
 		if _, err := io.ReadFull(raw, pad); err != nil {
@@ -603,6 +776,9 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time
 		}).Warn("NTCP2 responder: msg3 read/processing failed")
 		return nil, err
 	}
+	// Record msg3 arrival for the post-SessionConfirmed skew recheck (the RTT
+	// proxy is msg3-arrival minus msg1-arrival; see recheckClockSkewAfterConfirm).
+	cfg.msg3ReceivedAt = time.Now()
 	flog("performResponderHandshake", logger.Fields{
 		"event":       "msg3_done",
 		"elapsed_ms":  time.Since(t0).Milliseconds(),
@@ -685,6 +861,18 @@ func handleResponderMsg1(cfg *Config, nc *noise.NoiseConn, raw net.Conn, hsDeadl
 	alicePadLen, m3p2Len, clockSkew, err := validateMessage1Options(aliceOpts, cfg.networkID(), cfg.maxClockSkew())
 	if err != nil {
 		return 0, false, err
+	}
+	// Remember tsA and the local arrival time for the mandatory post-
+	// SessionConfirmed skew recheck (§"Clock Skew Guidelines": "Bob should
+	// adjust the calculated clock skew by subtracting half the RTT"). The RTT
+	// proxy is (msg3 received - msg1 received), mirroring Java
+	// InboundEstablishState.verifyInbound(), which measures
+	// `_con.getCreated()` to msg3-arrival. Stored even when clockSkew is true
+	// is unnecessary (that path closes after msg2), so only record on the
+	// continuing path.
+	if len(aliceOpts) >= ntcp2OptionsSize {
+		cfg.peerTimestampSecs = uint64(binary.BigEndian.Uint32(aliceOpts[optsTimestampOffset : optsTimestampOffset+4]))
+		cfg.msg1ReceivedAt = t1
 	}
 	if clockSkew {
 		flog("handleResponderMsg1", logger.Fields{
@@ -778,25 +966,31 @@ func handleResponderMsg2(cfg *Config, nc *noise.NoiseConn, raw net.Conn) error {
 		"msg_len": msg2Size,
 		"pad_len": bobPadLen,
 	}).Debug("NTCP2 responder: sending msg2")
-	if _, err := raw.Write(msg2); err != nil {
-		return oops.Code("MSG2_SEND_FAILED").In("ntcp2").
-			Wrapf(err, "failed to send NTCP2 message 2")
-	}
-
 	// Send the cleartext padding bytes (if bobPadLen > 0) and MixHash them into
 	// the handshake state. The padding content is random per the spec to prevent
 	// plaintext fingerprinting. This matches i2pd's CreateSessionCreatedMessage.
+	//
+	// Message 2 and its padding are concatenated and flushed with a single
+	// Write: ntcp2.md §"2) SessionCreated" Notes — "implementations must ensure
+	// that Bob buffers and then flushes the entire contents of the second
+	// message at once, including the padding".
+	// Reference: i2pd libi2pd/NTCP2.cpp:294-299 (CreateSessionCreatedMessage
+	// assembles msg2+padding in one buffer) and :830-831 (SendSessionCreated
+	// writes it with one async_write).
 	if bobPadLen > 0 {
 		pad, err := cryptorand.RandomBytes(bobPadLen)
 		if err != nil {
 			return oops.Code("MSG2_PAD_GEN_FAILED").In("ntcp2").
 				Wrapf(err, "failed to generate %d padding bytes for message 2", bobPadLen)
 		}
-		if _, err := raw.Write(pad); err != nil {
-			return oops.Code("MSG2_PAD_SEND_FAILED").In("ntcp2").
-				Wrapf(err, "failed to send %d padding bytes after message 2", bobPadLen)
-		}
 		nc.MixHashData(pad)
+		if _, err := writeMessageAtOnce(raw, msg2, pad); err != nil {
+			return oops.Code("MSG2_SEND_FAILED").In("ntcp2").
+				Wrapf(err, "failed to send NTCP2 message 2 with %d padding bytes", bobPadLen)
+		}
+	} else if _, err := writeMessageAtOnce(raw, msg2, nil); err != nil {
+		return oops.Code("MSG2_SEND_FAILED").In("ntcp2").
+			Wrapf(err, "failed to send NTCP2 message 2")
 	}
 	flog("handleResponderMsg2", logger.Fields{
 		"event":      "msg2_write_done",
@@ -979,7 +1173,8 @@ func randomNTCP2PaddingLength() (int, error) {
 }
 
 // buildMsg3Part2Payload wraps raw RouterInfo bytes in the NTCP2 block frame
-// (type 2) that becomes the plaintext payload of Noise message 3.
+// (type 2) that becomes the plaintext payload of Noise message 3, followed by
+// the (optional but spec-recommended) Options block.
 //
 // Per the NTCP2 spec, the RouterInfo block data starts with a 1-byte flag field:
 //   - bit 0: if set, request peer to flood the RouterInfo
@@ -990,6 +1185,12 @@ func randomNTCP2PaddingLength() (int, error) {
 //	bytes 1-2 : block size = 1 + len(routerInfoBytes) (big-endian uint16)
 //	byte 3    : flag = 0x00 (no flood request)
 //	bytes 4+  : routerInfoBytes
+//	then      : block type = 0x01 (Options), size = 12, option data
+//
+// ntcp2.md §"3) SessionConfirmed" Notes: "Options should be included, to
+// specify padding parameters."
+// Reference: Java i2p.i2p OutboundNTCP2State.java:421-433 (prepareOutbound3
+// writes the RI block then a 12-byte Options block).
 //
 // Performance note: The make() call zero-initializes the buffer even though
 // we immediately overwrite all bytes. A micro-optimization would use unsafe
@@ -998,12 +1199,50 @@ func randomNTCP2PaddingLength() (int, error) {
 //   - Allocation cost is dominated by the Noise AEAD that immediately follows
 //   - Zero-init provides defense-in-depth against partial-write bugs
 func buildMsg3Part2Payload(routerInfoBytes []byte) []byte {
-	payload := make([]byte, BlockHeaderSize+1+len(routerInfoBytes))
+	payload := make([]byte, BlockHeaderSize+1+len(routerInfoBytes)+BlockHeaderSize+msg3OptionsSize)
 	payload[0] = routerInfoBlockType
 	binary.BigEndian.PutUint16(payload[1:3], uint16(1+len(routerInfoBytes)))
 	payload[3] = 0x00 // flag byte: no flood request
 	copy(payload[4:], routerInfoBytes)
+
+	// Options block (type 1) immediately after the RouterInfo block, per the
+	// §"SessionConfirmed" ordering (RouterInfo, Options, Padding).
+	off := BlockHeaderSize + 1 + len(routerInfoBytes)
+	payload[off] = optionsBlockType
+	binary.BigEndian.PutUint16(payload[off+1:off+3], uint16(msg3OptionsSize))
+	copy(payload[off+3:], msg3Part2OptionsData())
 	return payload
+}
+
+// msg3Part2OptionsData returns the 12-byte Options block data sent in message 3
+// part 2: tmin(1) tmax(1) rmin(1) rmax(1) tdmy(2) rdmy(2) tdelay(2) rdelay(2).
+//
+// ntcp2.md §"Options": "tmin, tmax, rmin, rmax :: requested padding limits …
+// Each is a 4.4 fixed-point float representing 0 to 15.9375 (or think of it as
+// an unsigned 8-bit integer divided by 16.0)"; "tdmy: Max dummy traffic willing
+// to send, 2 bytes big endian, bytes/sec average" etc.
+//
+// The values are the defaults both reference implementations advertise:
+//   - Java i2p.i2p NTCPConnection.java: PADDING_MIN_DEFAULT_INT = 0,
+//     PADDING_MAX_DEFAULT_INT = 1, DUMMY_DEFAULT = 0, DELAY_DEFAULT = 0, and
+//     OutboundNTCP2State.java:425-431 writes exactly
+//     {min, max, min, max, dummy, dummy, delay, delay}.
+//   - i2pd libi2pd/NTCP2.cpp:1680 (TODO: process options block) — i2pd does not
+//     act on received options, so the defaults are a safe advertisement.
+//
+// tmax/rmax = 0x01 means a 1/16 (6%) padding-to-data ratio, which is what §
+// "Options" documents for value 0x01 ("Value of 0x01 means add 6 percent
+// padding") and matches this package's DefaultMaxPaddingSize (64 bytes) applied
+// to typical few-KB frames.
+func msg3Part2OptionsData() []byte {
+	return []byte{
+		0x00, 0x01, // tmin, tmax
+		0x00, 0x01, // rmin, rmax
+		0x00, 0x00, // tdmy
+		0x00, 0x00, // rdmy
+		0x00, 0x00, // tdelay
+		0x00, 0x00, // rdelay
+	}
 }
 
 // verifyLocalRouterInfoMatchesStaticKey is a defense-in-depth check that

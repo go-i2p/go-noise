@@ -91,14 +91,25 @@ func checkTimeWindow(elapsed, pastAge, futureAge time.Duration) error {
 	return nil
 }
 
-// nsReplayCacheTTL computes the replay cache TTL from the freshness window.
-// The +1 minute buffer beyond the freshness window accounts for:
-//   - Clock skew between sender and receiver (beyond the configured tolerance)
-//   - Network jitter and packet reordering delays
-//   - Race conditions at window boundaries during concurrent processing
+// nsReplayFilterDuration is how long a seen NS ephemeral key is retained for
+// replay detection.
 //
-// This ensures that legitimate messages near the window edge are not incorrectly
-// rejected as replays while still preventing long-lived replay attacks.
+// Spec ref: ecies.md §"Implementation Considerations" -> §"Parameters" -
+// "NS replay filter duration: 5 minutes".
+// Java I2P (ECIESAEADEngine) uses the same 5 minutes (MAX_NS_AGE).
+const nsReplayFilterDuration = 5 * time.Minute
+
+// nsReplayCacheTTL returns the replay filter duration required by the spec,
+// widened only if a deployment configures a longer freshness window than the
+// default -5/+2 minutes (an entry must never stop being tracked while its
+// message could still pass the freshness check).
+//
+// The previous implementation used pastAge + futureAge + 1m = 8 minutes, which
+// over-retained relative to the specified 5-minute filter.
 func nsReplayCacheTTL(pastAge, futureAge time.Duration) time.Duration {
-	return pastAge + futureAge + time.Minute // +1m for clock skew + network jitter
+	needed := pastAge + futureAge
+	if needed <= nsReplayFilterDuration {
+		return nsReplayFilterDuration
+	}
+	return needed
 }

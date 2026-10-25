@@ -77,14 +77,6 @@ type GarlicSessionManager interface {
 	// plaintext.
 	EncryptNewSessionReply(sessionHash [32]byte, payload []byte) ([]byte, error)
 
-	// ProcessIncomingDHRatchet updates a session's receiving ratchet state
-	// when a DH ratchet key is received from a peer.
-	//
-	// Parameters:
-	//   - sessionTag: the tag that identified the session.
-	//   - newRemotePubKey: the peer's new ephemeral public key.
-	ProcessIncomingDHRatchet(sessionTag [8]byte, newRemotePubKey [32]byte) error
-
 	// GetSessionCount returns the number of active sessions.
 	GetSessionCount() int
 

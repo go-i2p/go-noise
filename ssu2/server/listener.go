@@ -2,17 +2,18 @@ package server
 
 import (
 	"container/list"
-	"github.com/go-i2p/crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/go-noise/mod/replaycache"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -136,6 +137,22 @@ type SSU2Listener struct {
 	// sessionRateLimiter limits SessionRequest processing per source IP.
 	sessionRateLimiter *ipRateLimiter
 
+	// handshakeReplay caches previously-seen SessionRequest handshake values so
+	// replays are rejected before the expensive Noise DH.
+	//
+	// Spec ref: ssu2.md §"Session Request" -> §"Notes": "Bob must maintain a local
+	// cache of previously-used handshake values and reject duplicates, to prevent
+	// replay attacks. Values in the cache must have a lifetime of at least 2*D. The
+	// cache values are implementation-dependent, however the 32-byte X value (or its
+	// encrypted equivalent) may be used. Reject by sending a Retry message containing
+	// a zero token and a termination block."
+	//
+	// D is the maximum DateTime delta (config.MaxClockSkew), so the TTL is 2*D.
+	// The cache key is SHA-256 over the raw (header-protected) 32-byte X value plus
+	// the ciphertext, matching the existing per-session derivation
+	// (handshake.computeSessionRequestReplayToken) so both layers agree.
+	handshakeReplay *replaycache.TTLCache
+
 	// droppedPackets counts packets silently discarded when packetQueue is
 	// full. Accessed atomically to avoid races between receiveLoop and stats
 	// readers.
@@ -144,6 +161,19 @@ type SSU2Listener struct {
 	// routingErrors counts packets that failed to route to a session and were
 	// not handled as a TokenRequest. Accessed atomically.
 	routingErrors uint64
+
+	// outOfSessionHandler receives intro-key protected out-of-session messages
+	// (Peer Test type 7, Hole Punch type 11) that arrive on this socket but do
+	// not belong to any session. Per ssu2.rst §"Peer Test Process", messages 5-7
+	// are "out-of-session using Peer Test blocks in a Peer Test message" and
+	// §"Relay Process" step 5 is a Hole Punch sent directly to Alice, so neither
+	// can be delivered through the session router: their connection IDs are
+	// derived from the test/relay nonce, not from a session. Without a handler
+	// these messages are dropped.
+	//
+	// Stored atomically because it is registered by the transport layer while
+	// packet workers read it.
+	outOfSessionHandler atomic.Pointer[outOfSessionHandler]
 
 	// readBufferFailed is set when the OS rejected the SetReadBuffer call in
 	// ListenSSU2. It is observable via Stats() so monitoring can detect
@@ -208,6 +238,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		pendingByInitiator: make(map[string]*SSU2Conn),
 		tokenCache:         newTokenCacheFromConfig(config),
 		sessionRateLimiter: newIPRateLimiter(sessionRequestsPerSecond, sessionRateLimiterMaxIPs),
+		handshakeReplay:    newHandshakeReplayCache(config),
 		firstSight:         newFirstSightTracker(config.FirstSightWindow, config.FirstSightMaxEntries),
 		issuanceLimiter:    newTokenIssuanceLimiter(config.GlobalTokenIssuanceRate, config.GlobalTokenIssuanceBurst),
 		acceptQueue:        make(chan *SSU2Conn, 100), // Buffer 100 pending connections
@@ -431,6 +462,24 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, err
 	}
 
+	// Extract and validate initiator connection ID from packet header.
+	initiatorConnID, err := l.extractSessionInitiatorID(packet)
+	if err != nil {
+		return nil, err
+	}
+
+	// Dedup BEFORE the replay gate. ssu2.md §"Session Request" tells Alice that a
+	// retransmission must "Maintain same source and connection IDs, ephemeral key,
+	// and packet number 0. Or, just retain and retransmit the same encrypted
+	// packet", so a legitimate retransmit repeats the very handshake value the
+	// §Notes replay cache keys on. Resolving the conflict in the direction that
+	// keeps handshakes working: a repeat that matches an existing pending session is
+	// a retransmit, and only an unmatched duplicate is a replay.
+	existingConn := l.findExistingSessionByInitiator(initiatorConnID, remoteAddr)
+	if existingConn != nil {
+		return existingConn, nil
+	}
+
 	if err := l.handleSessionRequestToken(packet, remoteAddr); err != nil {
 		// RETRY_SENT means we sent a Retry successfully — this is the normal
 		// token-gate flow, not a failure. Return (nil, nil) so PacketRouter
@@ -442,16 +491,10 @@ func (l *SSU2Listener) handleNewSession(remoteAddr *net.UDPAddr, packet *SSU2Pac
 		return nil, err
 	}
 
-	// Extract and validate initiator connection ID from packet header.
-	initiatorConnID, err := l.extractSessionInitiatorID(packet)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check dedup index for existing session.
-	existingConn := l.findExistingSessionByInitiator(initiatorConnID, remoteAddr)
-	if existingConn != nil {
-		return existingConn, nil
+	// Replay gate: a duplicate handshake value for a session we have no record of
+	// is rejected before any DH work.
+	if err := l.rejectSessionRequestReplay(packet, remoteAddr); err != nil {
+		return nil, nil
 	}
 
 	// Create and configure new SSU2 connection.
@@ -865,59 +908,176 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	return l.enqueueConnection(conn, connID, dedupKey)
 }
 
-// validateSessionRequestToken extracts and validates the token from a SessionRequest.
-// Returns nil if the token is valid, errNoTokenPresent if no token block exists,
-// or an error describing the validation failure.
+// validateSessionRequestToken reads and validates the token from a SessionRequest.
+//
+// The token is the 8-byte Token field at header bytes 24-31, NOT a payload block.
+// ssu2.md §"Session Request" raw-contents table lists "Token" as a header field, and
+// §"Inbound Packet Handling" step 2a is explicit about both the ordering and the
+// location:
+//
+//	"If the token at header bytes 24-31 is accepted, then MixHash() the decrypted 32
+//	 byte header and decrypt the message with Noise. Send a Session Created in response.
+//	 If the token is not accepted, send a Retry message to the source IP/port with a
+//	 token. Do not attempt to decrypt the message with Noise to avoid DDoS attacks."
+//
+// and §"Tokens": "If Bob does not accept the token in the Session Request message, Bob
+// does NOT decrypt the message, as it requires an expensive DH operation."
+//
+// A Session Request may not even carry a New Token block: §"Session Request" -> §"Payload"
+// allows only "DateTime block / Options block (optional) / Relay Tag Request block
+// (optional) / Padding block (optional)". Reading the token from a New Token block inside
+// the Noise-encrypted payload therefore required decrypting the message before the gate,
+// which is exactly the DoS exposure the spec forbids (audit finding SS-01).
+//
+// Returns nil if the token is valid, errNoTokenPresent if it is absent/zero, or an error
+// describing the validation failure.
 func (l *SSU2Listener) validateSessionRequestToken(packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
-	// Parse blocks from payload
-	if len(packet.Payload) == 0 {
+	// The Token field occupies header bytes 24-31 of the 32-byte long header.
+	const tokenHeaderOffset = 24
+	if len(packet.Header) < tokenHeaderOffset+TokenSize {
 		return errNoTokenPresent
 	}
 
-	blocks, err := DeserializeBlocks(packet.Payload)
-	if err != nil {
+	token := make([]byte, TokenSize)
+	copy(token, packet.Header[tokenHeaderOffset:tokenHeaderOffset+TokenSize])
+
+	// A zero token means Alice has not received one yet; §"Session Request" defines
+	// "Token :: 0 if not previously received from Bob".
+	if isAllZero(token) {
 		return errNoTokenPresent
 	}
 
-	// Find NewToken block
-	tokenBlock := FindBlockByType(blocks, BlockTypeNewToken)
-	if tokenBlock == nil {
-		return errNoTokenPresent
-	}
-
-	// Parse token from block
-	newToken, err := ParseNewTokenBlock(tokenBlock)
-	if err != nil {
-		return oops.Wrapf(err, "failed to parse NewToken block")
-	}
-
-	// Check token expiration with clock skew tolerance.
-	// Account for client-server clock skew in the token expiration check.
-	// If the client's clock is ahead of the server's, the server allows
-	// the token to be valid for up to MaxClockSkew seconds past the expiration
-	// timestamp. This prevents legitimate tokens from being rejected due to clock drift.
-	now := time.Now().Unix()
-	cfg := l.config.Load()
-	expirationWithSkew := int64(newToken.Expiration) + int64(cfg.MaxClockSkew.Seconds())
-	if now > expirationWithSkew {
-		return oops.
-			Code("TOKEN_EXPIRED").
-			In("ssu2_listener").
-			With("expiration", newToken.Expiration).
-			With("max_clock_skew", cfg.MaxClockSkew.Seconds()).
-			Errorf("token has expired")
-	}
-
-	// Validate and consume token against cache
-	if !l.tokenCache.ConsumeToken(newToken.Token, remoteAddr) {
+	// Validate and consume against the cache. Retry tokens are single-use and
+	// short-lived, so expiry is enforced inside the cache and needs no separate
+	// timestamp check here (§"Tokens": "Tokens may only be used once").
+	local := l.localUDPAddress()
+	if !l.tokenCache.ConsumeToken(token, remoteAddr, local) {
+		// A presented-but-invalid token is not the token we issued for this
+		// address. ssu2.md §"Handshake Retransmission" -> "### Retry":
+		//
+		//   "If a second Session Request message is received with a different but
+		//    still-invalid token, drop the pending session and do not respond."
+		//
+		// So the outstanding token (the pending session's state) is discarded here,
+		// and the caller responds with nothing. A later Session Request repeating the
+		// previously issued token must NOT be accepted once the pending session has
+		// been dropped.
+		l.tokenCache.DeleteToken(remoteAddr, local)
 		return oops.
 			Code("INVALID_TOKEN").
 			In("ssu2_listener").
 			With("address", remoteAddr.String()).
-			Errorf("token validation failed")
+			Errorf("token validation failed; pending session dropped")
 	}
 
 	return nil
+}
+
+// replayCacheTTLFloor bounds the replay cache when MaxClockSkew is unset.
+// Spec ref: ssu2.md §"Session Request" -> §"Notes" - cache lifetime "at least 2*D".
+const replayCacheTTLFloor = 4 * time.Minute
+
+// newHandshakeReplayCache builds the SessionRequest replay cache with the
+// spec-mandated minimum lifetime of 2*D, where D is the configured maximum clock
+// skew (the "maximum delta time" of ssu2.md §"Session Request" -> §"Notes").
+func newHandshakeReplayCache(config *SSU2Config) *replaycache.TTLCache {
+	ttl := 2 * config.MaxClockSkew
+	if ttl < replayCacheTTLFloor {
+		ttl = replayCacheTTLFloor
+	}
+	return replaycache.New(replaycache.Config{
+		TTL:             ttl,
+		MaxSize:         handshakeReplayMaxSize,
+		CleanupInterval: 30 * time.Second,
+	})
+}
+
+// handshakeReplayMaxSize bounds replay-cache memory. Sized above the spec's 2*D
+// lifetime window for the default skew so legitimate peers are not evicted early.
+const handshakeReplayMaxSize = 8192
+
+// sessionRequestReplayKey derives the replay cache value for a SessionRequest.
+//
+// Spec ref: ssu2.md §"Session Request" -> §"Notes": "the 32-byte X value (or its
+// encrypted equivalent) may be used". The X value arrives header-encrypted (bytes
+// 32-63 of the datagram), so the encrypted equivalent is used, together with the
+// ciphertext, to identify the message uniquely.
+func sessionRequestReplayKey(packet *SSU2Packet) [32]byte {
+	h := sha256.New()
+	h.Write(packet.EphemeralKey)
+	h.Write(packet.Payload)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// rejectSessionRequestReplay implements the spec's SessionRequest replay
+// rejection: a duplicate handshake value is answered with a Retry carrying a
+// zero token and a Termination block, and the message is never decrypted.
+//
+// Returns nil when the packet is not a replay (or not a SessionRequest), a
+// RETRY_SENT-coded error wrapped as REPLAY_REJECTED once the rejection Retry has
+// gone out, or a send failure.
+func (l *SSU2Listener) rejectSessionRequestReplay(packet *SSU2Packet, remoteAddr *net.UDPAddr) error {
+	if packet.MessageType != MessageTypeSessionRequest || l.handshakeReplay == nil {
+		return nil
+	}
+
+	key := sessionRequestReplayKey(packet)
+	if !l.handshakeReplay.CheckAndAdd(key) {
+		return nil
+	}
+
+	flog("rejectSessionRequestReplay", logger.Fields{"remote_addr": remoteAddr.String()}).
+		Debug("Duplicate SessionRequest handshake value: rejecting with zero-token Retry + Termination")
+
+	// "Reject by sending a Retry message containing a zero token and a
+	// termination block." A zero token tells the peer not to retry.
+	//
+	// The Retry cannot be sent without an intro key (it must be AEAD-sealed and
+	// header-obfuscated), and ssu2.md §"Session Request" -> §"Notes" also says "On
+	// most errors, including AEAD, DH, apparent replay, or key validation failure,
+	// Bob should halt further message processing and drop the message without
+	// responding", so a send failure degrades to a silent drop rather than an error.
+	reason := TerminationSessionRequestError
+	incomingSize := len(packet.Header) + len(packet.Payload) + len(packet.MAC)
+	zeroToken := make([]byte, TokenSize)
+	if err := l.sendRetry(remoteAddr, zeroToken, packet.Header, incomingSize, &reason); err != nil {
+		flog("rejectSessionRequestReplay", logger.Fields{"error": err.Error()}).
+			Debug("Replayed SessionRequest dropped without a rejection Retry")
+	}
+	return oops.
+		Code("REPLAY_REJECTED").
+		In("ssu2_listener").
+		Errorf("replayed SessionRequest rejected")
+}
+
+// localUDPAddress returns the listener's bound local (destination) address, used to
+// bind tokens to the source + destination pair required by ssu2.md §"Tokens".
+//
+// Go's net.PacketConn exposes only the socket's bound address, not the per-datagram
+// destination IP, so a wildcard bind (0.0.0.0) maps every destination to one key. That
+// is no weaker than the previous behaviour and is exact for the normal case of a listener
+// bound to a specific interface address.
+func (l *SSU2Listener) localUDPAddress() *net.UDPAddr {
+	if l.underlying == nil {
+		return nil
+	}
+	udpAddr, ok := l.underlying.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		return nil
+	}
+	return udpAddr
+}
+
+// isAllZero reports whether every byte of b is zero.
+func isAllZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // processTokenRequest handles a TokenRequest message by generating and sending
@@ -973,7 +1133,7 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	}
 
 	// Generate token for this address
-	token, err := l.tokenCache.GenerateToken(remoteAddr)
+	token, err := l.tokenCache.GenerateToken(remoteAddr, l.localUDPAddress())
 	if err != nil {
 		return oops.Wrapf(err, "failed to generate token")
 	}
@@ -981,7 +1141,7 @@ func (l *SSU2Listener) processTokenRequest(packet *SSU2Packet, remoteAddr *net.U
 	// Create and send Retry message with token.
 	// Per spec: Retry must not be larger than 3x the incoming message.
 	incomingSize := len(packet.Header) + len(packet.Payload) + len(packet.MAC)
-	return l.sendRetry(remoteAddr, token, packet.Header, incomingSize)
+	return l.sendRetry(remoteAddr, token, packet.Header, incomingSize, nil)
 }
 
 // SessionCount returns the current number of active sessions.

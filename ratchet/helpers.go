@@ -23,16 +23,6 @@ type sessionKeys struct {
 }
 
 const (
-	// DHRatchetInterval is the number of messages sent before the DH ratchet
-	// rotates. A DH ratchet rotation uses X25519 to derive a fresh set of
-	// keys, which is what gives the scheme forward secrecy.
-	DHRatchetInterval = 50
-
-	// MaxConsecutiveDHFailures is the maximum number of consecutive DH
-	// ratchet failures before the session is considered degraded and should
-	// be reset.
-	MaxConsecutiveDHFailures = 3
-
 	// hkdfInfoDHRatchetStep is the HKDF info string for the DH initialization KDF.
 	// Used to derive directional chain keys from a root key.
 	// Spec ref: ecies.rst §"DH INITIALIZATION KDF" — HKDF(rootKey, k, "KDFDHRatchetStep", 64).
@@ -127,12 +117,15 @@ const (
 // of tags consumed in the current tagset. The window grows linearly with usage,
 // capped at tagWindowMax.
 //
-// Spec ref: ecies.rst §"Parameters" — "Tagset look ahead of tag N: min(tsmax, tsmin + N/4)".
-// Java I2P (primary reference) uses N/2: min(tsmax, tsmin + N/2).
-// i2pd uses 2N: min(tsmax, tsmin + 2*N).
-// We follow Java's N/2 as the primary reference.
+// Spec ref: ecies.md §"Parameters" — "Tagset look ahead of tag N: min(tsmax, tsmin + N/4)".
+//
+// The two references differ from the dev spec here: Java I2P
+// (RatchetTagSet.addTags, line 431) grows with N/2 and i2pd grows with 2N.
+// The dev spec is authoritative for this implementation, so N/4 is used; the
+// divergence is recorded as an open question in the compliance report because
+// it only changes how eagerly a receiver pre-derives tags, not any wire value.
 func targetTagWindowSize(usedTags uint32) int {
-	growth := usedTags / 2
+	growth := usedTags / 4
 	size := tagWindowMin + int(growth)
 	if size > tagWindowMax {
 		size = tagWindowMax
@@ -147,6 +140,32 @@ func prependPendingNextKeys(session *Session, plaintext []byte) ([]byte, error) 
 	pendingBlocks := append(nextKeyBlocks, ackBlocks...)
 	if len(pendingBlocks) == 0 {
 		return plaintext, nil
+	}
+
+	// Enforce the spec's block ordering rules on the control-block prefix, which
+	// bypasses PayloadBuilder.validate():
+	//   - ecies.md §"5) Payload" -> §"Block Ordering Rules": "There may be up to
+	//     two Next Key blocks in a single frame" - one forward and one reverse.
+	//   - §"Next DH Ratchet Public Key": "a frame will contain two Next Key
+	//     blocks, one for the forward key and one for the reverse key".
+	// The blocks are derived from the two direction flags, so at most two can
+	// exist; assert it rather than trusting the invariant silently.
+	if len(nextKeyBlocks) > 2 {
+		return nil, oops.Errorf("payload would carry %d NextKey blocks, maximum is 2 (ecies.md §Block Ordering Rules)", len(nextKeyBlocks))
+	}
+	for i := 1; i < len(nextKeyBlocks); i++ {
+		prev, err := nextKeyBlocks[i-1].NextKey()
+		if err != nil {
+			return nil, oops.Wrapf(err, "malformed queued NextKey block")
+		}
+		cur, err := nextKeyBlocks[i].NextKey()
+		if err != nil {
+			return nil, oops.Wrapf(err, "malformed queued NextKey block")
+		}
+		if prev.Reverse == cur.Reverse {
+			return nil, oops.Errorf("payload would carry two %s NextKey blocks, maximum is one per direction",
+				map[bool]string{true: "reverse", false: "forward"}[cur.Reverse])
+		}
 	}
 
 	// Calculate the total size needed for control block headers + data.

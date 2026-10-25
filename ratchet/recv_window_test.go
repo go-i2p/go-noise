@@ -692,7 +692,7 @@ func TestRecvWindowOverflow_SaturatingAddition(t *testing.T) {
 	dummyMsg := make([]byte, 100)
 	dummyTag := [8]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
 
-	_, _, err := bob.decryptExistingSession(bobSession, dummyMsg, dummyTag, nil)
+	_, _, _, _, err := bob.decryptExistingSession(bobSession, dummyMsg, dummyTag, nil)
 
 	// We expect an error (no matching key), but NOT a panic or infinite loop.
 	// The error message should indicate the window range.
@@ -751,7 +751,7 @@ func TestRecvWindowOverflow_NoBillionIterationLoop(t *testing.T) {
 	dummyMsg := make([]byte, 100)
 	dummyTag := [8]byte{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
 
-	_, _, err := bob.decryptExistingSession(bobSession, dummyMsg, dummyTag, nil)
+	_, _, _, _, err := bob.decryptExistingSession(bobSession, dummyMsg, dummyTag, nil)
 
 	elapsed := time.Since(start)
 

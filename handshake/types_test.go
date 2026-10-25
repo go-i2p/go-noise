@@ -286,12 +286,12 @@ func TestHandshakeModifier_DataIntegrity(t *testing.T) {
 
 func TestModifierInterface(t *testing.T) {
 	// Test that our implementations satisfy the HandshakeModifier interface
-	xor, err := NewXORModifier("test", []byte{0xFF})
+	xor, err := newTestXORModifier("test", []byte{0xFF})
 	if err != nil {
-		t.Fatalf("NewXORModifier() error = %v", err)
+		t.Fatalf("newTestXORModifier() error = %v", err)
 	}
 	var _ HandshakeModifier = xor
 
-	padding, _ := NewPaddingModifier("test", 1, 1)
+	padding, _ := newTestPaddingModifier("test", 1, 1)
 	var _ HandshakeModifier = padding
 }

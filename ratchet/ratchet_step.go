@@ -1,8 +1,6 @@
 package ratchet
 
 import (
-	"fmt"
-
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -38,67 +36,46 @@ func advanceRatchets(session *Session) (messageKey [32]byte, sessionTag [8]byte,
 	return messageKey, sessionTag, nil
 }
 
-// attemptDHRatchetRotation checks whether a DH ratchet step is due.
+// attemptDHRatchetRotation initiates a NextKey exchange when the outbound tag
+// set is nearly exhausted.
+//
+// Spec ref: ecies.md §"Parameters" - "Send next key at tag: 4096";
+// §"KEY AND TAG SET IDS" - "When a tag set is almost exhausted, the tag set
+// sender must initiate a NextKey exchange."
+//
+// i2pd (ECIESX25519AEADRatchetSession.cpp:750) applies the identical rule
+// immediately after encrypting an ES message:
+//
+//	if (index >= ECIESX25519_TAGSET_MAX_NUM_TAGS && !m_SendForwardKey)
+//		NewNextSendRatchet ();
+//
+// The exchange is initiated at most once per tag set: while the forward block is
+// still owed we must not ratchet again, or the peer would see a key ID jump.
+//
+// Note this replaces the previous fixed every-50-messages schedule. The spec
+// does permit implementation-dependent ratchet frequency (§"4a) DH Ratchet"),
+// but it makes the near-exhaustion trigger mandatory, and a cadence the peer
+// cannot predict makes the tag-set/key-ID progression in §"KEY AND TAG SET IDS"
+// impossible to reproduce.
 func attemptDHRatchetRotation(session *Session) error {
-	session.dhRatchetCounter++
-	if session.dhRatchetCounter < DHRatchetInterval {
+	if session.usedTags < nextKeyTagThreshold {
 		return nil
 	}
-
-	if err := performDHRatchetStep(session); err != nil {
-		session.consecutiveDHFailures++
-		if session.consecutiveDHFailures >= MaxConsecutiveDHFailures {
-			return oops.Wrapf(err,
-				"DH ratchet failed %d consecutive times (max %d), forward secrecy compromised",
-				session.consecutiveDHFailures, MaxConsecutiveDHFailures)
-		}
-		flog("attemptDHRatchetRotation", logger.Fields{"consecutive_failures": session.consecutiveDHFailures}).WithError(err).
-			Warn("DH ratchet rotation failed, continuing with symmetric ratchet")
-	} else {
-		session.dhRatchetCounter = 0
-		session.consecutiveDHFailures = 0
+	if session.sendDir != nil && session.sendDir.owed {
+		return nil // forward block already queued, waiting for the peer's key
 	}
-	return nil
-}
-
-func performDHRatchetStep(session *Session) error {
-	// Refuse the step if the send key ID is already at the maximum.
-	// The session must be replaced once all tag sets are exhausted.
-	// Spec ref: ecies.rst §"Key and Tag Set IDs".
 	if session.sendKeyID >= MaxKeyID {
+		// Spec ref: ecies.md §"KEY AND TAG SET IDS" - "The maximum key ID is
+		// 32767. ... the tag set sender must initiate a new session".
 		return oops.Errorf(
 			"send key ID %d has reached maximum %d, session must be replaced",
 			session.sendKeyID, MaxKeyID,
 		)
 	}
-
-	newPubKey, err := session.DHRatchet.GenerateNewKeyPair()
-	if err != nil {
-		return oops.Wrapf(err, "failed to generate new ephemeral key pair")
+	if err := session.prepareSend(); err != nil {
+		return oops.Wrapf(err, "failed to initiate NextKey exchange")
 	}
-
-	if err := applySendRatchetKeys(session); err != nil {
-		return err
-	}
-
-	session.newEphemeralPub = &newPubKey
-
-	// Queue a NextKey block for the next outgoing message.
-	// Even-numbered tag sets: sender sends new key, requests reverse.
-	// Odd-numbered tag sets: sender reuses key, requests reverse.
-	// For the first rotation (sendKeyID == 0): always send the key and request reverse.
-	requestReverse := true
-	nextKeyBlock := NewNextKeyBlock(session.sendKeyID, &newPubKey, false, requestReverse)
-	session.pendingNextKeys = append(session.pendingNextKeys, nextKeyBlock)
-	session.awaitingReverseKey = true
-
-	// Advance the send key ID now that the NextKey block is committed.
-	// The block carries the old ID (the peer uses it to key the reverse), and
-	// subsequent outgoing messages belong to the new tag set.
-	// Safe: guarded >= MaxKeyID above.
-	session.sendKeyID++
-
-	flog("performDHRatchetStep", logger.Fields{"message_counter": session.MessageCounter, "send_key_id": session.sendKeyID, "new_pub_key": fmt.Sprintf("%x", newPubKey[:8])}).Debug("DH ratchet rotation completed, NextKey block queued")
-
+	flog("attemptDHRatchetRotation", logger.Fields{"used_tags": session.usedTags, "send_key_id": session.sendKeyID}).
+		Debug("Initiated forward NextKey exchange")
 	return nil
 }

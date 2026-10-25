@@ -46,7 +46,13 @@ var errNoTokenPresent = errors.New("no token present in SessionRequest")
 //   - token: 8-byte token to place in header bytes 24-31
 //   - originalHeader: header of the SessionRequest (for connection IDs)
 //   - incomingSize: size of the message being answered (amplification limit)
-func (l *SSU2Listener) sendRetry(remoteAddr *net.UDPAddr, token, originalHeader []byte, incomingSize int) error {
+//
+// terminationReason, when non-nil, adds a Termination block to the Retry payload,
+// turning the Retry into a "Don't Retry" message.
+//
+// Spec ref: ssu2.md §"Session Request" -> §"Notes": "Reject by sending a Retry message
+// containing a zero token and a termination block."
+func (l *SSU2Listener) sendRetry(remoteAddr *net.UDPAddr, token, originalHeader []byte, incomingSize int, terminationReason *TerminationReason) error {
 	if len(token) != TokenSize {
 		return oops.Errorf("token must be exactly %d bytes, got %d", TokenSize, len(token))
 	}
@@ -77,7 +83,7 @@ func (l *SSU2Listener) sendRetry(remoteAddr *net.UDPAddr, token, originalHeader 
 		return oops.Wrapf(err, "failed to build Retry header")
 	}
 
-	payload, err := l.buildRetryPayload(remoteAddr)
+	payload, err := l.buildRetryPayload(remoteAddr, terminationReason)
 	if err != nil {
 		return oops.Wrapf(err, "failed to build Retry payload")
 	}
@@ -125,7 +131,7 @@ func (l *SSU2Listener) sendRetry(remoteAddr *net.UDPAddr, token, originalHeader 
 //
 // The Address block reports the peer's own observed address, which is what
 // makes it useful for passive NAT detection, as in SessionCreated.
-func (l *SSU2Listener) buildRetryPayload(remoteAddr *net.UDPAddr) ([]byte, error) {
+func (l *SSU2Listener) buildRetryPayload(remoteAddr *net.UDPAddr, terminationReason *TerminationReason) ([]byte, error) {
 	now := time.Now()
 
 	dateTimeData := make([]byte, 4)
@@ -139,7 +145,20 @@ func (l *SSU2Listener) buildRetryPayload(remoteAddr *net.UDPAddr) ([]byte, error
 	port := uint16(remoteAddr.Port)
 	addressBlock := EncodeAddressBlock(ip, port)
 
-	payload, err := SerializeBlocks([]*SSU2Block{dateTimeBlock, addressBlock})
+	blocks := []*SSU2Block{dateTimeBlock, addressBlock}
+
+	// A Termination block, when requested, makes this Retry a "Don't Retry".
+	// Spec ref: ssu2.md §"Termination" - "This must be the last non-padding block in the
+	// payload", and §"Session Request" -> §"Notes" for the replay-rejection Retry.
+	if terminationReason != nil {
+		// "valid data packets received :: ... 0 if error occurs in handshake phase"
+		termData := make([]byte, 9)
+		// bytes 0-7 stay zero: no valid data packets were received.
+		termData[8] = byte(*terminationReason)
+		blocks = append(blocks, NewSSU2Block(BlockTypeTermination, termData))
+	}
+
+	payload, err := SerializeBlocks(blocks)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to serialize Retry payload blocks")
 	}

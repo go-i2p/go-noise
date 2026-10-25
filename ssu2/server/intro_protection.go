@@ -51,11 +51,18 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 		return packet, true
 	}
 
-	// Try intro-key (new sessions)
+	// Try intro-key (new sessions and out-of-session intro-key messages:
+	// TokenRequest, PeerTest, HolePunch, Retry).
 	if hp := l.introHeaderProtector.Load(); hp != nil {
 		decrypted := make([]byte, len(data))
 		copy(decrypted, data)
-		if err := hp.DecryptHeader(decrypted); err == nil {
+		// DecryptHeaderForPacket derives the extension span from the type byte
+		// the masks reveal, so one protector covers every intro-key family
+		// member. DecryptHeader would instead apply the protector's own
+		// configured type, which is SessionRequest here and would over-decrypt
+		// bytes 16-63 of any TokenRequest/PeerTest/HolePunch longer than 64
+		// bytes (those obfuscate only bytes 16-31).
+		if err := hp.DecryptHeaderForPacket(decrypted); err == nil {
 			packet = &SSU2Packet{}
 			if err := packet.Deserialize(decrypted); err == nil {
 				return packet, true

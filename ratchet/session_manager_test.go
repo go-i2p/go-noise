@@ -450,44 +450,68 @@ func TestTagWindowReplenishment(t *testing.T) {
 // DH Ratchet
 // ============================================================================
 
-func TestDHRatchetInterval(t *testing.T) {
-	assert.Equal(t, uint32(50), uint32(DHRatchetInterval))
+// TestNextKeyTagThreshold pins the spec's rekey trigger.
+//
+// Spec ref: ecies.md §"Parameters" - "Send next key at tag: 4096".
+// The previous fixed every-50-messages schedule was an implementation choice
+// that made the spec's tag-set/key-ID progression unreproducible for a peer and
+// has been removed.
+func TestNextKeyTagThreshold(t *testing.T) {
+	assert.Equal(t, uint32(4096), uint32(nextKeyTagThreshold))
 }
 
-func TestDHRatchetRotation(t *testing.T) {
+// TestDHRatchetRotationPreservesInterop drives a real rekey through the message
+// path and verifies traffic keeps decrypting afterwards - the property the old
+// shared-ratchet implementation broke (audit finding R-02).
+func TestDHRatchetRotationPreservesInterop(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
+	destHash, sessionHash := mustBootstrapSessionWithHash(t, sender, receiver)
 
-	// Send messages up to but not exceeding the DH ratchet interval.
-	// DH ratchet rotation happens after DHRatchetInterval messages. Once the
-	// sender rotates, it produces new tag/symmetric ratchets from the new DH
-	// chain. The receiver needs ProcessIncomingDHRatchet to learn the new
-	// keys, which requires bidirectional communication. For this test we
-	// verify that:
-	// 1) Messages up to the rotation threshold work fine
-	// 2) After rotation, the sender can still encrypt (no panic/error)
-	// 3) The receiver can't decrypt post-rotation (expected: mismatched keys)
+	senderSession := lookupSessionByHash(t, sender, destHash)
+	receiverSession := lookupSessionByHash(t, receiver, sessionHash)
 
-	// Establish session with valid NS payload before the DH ratchet loop.
-	destHash := mustBootstrapSession(t, sender, receiver)
-
-	// Send DHRatchetInterval-1 ES messages successfully — the NS message above consumed
-	// one slot, so we need one fewer ES messages here to avoid triggering DH ratchet rotation
-	// within the loop. Rotation triggers when dhRatchetCounter reaches DHRatchetInterval
-	// (on the DHRatchetInterval+1'th total message = the "rotation-trigger" below).
-	for i := 0; i < DHRatchetInterval-1; i++ {
-		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("msg"))
-		require.NoError(t, err, "Message %d encrypt should succeed", i)
+	// Pre-rekey traffic.
+	for i := 0; i < 4; i++ {
+		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("pre"))
+		require.NoError(t, err)
 		_, _, _, err = receiver.DecryptGarlicMessage(enc)
 		require.NoError(t, err, "Message %d decrypt should succeed", i)
 	}
 
-	// This message triggers DH ratchet rotation on sender
-	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("rotation-trigger"))
+	// Cross the rekey threshold on the sender.
+	senderSession.mu.Lock()
+	senderSession.usedTags = nextKeyTagThreshold
+	senderSession.mu.Unlock()
+
+	// The forward block is emitted inside a normal ES message.
+	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("trigger"))
 	require.NoError(t, err, "Encryption after rotation should succeed")
 
-	// Receiver can't decrypt because sender's ratchet keys changed
+	// The receiver decrypts that message and the embedded NextKey block is
+	// dispatched automatically (ecies.md §"4a": "each do a DH ratchet for every
+	// NextKey block received").
 	_, _, _, err = receiver.DecryptGarlicMessage(enc)
-	assert.Error(t, err, "Post-rotation decryption should fail without ProcessIncomingDHRatchet")
+	require.NoError(t, err, "the message carrying the forward block must still decrypt")
+
+	// Receiver now owes a reverse block; send it via a receiver->sender message.
+	receiverSession.mu.Lock()
+	reverse, err := receiverSession.GetPendingNextKeys()[0].NextKey()
+	receiverSession.mu.Unlock()
+	require.NoError(t, err)
+	require.NoError(t, sender.handleNextKeyBlock(senderSession, reverse))
+
+	// Post-rekey traffic must decrypt in both directions.
+	for i := 0; i < 4; i++ {
+		enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte("post"))
+		require.NoError(t, err)
+		_, _, _, err = receiver.DecryptGarlicMessage(enc)
+		require.NoError(t, err, "post-rekey sender->receiver message %d must decrypt", i)
+
+		enc2, err := receiver.EncryptGarlicMessage(sessionHash, sender.ourPublicKey, []byte("back"))
+		require.NoError(t, err)
+		_, _, _, err = sender.DecryptGarlicMessage(enc2)
+		require.NoError(t, err, "post-rekey receiver->sender message %d must decrypt", i)
+	}
 }
 
 func TestCreateSessionInitializesRatchets(t *testing.T) {
@@ -497,7 +521,8 @@ func TestCreateSessionInitializesRatchets(t *testing.T) {
 	session, err := createSession(pubKey, keys, privKey, true)
 	require.NoError(t, err)
 
-	assert.NotNil(t, session.DHRatchet, "DHRatchet should be initialized")
+	assert.Nil(t, session.sendDir, "no send-direction state until a NextKey exchange starts")
+	assert.Nil(t, session.recvDir, "no recv-direction state until a NextKey exchange starts")
 	assert.NotNil(t, session.SymmetricRatchet, "SymmetricRatchet should be initialized")
 	assert.NotNil(t, session.TagRatchet, "TagRatchet should be initialized")
 	assert.NotNil(t, session.RecvSymmetricRatchet, "RecvSymmetricRatchet should be initialized")
@@ -706,23 +731,40 @@ func TestGenerateTagWindowSameSessionNoCollision(t *testing.T) {
 // Empty Plaintext Validation
 // ============================================================================
 
-// TestEncryptEmptyPlaintextReturnsError verifies that encrypting with empty
-// plaintext returns a clear error rather than producing an empty garlic message.
-func TestEncryptEmptyPlaintextReturnsError(t *testing.T) {
+// TestEncryptEmptyNewSessionPayloadReturnsError verifies that an empty New
+// Session payload is rejected: ecies.md §"1b) New Session Message" requires the
+// DateTime block as the first block, so an NS with no payload is non-conformant.
+func TestEncryptEmptyNewSessionPayloadReturnsError(t *testing.T) {
 	sender := createTestSessionManager(t)
 	receiver := createTestSessionManager(t)
 
 	destHash := types.SHA256(receiver.ourPublicKey[:])
 
-	// nil plaintext
 	_, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, nil)
-	assert.Error(t, err, "nil plaintext should be rejected")
-	assert.Contains(t, err.Error(), "non-empty")
+	assert.Error(t, err, "nil payload on a new session should be rejected")
+	assert.Contains(t, err.Error(), "must not be empty")
 
-	// zero-length plaintext
 	_, err = sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, []byte{})
-	assert.Error(t, err, "zero-length plaintext should be rejected")
-	assert.Contains(t, err.Error(), "non-empty")
+	assert.Error(t, err, "zero-length payload on a new session should be rejected")
+	assert.Contains(t, err.Error(), "must not be empty")
+}
+
+// TestEncryptEmptyExistingSessionPayloadSucceeds verifies the spec-required
+// "empty ES message": ecies.md §"Retransmissions and State Transistions" ->
+// §"Ratchet-layer Responses" tells implementations to "generate an 'empty' (no
+// Garlic Clove block) response at the ECIES layer", and §"Multiple NSR Messages"
+// says Alice "should set a timer, and send an empty ES message". Rejecting empty
+// payloads at the ES layer makes unidirectional flows stall.
+func TestEncryptEmptyExistingSessionPayloadSucceeds(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	destHash := mustBootstrapSession(t, sender, receiver)
+
+	enc, err := sender.EncryptGarlicMessage(destHash, receiver.ourPublicKey, nil)
+	require.NoError(t, err, "empty ES payload must be accepted")
+	assert.NotEmpty(t, enc)
+
+	_, _, _, err = receiver.DecryptGarlicMessage(enc)
+	require.NoError(t, err, "empty ES message must decrypt")
 }
 
 // TestEncryptNonEmptyPlaintextSucceeds confirms that a non-empty, spec-compliant NS payload

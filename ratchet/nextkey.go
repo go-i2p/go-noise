@@ -12,8 +12,6 @@ package ratchet
 // See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
 
 import (
-	"fmt"
-
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -24,22 +22,40 @@ const (
 	MaxKeyID = 32767
 )
 
-// GetPendingNextKeys returns any NextKey blocks that should be included
-// in the next outgoing Existing Session message. The returned blocks are
-// removed from the session's pending queue.
+// GetPendingNextKeys returns the NextKey blocks that must accompany the next
+// outgoing Existing Session message.
 //
-// Callers should serialize these blocks into the message payload using
-// PayloadBuilder before encryption.
+// The blocks are NOT consumed: ecies.md §"DH RATCHET MESSAGE FLOW" requires the
+// sender to "(repeat until next key received)" and the receiver to "(repeat
+// until tag received on new tagset)". i2pd implements this by re-emitting the
+// block on every outgoing message while m_SendForwardKey / m_SendReverseKey is
+// set (ECIESX25519AEADRatchetSession.cpp:1004-1035), clearing the flag only on
+// the acknowledgement. A drain-once queue would lose the exchange whenever the
+// carrying message is dropped.
+//
+// Callers serialize these blocks into the message payload using PayloadBuilder
+// before encryption.
 //
 // Must be called with session.mu held.
 func (s *Session) GetPendingNextKeys() []PayloadBlock {
-	if len(s.pendingNextKeys) == 0 {
-		return nil
+	return s.pendingNextKeyBlocks()
+}
+
+// pendingNextKeyBlocks derives the outstanding NextKey blocks from the two
+// direction states. At most two blocks exist per message (§"Next DH Ratchet
+// Public Key": "In the rare case that the tag sets in both directions are
+// ratcheting at the same time, a frame will contain two Next Key blocks, one for
+// the forward key and one for the reverse key"), forward first to match i2pd's
+// emission order.
+func (s *Session) pendingNextKeyBlocks() []PayloadBlock {
+	var blocks []PayloadBlock
+	if s.sendDir != nil && s.sendDir.owed {
+		blocks = append(blocks, buildForwardBlock(s.sendDir))
 	}
-	// Return a copy to avoid aliasing the backing array.
-	result := append([]PayloadBlock(nil), s.pendingNextKeys...)
-	s.pendingNextKeys = nil
-	return result
+	if s.recvDir != nil && s.recvDir.owed {
+		blocks = append(blocks, buildReverseBlock(s.recvDir))
+	}
+	return blocks
 }
 
 // HasPendingNextKeys reports whether the session has NextKey blocks
@@ -48,170 +64,126 @@ func (s *Session) GetPendingNextKeys() []PayloadBlock {
 //
 // Must be called with session.mu held.
 func (s *Session) HasPendingNextKeys() bool {
-	return len(s.pendingNextKeys) > 0
+	return len(s.pendingNextKeyBlocks()) > 0
 }
 
 // ProcessReceivedNextKey handles a NextKey block received from a peer in a
 // decrypted Existing Session message.
 //
-// There are two NextKey flows:
+// Two flows exist (ecies.md §"4a) DH Ratchet" -> §"DH RATCHET MESSAGE FLOW"):
 //
-//  1. Forward key (bit 1 = 0): The peer generated a new DH key and sent it.
-//     We update the peer's public key and perform a receiving DH ratchet.
-//     If request-reverse is set, we generate our own new key and queue a
-//     reverse NextKey block.
-//  2. Reverse key (bit 1 = 1): The peer is responding to our forward key.
-//     We update the peer's public key and perform a receiving DH ratchet.
+//  1. Forward block (bit 1 = 0): the peer is the owner of the inbound tag set
+//     and is starting a rekey. We generate our key if requested, do the single
+//     receive-direction DH, install the new inbound tag set, and owe a reverse
+//     block in reply.
+//  2. Reverse block (bit 1 = 1): the peer is answering our forward block. We do
+//     the single send-direction DH, install the new outbound tag set, and stop
+//     owing the forward block.
 //
-// Parameters:
-//   - sessionTag: the 8-byte tag that identifies the session.
-//   - info: the parsed NextKey block.
+// Neither flow performs a DH until a matching key has been received, which is
+// exactly what the previous (shared-ratchet) implementation got wrong.
 //
-// See [I2P Spec: ECIES](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst) for details.
+// See [I2P Spec: ECIES](https://github.com/i2p/i2p.website/blob/main/content/en/docs/specs/ecies.md)
+// for details.
 func (sm *SessionManager) ProcessReceivedNextKey(sessionTag [8]byte, info NextKeyInfo) error {
 	flog("ProcessReceivedNextKey", logger.Fields{"key_present": info.KeyPresent, "reverse": info.Reverse, "key_id": info.KeyID}).Debug("Processing received NextKey block")
-	session, err := sm.lookupLockedSession(sessionTag)
+	session, err := sm.lookupSessionForNextKey(sessionTag)
 	if err != nil {
 		return err
 	}
-	defer session.mu.Unlock()
-
-	if info.KeyPresent {
-		return sm.processNextKeyWithKey(session, info)
-	}
-	return sm.processNextKeyAck(session, info)
+	// handleNextKeyBlock acquires session.mu itself; the lookup helper released
+	// the lock it took so the manager lock is not held during the DH work.
+	return sm.handleNextKeyBlock(session, info)
 }
 
-// processNextKeyWithKey handles a NextKey block that contains a public key.
-// This is either a forward key from the peer or a reverse key in response
-// to our forward key.
-func (sm *SessionManager) processNextKeyWithKey(session *Session, info NextKeyInfo) error {
-	flog("processNextKeyWithKey", logger.Fields{"reverse": info.Reverse, "key_id": info.KeyID}).Debug("Processing NextKey block with key")
-	if info.Reverse {
-		return sm.processReverseNextKey(session, info)
-	}
-	return sm.processForwardNextKey(session, info)
-}
+// applyForwardNextKey handles a forward NextKey block - the peer initiated a
+// rekey of the tag set it sends us on.
+//
+// Mirrors the non-reverse branch of i2pd HandleNextKey (line 420) and Java's
+// RatchetSKM inbound NextKey handling.
+func (s *Session) applyForwardNextKey(info NextKeyInfo) error {
+	// i2pd: newKey = flag & REQUEST_REVERSE. The peer sets request-reverse only
+	// when it wants a fresh key from us; otherwise it is acking our existing key.
+	newKey := info.RequestReverse
 
-// processForwardNextKey handles a forward NextKey from the peer.
-// The peer has generated a new DH key and is signaling a ratchet.
-// We update the receiving chain with the new key, and if requested,
-// generate and queue a reverse key response.
-func (sm *SessionManager) processForwardNextKey(session *Session, info NextKeyInfo) error {
-	// Update the peer's key and ratchet the receiving chain.
-	if err := sm.applyIncomingDHKey(session, info.PublicKey); err != nil {
+	// ecies.md §"Next DH Ratchet Public Key": "Public Key :: ... Only if bit 0
+	// is 1". A block that requests a new key must carry the peer's key, except
+	// for the reuse-acknowledgement case where the peer's key is already known.
+	handled, err := s.prepareRecv(info.KeyID, newKey, info.PublicKey, info.KeyPresent)
+	if err != nil {
 		return oops.Wrapf(err, "failed to process forward NextKey (keyID=%d)", info.KeyID)
 	}
-
-	session.recvKeyID = info.KeyID
-
-	flog("processForwardNextKey", logger.Fields{"recv_key_id": info.KeyID}).Debug("Processed forward NextKey from peer")
-
-	// If the peer requests a reverse key, generate one and queue it.
-	if info.RequestReverse {
-		return sm.generateReverseNextKey(session)
+	if !handled {
+		return nil // duplicate notification, nothing to do
 	}
 
+	// "(generate new key #N, do DH, create IB Tagset #N)"
+	tagSetID := s.recvDir.receiveTagSetID()
+	if err := s.installRecvTagset(tagSetID); err != nil {
+		return oops.Wrapf(err, "failed to install inbound tag set %d", tagSetID)
+	}
+	// The new inbound tag set has no tags registered in the manager's tag index
+	// yet; the caller must run generateTagWindow under sm.mu (see
+	// needsRecvTags) because index mutation cannot happen under session.mu alone.
+	flog("applyForwardNextKey", logger.Fields{"recv_key_id": s.recvKeyID, "recv_tag_set_id": s.recvTagSetID}).
+		Debug("Processed forward NextKey; inbound tag set created, reverse block queued")
 	return nil
 }
 
-// processReverseNextKey handles a reverse NextKey from the peer.
-// This is the peer's response to our forward NextKey. We update the
-// receiving chain and clear the awaitingReverseKey flag.
-func (sm *SessionManager) processReverseNextKey(session *Session, info NextKeyInfo) error {
-	if err := sm.applyIncomingDHKey(session, info.PublicKey); err != nil {
-		return oops.Wrapf(err, "failed to process reverse NextKey (keyID=%d)", info.KeyID)
-	}
-
-	session.recvKeyID = info.KeyID
-	session.awaitingReverseKey = false
-
-	flog("processReverseNextKey", logger.Fields{"recv_key_id": info.KeyID}).Debug("Processed reverse NextKey from peer, DH ratchet exchange complete")
-
-	return nil
-}
-
-// processNextKeyAck handles a NextKey block without a public key.
-// This is an acknowledgment of a previously sent key (the peer reuses
-// its existing key). We perform a DH ratchet with the known peer key.
-func (sm *SessionManager) processNextKeyAck(session *Session, info NextKeyInfo) error {
-	// No new key — peer is acknowledging our key with their existing one.
-	// Ratchet with the current remote public key.
-	if err := sm.applyIncomingDHKey(session, session.RemotePublicKey); err != nil {
-		return oops.Wrapf(err, "failed to process NextKey ack (keyID=%d)", info.KeyID)
-	}
-
-	if info.Reverse {
-		session.awaitingReverseKey = false
-	}
-
-	flog("processNextKeyAck", logger.Fields{"key_id": info.KeyID, "reverse": info.Reverse}).Debug("Processed NextKey acknowledgment from peer")
-
-	return nil
-}
-
-// applyIncomingDHKey updates the session's receiving ratchet state
-// with a new (or existing) remote public key. This is the core
-// operation shared by all NextKey processing paths.
-func (sm *SessionManager) applyIncomingDHKey(session *Session, remotePubKey [32]byte) error {
-	flog("applyIncomingDHKey").Debug("Applying incoming DH key to session ratchet")
-	if err := session.DHRatchet.UpdateKeys(remotePubKey[:]); err != nil {
-		return oops.Wrapf(err, "failed to update remote DH public key")
-	}
-
-	if err := applyRecvRatchetKeys(session); err != nil {
-		return err
-	}
-
-	session.RemotePublicKey = remotePubKey
-
-	return nil
-}
-
-// generateReverseNextKey generates a new DH key pair and queues a reverse
-// NextKey block for the next outgoing message. The block carries the current
-// sendKeyID value, and sendKeyID is incremented afterwards to prevent
-// collision with the next forward NextKey block from performDHRatchetStep.
+// applyReverseNextKey handles a reverse NextKey block - the peer's reply to our
+// forward block. It is the only point at which the send direction does its DH.
 //
-// Without the increment, a double-rotation scenario (forward rotation →
-// reverse response → another forward rotation) would produce two blocks
-// with the same sendKeyID, confusing the peer's keyID tracking.
-func (sm *SessionManager) generateReverseNextKey(session *Session) error {
-	if session.sendKeyID >= MaxKeyID {
-		return oops.Errorf("send key ID %d has reached maximum %d", session.sendKeyID, MaxKeyID)
+// Mirrors the reverse branch of i2pd HandleNextKey (line 394), including its
+// key-ID acceptance rule.
+func (s *Session) applyReverseNextKey(info NextKeyInfo) error {
+	// Guard: i2pd line 399 "if (!m_SendForwardKey || !m_NextSendRatchet) return;".
+	// A reverse block we did not ask for is ignored rather than treated as an
+	// error, because blocks are re-sent until acknowledged.
+	if s.sendDir == nil || !s.sendDir.owed {
+		flog("applyReverseNextKey", logger.Fields{"key_id": info.KeyID}).Debug("Unexpected reverse NextKey ignored")
+		return nil
 	}
 
-	newPubKey, err := session.DHRatchet.GenerateNewKeyPair()
-	if err != nil {
-		return oops.Wrapf(err, "failed to generate reverse NextKey key pair")
+	dir := s.sendDir
+	// i2pd lines 401-403 acceptance rule:
+	//   ((!newKey || !keyID) && keyID == send.keyID) || (newKey && keyID == send.keyID-1)
+	matches := (!dir.newKey || dir.keyID == 0) && info.KeyID == dir.keyID ||
+		(dir.newKey && info.KeyID == dir.keyID-1)
+	if !matches {
+		flog("applyReverseNextKey", logger.Fields{"key_id": info.KeyID, "send_key_id": dir.keyID}).
+			Debug("Unexpected next key ID, ignoring")
+		return nil
+	}
+	if info.KeyPresent {
+		dir.remote = info.PublicKey
 	}
 
-	// Queue a reverse NextKey block with the current sendKeyID.
-	reverseBlock := NewNextKeyBlock(session.sendKeyID, &newPubKey, true, false)
-	session.pendingNextKeys = append(session.pendingNextKeys, reverseBlock)
-
-	session.newEphemeralPub = &newPubKey
-
-	// Advance sendKeyID so the next forward block gets a distinct ID.
-	// Safe: guarded >= MaxKeyID above.
-	session.sendKeyID++
-
-	flog("generateReverseNextKey", logger.Fields{"send_key_id": session.sendKeyID, "new_pub_key": fmt.Sprintf("%x", newPubKey[:8])}).Debug("Reverse NextKey block queued, sendKeyID advanced")
-
+	// Spec ref: ecies.md §"KEY AND TAG SET IDS" - "the tag set number is
+	// (1 + sender key id + receiver key id)". i2pd line 410:
+	// newTagset->SetTagSetID (1 + m_NextSendRatchet->keyID + keyID).
+	tagSetID := uint16(1) + dir.keyID + info.KeyID
+	if err := s.installSendTagset(tagSetID); err != nil {
+		return oops.Wrapf(err, "failed to install outbound tag set %d", tagSetID)
+	}
+	// "(do DH, create OB Tagset #N)" - the forward block is now acknowledged.
+	dir.owed = false
+	flog("applyReverseNextKey", logger.Fields{"send_key_id": s.sendKeyID, "send_tag_set_id": s.sendTagSetID}).
+		Debug("Processed reverse NextKey; outbound tag set created")
 	return nil
 }
 
-// IncrementSendKeyID advances the session's send key ID after a successful
-// DH ratchet exchange. Called after the peer has acknowledged our key.
+// ClearNextKeyOwed reports whether a direction is still waiting to have its
+// NextKey block acknowledged. Exposed for diagnostics and tests.
 //
 // Must be called with session.mu held.
-func (s *Session) IncrementSendKeyID() error {
-	flog("IncrementSendKeyID", logger.Fields{"current_key_id": s.sendKeyID}).Debug("Incrementing send key ID")
-	if s.sendKeyID >= MaxKeyID {
-		return oops.Errorf("send key ID %d has reached maximum %d, must create new session", s.sendKeyID, MaxKeyID)
+func (s *Session) ClearNextKeyOwed() (forwardOwed, reverseOwed bool) {
+	if s.sendDir != nil {
+		forwardOwed = s.sendDir.owed
 	}
-	s.sendKeyID++
-	return nil
+	if s.recvDir != nil {
+		reverseOwed = s.recvDir.owed
+	}
+	return forwardOwed, reverseOwed
 }
 
 // NextKeyState returns the current NextKey-related state for diagnostics
@@ -219,5 +191,25 @@ func (s *Session) IncrementSendKeyID() error {
 //
 // Must be called with session.mu held.
 func (s *Session) NextKeyState() (sendKeyID, recvKeyID uint16, awaitingReverse bool) {
-	return s.sendKeyID, s.recvKeyID, s.awaitingReverseKey
+	awaitingReverse = s.sendDir != nil && s.sendDir.owed
+	return s.sendKeyID, s.recvKeyID, awaitingReverse
+}
+
+// removeTagsFromIndex is the unregister callback used when a retained previous
+// inbound tag set expires. It must be called with sm.mu held for writing.
+func (sm *SessionManager) removeTagsFromIndex(tag [8]byte) {
+	delete(sm.tagIndex, tag)
+	delete(sm.tagCounterIndex, tag)
+}
+
+
+// lookupSessionForNextKey finds the session and releases its lock, so the
+// caller can re-acquire it together with the manager lock in handleNextKeyBlock.
+func (sm *SessionManager) lookupSessionForNextKey(sessionTag [8]byte) (*Session, error) {
+	session, err := sm.lookupLockedSession(sessionTag)
+	if err != nil {
+		return nil, err
+	}
+	session.mu.Unlock()
+	return session, nil
 }

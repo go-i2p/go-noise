@@ -35,6 +35,9 @@ func fillRecvKeyCache(session *Session, upTo uint32) error {
 // fresh empty map. Used to securely discard pre-derived ratchet key caches while
 // preventing recovery from memory dumps (forward-secrecy requirement).
 func zeroAndClearMap(m map[uint32][32]byte) map[uint32][32]byte {
+	if m == nil {
+		return make(map[uint32][32]byte)
+	}
 	for counter := range m {
 		var zeroKey [32]byte
 		m[counter] = zeroKey
@@ -53,7 +56,32 @@ func resetRecvWindow(session *Session) {
 	session.recvKeyCache = zeroAndClearMap(session.recvKeyCache)
 }
 
-// trimRecvWindowByPN removes pre-derived message keys from the receive window
+// fillPrevRecvKeyCache pre-derives message keys for the retained previous
+// inbound tagset's window. Mirrors fillRecvKeyCache for s.prevRecv.
+//
+// Spec ref: ecies.md §"DH RATCHET MESSAGE FLOW" - the receiver keeps listening
+// on the old tagset for ~3 minutes, which requires its key chain too.
+//
+// Must be called with session.mu held.
+func (p *prevRecvTagset) fillKeyCache(session *Session, upTo uint32) error {
+	if p.symRatchet == nil {
+		return oops.Errorf("previous tagset has no receiving symmetric ratchet")
+	}
+	if p.keyCache == nil {
+		p.keyCache = make(map[uint32][32]byte)
+	}
+	for p.fillMark < upTo {
+		key, _, err := p.symRatchet.DeriveMessageKeyAndAdvance(p.fillMark)
+		if err != nil {
+			return oops.Wrapf(err, "failed to pre-derive previous-tagset recv key for counter %d", p.fillMark)
+		}
+		p.keyCache[p.fillMark] = key
+		p.fillMark++
+	}
+	return nil
+}
+
+// trimRecvWindowByPN removes// trimRecvWindowByPN removes pre-derived message keys from the receive window
 // that are above the PN (previous tag set message count) value received in a
 // MessageNumber block. Per ecies.rst §"Message Numbers", when a peer signals
 // PN it indicates the last message counter used in the previous tag set. Keys

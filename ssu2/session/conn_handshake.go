@@ -469,6 +469,26 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 // installing the SessionConfirmed header key afterward.
 func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Packet, error) {
 	flog("createAndSendSessionCreated", logger.Fields{"connectionID": h.config.ConnectionID, "initiatorConnID": initiatorConnID}).Debug("Creating and sending SessionCreated")
+
+	// Record the peer's observed endpoint so the SessionCreated payload can
+	// carry the mandatory Address block. ssu2.rst §"SessionCreated" ->
+	// §"Payload" lists "DateTime block / Address block / Options block
+	// (optional) / ..." with no "(optional)" marker on Address, and §"Address"
+	// describes it as "Alice's address, sent to Alice by Bob" -- the responder
+	// echoing the initiator's own observed IP and UDP source port back to it.
+	//
+	// The conn's remote address IS that observed endpoint: it is the UDP source
+	// the SessionRequest arrived from (and it is updated as packets arrive), so
+	// no separate plumbing is needed. Without this the handler's peerAddress
+	// stays nil, the Address block is silently omitted, and a conformant
+	// initiator sees a message-2 payload that does not match the spec.
+	h.remoteAddrLock.RLock()
+	remote := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+	if remote != nil {
+		h.handshakeHandler.SetPeerAddress(remote.IP, uint16(remote.Port))
+	}
+
 	sessionCreated, err := h.handshakeHandler.CreateSessionCreated(h.config.ConnectionID, initiatorConnID)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create SessionCreated")

@@ -18,12 +18,12 @@ func TestTokenCache_GenerateToken_SameAddressReturnsSameToken(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
 
 	// Generate first token
-	token1, err := tc.GenerateToken(addr)
+	token1, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 	require.Len(t, token1, TokenSize)
 
 	// Generate second token for same address (simulating retry)
-	token2, err := tc.GenerateToken(addr)
+	token2, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 	require.Len(t, token2, TokenSize)
 
@@ -32,8 +32,8 @@ func TestTokenCache_GenerateToken_SameAddressReturnsSameToken(t *testing.T) {
 		"Second GenerateToken call should return same token to prevent retry eviction")
 
 	// Verify both tokens validate
-	assert.True(t, tc.ValidateToken(token1, addr))
-	assert.True(t, tc.ValidateToken(token2, addr))
+	assert.True(t, tc.ValidateToken(token1, addr, nil))
+	assert.True(t, tc.ValidateToken(token2, addr, nil))
 }
 
 // TestTokenCache_GenerateToken_DifferentAddressesReturnDifferentTokens verifies
@@ -44,10 +44,10 @@ func TestTokenCache_GenerateToken_DifferentAddressesReturnDifferentTokens(t *tes
 	addr1 := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
 	addr2 := &net.UDPAddr{IP: net.ParseIP("192.168.1.101"), Port: 12346}
 
-	token1, err := tc.GenerateToken(addr1)
+	token1, err := tc.GenerateToken(addr1, nil)
 	require.NoError(t, err)
 
-	token2, err := tc.GenerateToken(addr2)
+	token2, err := tc.GenerateToken(addr2, nil)
 	require.NoError(t, err)
 
 	// Tokens should be different
@@ -55,10 +55,10 @@ func TestTokenCache_GenerateToken_DifferentAddressesReturnDifferentTokens(t *tes
 		"Different addresses should get different tokens")
 
 	// Each token should validate for its own address only
-	assert.True(t, tc.ValidateToken(token1, addr1))
-	assert.False(t, tc.ValidateToken(token1, addr2))
-	assert.True(t, tc.ValidateToken(token2, addr2))
-	assert.False(t, tc.ValidateToken(token2, addr1))
+	assert.True(t, tc.ValidateToken(token1, addr1, nil))
+	assert.False(t, tc.ValidateToken(token1, addr2, nil))
+	assert.True(t, tc.ValidateToken(token2, addr2, nil))
+	assert.False(t, tc.ValidateToken(token2, addr1, nil))
 }
 
 // TestTokenCache_GenerateToken_ExpiredTokenGeneratesNew verifies that
@@ -69,26 +69,26 @@ func TestTokenCache_GenerateToken_ExpiredTokenGeneratesNew(t *testing.T) {
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
 
 	// Generate first token
-	token1, err := tc.GenerateToken(addr)
+	token1, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 
 	// Verify it validates
-	assert.True(t, tc.ValidateToken(token1, addr))
+	assert.True(t, tc.ValidateToken(token1, addr, nil))
 
 	// Wait for token to expire
 	time.Sleep(150 * time.Millisecond)
 
 	// Token should no longer validate
-	assert.False(t, tc.ValidateToken(token1, addr))
+	assert.False(t, tc.ValidateToken(token1, addr, nil))
 
 	// Generate new token - should be different since first expired
-	token2, err := tc.GenerateToken(addr)
+	token2, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, token1, token2,
 		"Expired token should be replaced with new one")
 
 	// New token should validate
-	assert.True(t, tc.ValidateToken(token2, addr))
+	assert.True(t, tc.ValidateToken(token2, addr, nil))
 }
 
 // TestTokenCache_ValidateToken_InvalidCases tests various invalid token scenarios.
@@ -96,7 +96,7 @@ func TestTokenCache_ValidateToken_InvalidCases(t *testing.T) {
 	tc := NewTokenCache(60 * time.Second)
 
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
-	token, err := tc.GenerateToken(addr)
+	token, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -139,7 +139,7 @@ func TestTokenCache_ValidateToken_InvalidCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tc.ValidateToken(tt.token, tt.addr)
+			got := tc.ValidateToken(tt.token, tt.addr, nil)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -150,17 +150,17 @@ func TestTokenCache_ConsumeToken(t *testing.T) {
 	tc := NewTokenCache(60 * time.Second)
 
 	addr := &net.UDPAddr{IP: net.ParseIP("192.168.1.100"), Port: 12345}
-	token, err := tc.GenerateToken(addr)
+	token, err := tc.GenerateToken(addr, nil)
 	require.NoError(t, err)
 
 	// First consume should succeed
-	consumed := tc.ConsumeToken(token, addr)
+	consumed := tc.ConsumeToken(token, addr, nil)
 	assert.True(t, consumed, "First ConsumeToken should succeed")
 
 	// Second consume should fail (token removed)
-	consumed = tc.ConsumeToken(token, addr)
+	consumed = tc.ConsumeToken(token, addr, nil)
 	assert.False(t, consumed, "Second ConsumeToken should fail (token consumed)")
 
 	// Validate should also fail
-	assert.False(t, tc.ValidateToken(token, addr))
+	assert.False(t, tc.ValidateToken(token, addr, nil))
 }

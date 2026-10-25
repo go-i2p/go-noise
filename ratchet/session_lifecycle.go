@@ -23,10 +23,17 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 
 		// Snapshot session state under its lock
 		session.mu.Lock()
-		if time.Since(session.LastUsed) > sm.sessionExpiry(session) {
+		// Drop the retained previous inbound tag set once its ~3 minute grace
+		// period has elapsed. Spec ref: ecies.md §"Parameters" - "Remove
+		// previous ES tagset after: 3 minutes".
+		session.expireRecvTagsets(sm.removeTagsFromIndex)
+		if !sm.isSessionValid(session) {
 			expired = true
 			tags = session.pendingTags
 			nsrTag = session.nsrTag
+			for _, retired := range session.retiredRecv {
+				tags = append(tags, retired.tags...)
+			}
 		}
 		session.mu.Unlock()
 

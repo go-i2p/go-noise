@@ -315,6 +315,74 @@ func (nc *Conn) Write(b []byte) (int, error) {
 	return nc.writeFramed(b)
 }
 
+// SendTerminationFrame seals and writes exactly one final data-phase frame
+// containing the supplied block payload, bypassing the broken guard.
+//
+// It exists for the data-phase AEAD-failure teardown path (see OnAEADError):
+// a failure to *decrypt* an inbound frame desynchronises only the receive
+// state — the outbound cipher, write nonce, and SipHash outbound mask are
+// still in sync with the peer, so one more properly-framed outbound message
+// is valid and the peer can decrypt it. A raw socket write would not be: the
+// spec requires every data-phase message to carry a SipHash-masked length
+// prefix and AEAD, which only this framing path applies.
+//
+// The payload is written verbatim apart from the session's normal outbound
+// padding modifier; callers pass a complete termination block
+// ([type][size][8-byte valid-frames-received][reason], see the NTCP2 spec's
+// Termination block). Like Write, it returns the number of payload bytes
+// accepted, and it is safe to call while the read lock is held because it
+// takes only the write lock.
+//
+// SendTerminationFrame is a teardown primitive: call it at most once, and
+// only when the connection is already being abandoned. It refuses to run
+// before the handshake completed (no data-phase keys exist to seal with).
+func (nc *Conn) SendTerminationFrame(block []byte) (int, error) {
+	if !nc.established.Load() {
+		return 0, oops.
+			Code("NOT_ESTABLISHED").
+			In("ntcp2").
+			Errorf("cannot seal termination frame before handshake completion")
+	}
+
+	nc.writeMu.Lock()
+	defer nc.writeMu.Unlock()
+
+	if err := nc.guardNonce(nc.writeNonce, "write"); err != nil {
+		return 0, err
+	}
+
+	toEncrypt, err := nc.applyOutboundModifier(block)
+	if err != nil {
+		return 0, err
+	}
+
+	encrypted, err := nc.encryptFrame(toEncrypt)
+	if err != nil {
+		return 0, err
+	}
+
+	frame, _, err := nc.buildWireFrameWithMask(encrypted, nc.lengthObfuscator.Load())
+	if err != nil {
+		return 0, err
+	}
+
+	// writeWireFrame marks the connection broken on any failure, which is
+	// already the case here; the return value is the payload length accepted.
+	if _, err := nc.writeWireFrame(frame); err != nil {
+		return 0, err
+	}
+
+	nc.writeNonce++
+
+	nc.logger.Trace("NTCP2 termination frame written",
+		"plaintext_length", len(block),
+		"frame_length", len(frame),
+		"local_addr", nc.localAddr.String(),
+		"remote_addr", nc.remoteAddr.String())
+
+	return len(block), nil
+}
+
 // writeDirect delegates directly to the underlying NoiseConn for unframed writes.
 // Errors from NoiseConn are returned directly without re-wrapping, since
 // NoiseConn already wraps errors with appropriate context.

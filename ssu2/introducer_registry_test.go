@@ -415,10 +415,17 @@ func TestIntroducerRegistry_GetCount(t *testing.T) {
 	assert.Equal(t, 1, ir.GetCount())
 }
 
+// TestIntroducerRegistry_GetMaxCount pins the spec cap. I2P only defines the
+// introducer slots ih[0-2], so a router may publish at most three introducers;
+// NewIntroducerRegistry clamps any larger request to 3 so a caller cannot build
+// a registry that would publish more than the network can represent. The
+// previous assertion expected the unclamped 5, which no implementation can
+// satisfy.
 func TestIntroducerRegistry_GetMaxCount(t *testing.T) {
-	ir := NewIntroducerRegistry(5)
-
-	assert.Equal(t, 5, ir.GetMaxCount())
+	assert.Equal(t, 3, NewIntroducerRegistry(5).GetMaxCount(), "requests above the spec cap clamp to 3")
+	assert.Equal(t, 3, NewIntroducerRegistry(3).GetMaxCount())
+	assert.Equal(t, 2, NewIntroducerRegistry(2).GetMaxCount(), "a smaller request is honoured")
+	assert.Equal(t, 3, NewIntroducerRegistry(0).GetMaxCount(), "non-positive falls back to the default")
 }
 
 func TestIntroducerRegistry_ConcurrentOperations(t *testing.T) {
@@ -471,6 +478,10 @@ func TestIntroducerRegistry_ConcurrentOperations(t *testing.T) {
 	assert.Equal(t, count, ir.GetCount())
 }
 
+// TestIntroducerRegistry_MultipleIntroducers_OrderByLastSeen checks recency
+// ordering. Five introducers are offered but the registry holds only the three
+// the spec allows, so the assertion is made against the capacity that actually
+// exists; ordering is what this test is about, not the cap.
 func TestIntroducerRegistry_MultipleIntroducers_OrderByLastSeen(t *testing.T) {
 	ir := NewIntroducerRegistry(5)
 
@@ -490,10 +501,11 @@ func TestIntroducerRegistry_MultipleIntroducers_OrderByLastSeen(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Select all
-	selected := ir.SelectBestIntroducers(5)
+	// Select as many as the spec permits. Only 3 of the 5 additions survive:
+	// the registry replaces the oldest once at capacity.
+	selected := ir.SelectBestIntroducers(3)
 
-	require.Len(t, selected, 5)
+	require.Len(t, selected, 3)
 
 	// Verify sorted by most recent first
 	for i := 0; i < len(selected)-1; i++ {

@@ -65,4 +65,6 @@ var (
 	DeserializeBlocks     = wire.DeserializeBlocks
 	EncodeRouterInfoBlock = wire.EncodeRouterInfoBlock
 	DecodeRouterInfoBlock = wire.DecodeRouterInfoBlock
+	EncodeAddressBlock    = wire.EncodeAddressBlock
+	DecodeAddressBlock    = wire.DecodeAddressBlock
 )

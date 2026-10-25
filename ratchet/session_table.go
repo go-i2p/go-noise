@@ -135,12 +135,45 @@ func (sm *SessionManager) validateAndConsumeTagFromSession(session *Session, tag
 	return true, len(session.pendingTags) < tagReplenishThreshold(session.usedTags)
 }
 
+// isSessionValid reports whether a session is still within its lifetime.
+//
+// For established sessions the spec requires asymmetric per-direction timeouts
+// with the outbound (sender) side expiring first, so a session is only valid
+// while BOTH directions are still live:
+//
+//	ecies.md §"Parameters": "ES tagset timeout: 8 minutes for sender,
+//	                          10 minutes for receiver"
+//	ecies.md §"Session Timeouts": "Outbound sessions should always expire
+//	                               before inbound sessions"
+//
+// i2pd applies the same conjunction (RECEIVE 600s AND SEND 480s).
 func (sm *SessionManager) isSessionValid(session *Session) bool {
-	return time.Since(session.LastUsed) <= sm.sessionExpiry(session)
+	expiry := sm.sessionExpiry(session)
+	if time.Since(session.LastUsed) > expiry {
+		return false
+	}
+	if session.handshakeState != nil {
+		// Pending (pre-NSR) sessions use the single short NSR timeout.
+		return true
+	}
+	if time.Since(session.lastReceived) > receiverESTimeout {
+		return false
+	}
+	return time.Since(session.lastSent) <= senderESTimeout
 }
 
 func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session) {
 	flog("removeTagFromPendingList", logger.Fields{"pending_count": len(session.pendingTags)}).Debug("Removing tag from session pending list")
+	// Tags belonging to the retained previous inbound tag set are not in the
+	// current pending list by design (ecies.md §"DH RATCHET MESSAGE FLOW":
+	// "listen for tags in both tagsets"), so there is nothing to remove.
+	for _, retired := range session.retiredRecv {
+		for _, t := range retired.tags {
+			if t == tag {
+				return
+			}
+		}
+	}
 	for i, pendingTag := range session.pendingTags {
 		if pendingTag == tag {
 			session.pendingTags[i] = session.pendingTags[len(session.pendingTags)-1]
