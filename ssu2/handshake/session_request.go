@@ -2,6 +2,7 @@ package handshake
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/internal/securemem"
@@ -207,6 +208,34 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 
 	if len(packet.EphemeralKey) != 32 {
 		return nil, oops.Errorf("SessionRequest missing ephemeral key")
+	}
+
+	// Reject a SessionRequest whose two connection IDs are identical, BEFORE any
+	// MixHash of the header.
+	//
+	// ssu2.md §"Session Request" -> §"Notes": "Bob must drop the message if the
+	// Source Connection ID equals the Destination Connection ID." The reason is
+	// given at §"Connection ID Numbering": "Source and Destination IDs must NOT be
+	// identical, so that an on-path attacker cannot capture and send a packet back
+	// to the originator that looks valid."
+	//
+	// The ordering matters: §"Duplicates and Error Handling" requires that
+	// "implementations must carefully validate all decrypted header fields
+	// (Connection IDs, packet number, packet type, version, id, frag, and flags)
+	// BEFORE calling mixHash()", because "If any of the three messages is corrupted
+	// and fails AEAD, the handshake cannot subsequently be recovered even with
+	// retransmission, because MixHash() was already called on the corrupted
+	// message."
+	if len(packet.Header) >= 24 {
+		destConnID := binary.BigEndian.Uint64(packet.Header[0:8])
+		sourceConnID := binary.BigEndian.Uint64(packet.Header[16:24])
+		if destConnID == sourceConnID {
+			return nil, oops.
+				Code("SESSION_REQUEST_CONN_IDS_IDENTICAL").
+				In("ssu2").
+				With("connection_id", destConnID).
+				Errorf("dropping SessionRequest: source and destination connection IDs are identical (%d)", destConnID)
+		}
 	}
 
 	replayToken := computeSessionRequestReplayToken(packet.EphemeralKey, packet.Payload)
