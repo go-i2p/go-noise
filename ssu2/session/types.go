@@ -160,6 +160,10 @@ const (
 	KeyStatePendingRotation  = ssu2hs.KeyStatePendingRotation
 	KeyStateRotating         = ssu2hs.KeyStateRotating
 	KeyStateRetired          = ssu2hs.KeyStateRetired
+
+	// DefaultMaxClockSkew is the spec's recommended +/- 2 minute handshake
+	// timestamp window, used when a config leaves MaxClockSkew unset.
+	DefaultMaxClockSkew = ssu2hs.DefaultMaxClockSkew
 )
 
 var (

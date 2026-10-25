@@ -800,8 +800,20 @@ func (h *SSU2Conn) extractRetryToken(retry *SSU2Packet) ([]byte, error) {
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to parse Retry payload blocks")
 	}
-	if FindBlockByType(blocks, BlockTypeDateTime) == nil {
+	dateTimeBlock := FindBlockByType(blocks, BlockTypeDateTime)
+	if dateTimeBlock == nil {
 		return nil, oops.Errorf("Retry payload missing required DateTime block")
+	}
+
+	// Validate the Retry's timestamp against the local clock.
+	//
+	// ssu2.md §"Replay Prevention": "Both Alice and Bob validate that the time for
+	// these messages is within a valid skew" (the recommended window is +/- 2
+	// minutes, §"Recommended Constants"). §"Retry" -> §"Payload" lists the DateTime
+	// block as required, so the value it carries must actually be checked rather
+	// than only its presence.
+	if err := h.validateBlockTimestampSkew(dateTimeBlock); err != nil {
+		return nil, oops.Wrapf(err, "Retry rejected")
 	}
 
 	token := make([]byte, 8)
@@ -1039,4 +1051,30 @@ func (h *SSU2Conn) ensureHandshakeDeadline(ctx context.Context) (context.Context
 		return context.WithTimeout(ctx, timeout)
 	}
 	return ctx, nil
+}
+
+// validateBlockTimestampSkew checks a DateTime block's timestamp against the
+// local clock, using the configured MaxClockSkew window.
+func (h *SSU2Conn) validateBlockTimestampSkew(block *SSU2Block) error {
+	if block == nil || len(block.Data) < 4 {
+		return oops.Errorf("DateTime block too short to carry a timestamp")
+	}
+	window := h.config.MaxClockSkew
+	if window <= 0 {
+		window = DefaultMaxClockSkew
+	}
+	remote := time.Unix(int64(binary.BigEndian.Uint32(block.Data[:4])), 0)
+	skew := time.Since(remote)
+	if skew < 0 {
+		skew = -skew
+	}
+	if skew > window {
+		return oops.
+			Code("CLOCK_SKEW").
+			In("session").
+			With("skew", skew.String()).
+			With("max_skew", window.String()).
+			Errorf("timestamp skew %s exceeds the maximum %s", skew, window)
+	}
+	return nil
 }
