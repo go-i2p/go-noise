@@ -121,6 +121,7 @@ const (
 	SSU2NetworkID       = wire.SSU2NetworkID
 	TokenSize           = wire.TokenSize
 	MaxTokenCacheSize   = wire.MaxTokenCacheSize
+	RetryTokenTTL       = wire.RetryTokenTTL
 )
 
 var (
