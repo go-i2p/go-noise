@@ -170,15 +170,31 @@ func createSession(remotePubKey [32]byte, keys *sessionKeys, ourPrivateKey [32]b
 		RecvTagRatchet:       recvTagRatchet,
 		LastUsed:             time.Now(),
 		Established:          time.Now(),
-		MessageCounter:       1,
-		// recvWindowBase starts at 1: message 0 is the NS handshake, not an ES ratchet message.
-		// Spec ref: ecies.rst §"Existing Session message" — first ES counter is 1.
-		recvWindowBase:     1,
-		recvFillMark:       1,
+		// ES message counters are 0-based: the first Existing Session message pairs
+		// tag_0 with nonce 0.
+		//
+		// Spec ref: ecies.rst §"3) AEAD (ChaChaPoly)" → "Existing Session Inputs":
+		//   "n :: Counter-based nonce, 12 bytes. Starts at 0 and incremented for each
+		//   message... Last eight bytes are the message number (n), little-endian encoded."
+		// and §"4) Ratchets" → "Message Numbers": "The receiver looks up the index of
+		// the tag, this is the message number N."
+		//
+		// Both reference implementations agree on counter 0 for the first ES message:
+		//   Java I2P RatchetTagSet.java: _lastKey = -1, consumeNextKey() does _lastKey++
+		//     and returns SessionKeyAndNonce(key, _id, _lastKey, ...) -> first nonce 0.
+		//   i2pd ECIESX25519AEADRatchetSession.cpp: NextSessionTagRatchet() sets
+		//     m_NextIndex = 0; NewExistingSessionMessage() reads index = GetNextIndex()
+		//     (0), calls CreateNonce(index), and only then GetNextSessionTag() increments.
+		//
+		// The NS/NSR handshake messages use their own separate "SessionReplyTags"
+		// tagset, so they do not consume ES counter 0.
+		MessageCounter:       0,
+		recvWindowBase:     0,
+		recvFillMark:       0,
 		recvKeyCache:       make(map[uint32][32]byte),
 		pendingTags:        make([][8]byte, 0, tagWindowMin),
 		pendingNextKeys:    nil,
-		nextRecvTagCounter: 1,
+		nextRecvTagCounter: 0,
 	}, nil
 }
 

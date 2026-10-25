@@ -389,8 +389,10 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 	session.RecvSymmetricRatchet = ratchet.NewSymmetricRatchet(recvSymKey)
 	session.RecvTagRatchet = ratchet.NewTagRatchet(recvTagKey)
 
-	// Reset message counters: the session restarts at 1 with NSR keys.
-	session.MessageCounter = 1
+	// Reset message counters: the ES counter space restarts at 0 with the
+	// NSR-derived ratchets, because these are a brand-new tagset whose first
+	// tag (tag_0) must pair with nonce 0.
+	session.MessageCounter = 0
 	resetRecvWindow(session)
 
 	// Regenerate recv tag window with the new NSR-derived recv ratchet.
@@ -595,8 +597,9 @@ func (sm *SessionManager) processAckRequest(session *Session) {
 
 	// Build an Ack that reports our recvKeyID and the highest consumed counter
 	// (recvWindowBase - 1, since recvWindowBase is the next expected counter).
+	// recvWindowBase is 0-based, so 0 means nothing has been consumed yet.
 	highestConsumed := uint16(0)
-	if session.recvWindowBase > 1 {
+	if session.recvWindowBase > 0 {
 		base := session.recvWindowBase - 1
 		if base > uint32(MaxMessageNumber) {
 			base = uint32(MaxMessageNumber)

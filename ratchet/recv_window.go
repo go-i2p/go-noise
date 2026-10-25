@@ -46,9 +46,10 @@ func zeroAndClearMap(m map[uint32][32]byte) map[uint32][32]byte {
 // the session ratchet state.  Must be called with session.mu held.
 func resetRecvWindow(session *Session) {
 	flog("resetRecvWindow").Debug("reinitialising receive-window fields")
-	session.recvWindowBase = 1
-	session.recvFillMark = 1
-	session.nextRecvTagCounter = 1
+	// 0-based, matching the ES counter rule in newSession (see session.go).
+	session.recvWindowBase = 0
+	session.recvFillMark = 0
+	session.nextRecvTagCounter = 0
 	session.recvKeyCache = zeroAndClearMap(session.recvKeyCache)
 }
 
