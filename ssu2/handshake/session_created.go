@@ -75,20 +75,21 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 				Errorf("SessionCreated destination connection ID %d does not match the source connection ID %d we sent in SessionRequest",
 					gotDest, h.sentSourceConnID)
 		}
-		// The §Notes sentence pairs this with "the Source Connection ID ... [must]
-		// match the Destination Connection ID of the Session Request". That second
-		// equality is deliberately NOT enforced here, because the responder in this
-		// codebase fills SessionCreated bytes 16-23 with its own locally configured
-		// connection ID (ssu2/session/conn_handshake.go createAndSendSessionCreated)
-		// rather than echoing Alice's SessionRequest destination ID, and Alice's
-		// initiator-side routing depends on reading that value back
-		// (h.remoteConnectionID -> SessionConfirmed destination). Enforcing the echo
-		// would require reworking the connection-ID plumbing on both sides plus the
-		// listener's demultiplexing, which is tracked as a separate deviation.
-		//
-		// The equality enforced above is still the load-bearing anti-injection check:
-		// the value it compares is Alice's own randomly generated source ID, which an
-		// off-path attacker cannot observe or guess.
+		// The §Notes sentence pairs the above with "the Source Connection ID ...
+		// [must] match the Destination Connection ID of the Session Request". The
+		// responder now fills SessionCreated bytes 16-23 with Alice's own
+		// SessionRequest destination ID (it adopts that value as its routing key in
+		// ssu2/server/listener.go responderConnID), so the echo is enforced here too.
+		gotSource := binary.BigEndian.Uint64(packet.Header[16:24])
+		if gotSource != h.sentDestConnID {
+			return oops.
+				Code("SESSION_CREATED_CONN_ID_MISMATCH").
+				In("ssu2").
+				With("source_conn_id", gotSource).
+				With("expected_source_conn_id", h.sentDestConnID).
+				Errorf("SessionCreated source connection ID %d does not match the destination connection ID %d we sent in SessionRequest",
+					gotSource, h.sentDestConnID)
+		}
 	}
 
 	// MixHash(header) per ssu2.rst "KDF for Session Created and Session Confirmed part 1" — binds the header into

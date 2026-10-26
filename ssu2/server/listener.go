@@ -564,7 +564,18 @@ func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, re
 // goroutines (listener and recvLoop) from concurrently reading the same shared
 // socket, which violates the SSU2 multiplexing invariant.
 func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, uint64, error) {
-	connID, err := l.generateUniqueConnectionID()
+	// ssu2.md §"Session Request": Alice's Destination Connection ID (bytes 0-7)
+	// is the value Bob echoes back as the Source Connection ID in SessionCreated
+	// and Retry (§"Session Created" / §"Retry": "Source Connection ID :: The
+	// Destination Connection ID received from Alice"), and the value Alice uses as
+	// her data-phase Destination ("As sent in Session Request"). Java
+	// (InboundEstablishState2 rcvConnID = SR dest) and i2pd
+	// (ProcessFirstIncomingMessage m_SourceConnID = connID = SR dest, the key
+	// AddSession/GetConnID register on) both make that SR destination the
+	// responder's inbound routing key. We adopt it directly, so the existing
+	// CreateSessionCreated(connID, initiatorConnID) source half echoes correctly
+	// with no extra plumbing.
+	connID, err := l.responderConnID(packet)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -582,6 +593,24 @@ func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *n
 
 	conn.SetReadsOwnSocket(false)
 	return conn, connID, nil
+}
+
+// responderConnID chooses the routing/echo connection ID for a new responder
+// session. Per ssu2.md §"Session Request" -> §"Session Created"/§"Retry", this
+// must be the Destination Connection ID Alice sent (header bytes 0-7): Bob echoes
+// it as the Source Connection ID and both peers use it to route data-phase
+// traffic. It is used only when nonzero and not already claimed by another
+// session (a spoofed/zero/colliding value falls back to a fresh unique ID so the
+// session is still demultiplexable).
+func (l *SSU2Listener) responderConnID(packet *SSU2Packet) (uint64, error) {
+	if len(packet.Header) >= 8 {
+		if aliceDest := binary.BigEndian.Uint64(packet.Header[0:8]); aliceDest != 0 {
+			if l.router.GetSession(aliceDest) == nil {
+				return aliceDest, nil
+			}
+		}
+	}
+	return l.generateUniqueConnectionID()
 }
 
 // enforceRateLimit checks if the source IP has exceeded the SessionRequest rate.

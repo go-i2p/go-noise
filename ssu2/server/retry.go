@@ -168,15 +168,21 @@ func (l *SSU2Listener) buildRetryPayload(remoteAddr *net.UDPAddr, terminationRea
 // buildRetryHeader constructs the 32-byte cleartext long header for a Retry
 // message, including the token in bytes 24-31.
 //
-// It uses the listener's stable retry source connection ID rather than
-// generating a fresh random value each time, so that all Retries from the same
-// listener use the same source ConnID, as required for spec-compliant
-// initiators that cache the responder ConnID.
+// ssu2.md §"Retry" -> header table: "Destination Connection ID :: The Source
+// Connection ID received from Alice in Token Request or Session Request" and
+// "Source Connection ID :: The Destination Connection ID received from Alice".
+// Java (PacketBuilder2.buildRetryPacket: dest = state.getSendConnID() = SR
+// source, src = state.getRcvConnID() = SR dest) and i2pd both echo Alice's two
+// IDs back swapped; a conformant initiator verifies the source half equals its own
+// Session Request destination, so it must not be an unrelated stable value.
 func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte, packetNumber uint32) ([]byte, error) {
 	header := make([]byte, LongHeaderSize)
 
 	if len(originalHeader) >= 24 {
+		// Retry dest = Alice's source conn ID (SR bytes 16-23).
 		copy(header[0:8], originalHeader[16:24])
+		// Retry source = Alice's destination conn ID (SR bytes 0-7).
+		copy(header[16:24], originalHeader[0:8])
 	} else if len(originalHeader) >= 8 {
 		copy(header[0:8], originalHeader[0:8])
 	}
@@ -190,9 +196,6 @@ func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte, packetNumb
 	header[12] = MessageTypeRetry
 	header[13] = SSU2ProtocolVersion
 	header[14] = SSU2NetworkID
-
-	// bytes 16-23: source connection ID (stable per listener)
-	copy(header[16:24], l.retrySourceConnID[:])
 
 	// bytes 24-31: the token Alice must echo in her next Session Request
 	copy(header[24:32], token)
