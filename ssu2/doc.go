@@ -95,7 +95,7 @@
 //
 //   - ssu2 (this package): top-level API — dialing, listening, the
 //     Coordinator for peer tests and relaying, and re-exports of the
-//     subpackages' types for backward compatibility.
+//     subpackages' types so callers need only import ssu2.
 //   - ssu2/config: configuration types (SSU2Config, SSU2Addr) and
 //     validation.
 //   - ssu2/handshake: the XK handshake state machine, key generation, and

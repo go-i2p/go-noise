@@ -1107,7 +1107,7 @@ func TestFrameLengthObfuscation_DirectionalRoundTrip(t *testing.T) {
 // ============================================================================
 
 func TestAuditFix_RemoveTrailingPaddingBlock_BoundedByMaxPadding(t *testing.T) {
-	modifier, err := NewNTCP2PaddingModifier("test", 0, 16, false)
+	modifier, err := NewNTCP2PaddingModifier("test", 0, 16, true)
 	require.NoError(t, err)
 
 	paddingSize := 100
@@ -1126,7 +1126,7 @@ func TestAuditFix_RemoveTrailingPaddingBlock_BoundedByMaxPadding(t *testing.T) {
 }
 
 func TestAuditFix_RemoveTrailingPaddingBlock_WithinMaxPadding(t *testing.T) {
-	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, false)
+	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, true)
 	require.NoError(t, err)
 
 	payloadStr := "real data"
@@ -1178,7 +1178,7 @@ func buildI2PBlock(blockType byte, data []byte) []byte {
 // spec-compliant payload ([data_block][padding_block]) is still processed
 // correctly after the block-ordering validation is added.
 func TestAuditFix_RemoveAEADPadding_CompliantOrderSucceeds(t *testing.T) {
-	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, false)
+	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, true)
 	require.NoError(t, err)
 
 	dataContent := []byte("real data")

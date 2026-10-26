@@ -233,7 +233,7 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 			// Feed the triggering handshake packet to the newly created session so
 			// that receivePacketWithTimeout inside the handshake can retrieve it
 			// from recvQueue without waiting for the next retransmit.
-			newConn.processInboundPacket(packet)
+			newConn.ProcessInboundPacket(packet)
 
 			return nil
 		}
@@ -248,7 +248,7 @@ func (pr *PacketRouter) RoutePacket(packet *SSU2Packet, remoteAddr *net.UDPAddr)
 	}
 
 	// Route packet to existing session
-	conn.processInboundPacket(packet)
+	conn.ProcessInboundPacket(packet)
 
 	return nil
 }

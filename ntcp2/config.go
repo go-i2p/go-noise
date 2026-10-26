@@ -128,16 +128,6 @@ type Config struct {
 	// the encrypted payload of message 3 part 2.
 	LocalRouterInfo []byte
 
-	// StrictRouterInfoVerification is kept only for backward
-	// compatibility.
-	//
-	// Deprecated: the local RouterInfo / static-key match is now ALWAYS
-	// enforced as a hard error during the initiator handshake, regardless
-	// of this field's value. It no longer has any effect. The check is a
-	// no-op when no static key or no LocalRouterInfo is configured, so it
-	// never fires on partially-configured connections.
-	StrictRouterInfoVerification bool
-
 	// sipHashModifier stores the SipHash modifier created during
 	// ToConnConfig() so it can be passed to NTCP2Conn for data-phase
 	// framing.
@@ -448,18 +438,6 @@ func (nc *Config) WithLocalRouterInfo(ri []byte) *Config {
 		nc.LocalRouterInfo = make([]byte, len(ri))
 		copy(nc.LocalRouterInfo, ri)
 	}
-	return nc
-}
-
-// WithStrictRouterInfoVerification is kept only for backward
-// compatibility.
-//
-// Deprecated: the local RouterInfo / static-key match is now always
-// enforced as a hard error during the initiator handshake, so this
-// builder does nothing. It still sets the (now-unused) field to avoid
-// breaking callers that still invoke it.
-func (nc *Config) WithStrictRouterInfoVerification(strict bool) *Config {
-	nc.StrictRouterInfoVerification = strict
 	return nc
 }
 

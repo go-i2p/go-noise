@@ -8,44 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBlockTypeName verifies all block type names are correctly returned.
-func TestBlockTypeName(t *testing.T) {
-	tests := []struct {
-		blockType uint8
-		expected  string
-	}{
-		{BlockTypeDateTime, "DateTime"},
-		{BlockTypeOptions, "Options"},
-		{BlockTypeRouterInfo, "RouterInfo"},
-		{BlockTypeI2NPMessage, "I2NPMessage"},
-		{BlockTypeFirstFragment, "FirstFragment"},
-		{BlockTypeFollowOnFragment, "FollowOnFragment"},
-		{BlockTypeTermination, "Termination"},
-		{BlockTypeRelayRequest, "RelayRequest"},
-		{BlockTypeRelayResponse, "RelayResponse"},
-		{BlockTypeRelayIntro, "RelayIntro"},
-		{BlockTypePeerTest, "PeerTest"},
-		{BlockTypeACK, "ACK"},
-		{BlockTypeAddress, "Address"},
-		{BlockTypeRelayTagRequest, "RelayTagRequest"},
-		{BlockTypeRelayTag, "RelayTag"},
-		{BlockTypeNewToken, "NewToken"},
-		{BlockTypePathChallenge, "PathChallenge"},
-		{BlockTypePathResponse, "PathResponse"},
-		{BlockTypePadding, "Padding"},
-		{255, "Unknown"},
-		{11, "Unknown"}, // Undefined block type
-		{14, "Unknown"}, // Undefined block type
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.expected, func(t *testing.T) {
-			name := BlockTypeName(tc.blockType)
-			assert.Equal(t, tc.expected, name)
-		})
-	}
-}
-
 // TestAllBlockTypes verifies AllBlockTypes returns all defined types.
 func TestAllBlockTypes(t *testing.T) {
 	allTypes := AllBlockTypes()
@@ -118,7 +80,7 @@ func TestGetBlockCategory(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run(BlockTypeName(tc.blockType), func(t *testing.T) {
+		t.Run(GetBlockTypeName(tc.blockType), func(t *testing.T) {
 			category := GetBlockCategory(tc.blockType)
 			assert.Equal(t, tc.expected, category)
 		})

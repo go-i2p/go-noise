@@ -545,7 +545,7 @@ func (l *SSU2Listener) findExistingSessionByInitiator(initiatorConnID uint64, re
 //
 // It marks the connection as not responsible for reading the socket, since the
 // listener's receiveLoop is the sole socket reader and will feed packets to this
-// session via RoutePacket → processInboundPacket → recvQueue. This prevents two
+// session via RoutePacket → ProcessInboundPacket → recvQueue. This prevents two
 // goroutines (listener and recvLoop) from concurrently reading the same shared
 // socket, which violates the SSU2 multiplexing invariant.
 func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *net.UDPAddr, initiatorConnID uint64) (*SSU2Conn, uint64, error) {

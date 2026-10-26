@@ -288,9 +288,16 @@ func (sc *SSU2Config) setupSSU2Modifiers() ([]handshake.HandshakeModifier, error
 }
 
 // createChaChaModifierIfEnabled creates a ChaCha20 obfuscation modifier if enabled.
-// Per SSU2 spec, the ChaCha20 key is Bob's intro key:
-//   - Initiator uses RemoteIntroKey (Bob's intro key)
-//   - Responder uses IntroKey (own intro key, which IS Bob's intro key)
+//
+// ssu2.md sections "1) Session Request" and "2) Session Created" key the
+// ephemeral-key obfuscation with Bob's intro key ("key: Bob's intro key"), which
+// is published in the network database:
+//   - an initiator uses RemoteIntroKey (Bob's intro key)
+//   - a responder uses IntroKey (its own intro key, which IS Bob's intro key)
+//
+// There is no substitute for the intro key. A router hash is a different value,
+// so obfuscating with it produces a message no peer can decrypt; a missing intro
+// key is a configuration error and is reported as one.
 func (sc *SSU2Config) createChaChaModifierIfEnabled() (handshake.HandshakeModifier, error) {
 	if !sc.EnableChaChaObfuscation {
 		return nil, nil
@@ -303,8 +310,17 @@ func (sc *SSU2Config) createChaChaModifierIfEnabled() (handshake.HandshakeModifi
 	} else if !sc.Initiator && len(sc.IntroKey) == 32 {
 		introKey = sc.IntroKey
 	} else {
-		// Fallback to router hash for backward compatibility
-		introKey = sc.RouterHash[:]
+		field := "IntroKey"
+		if sc.Initiator {
+			field = "RemoteIntroKey"
+		}
+		return nil, oops.
+			Code("MISSING_INTRO_KEY").
+			In("ssu2").
+			With("field", field).
+			With("initiator", sc.Initiator).
+			Errorf("ChaCha20 ephemeral-key obfuscation is enabled but %s is not a 32-byte intro key: "+
+				"ssu2.md keys the obfuscation with Bob's intro key, and no other value is usable", field)
 	}
 
 	chachaModifier, err := wire.NewChaChaObfuscationModifier("ssu2-chacha", introKey)

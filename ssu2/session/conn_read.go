@@ -121,7 +121,7 @@ func (h *SSU2Conn) readOnePacket(buf []byte, addr net.Addr) bool {
 	packet := h.parseInboundPacket(buf, addr)
 	if packet != nil {
 		flog("readOnePacket", logger.Fields{"type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
-		h.processInboundPacket(packet)
+		h.ProcessInboundPacket(packet)
 		return true
 	}
 	flog("readOnePacket").Debug("Inbound packet dropped (parse returned nil)")
@@ -421,12 +421,6 @@ func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
 	}
 }
 
-// processInboundPacket (deprecated) is kept for backwards compatibility.
-// New code should use ProcessInboundPacket.
-func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
-	h.ProcessInboundPacket(packet)
-}
-
 func (h *SSU2Conn) processDataPackets(packet *SSU2Packet) {
 	// Filter duplicate and too-old packet numbers. SSU2 provides no in-order
 	// delivery (ssu2.rst §"Delivery Guarantees"), so an accepted packet goes
@@ -542,7 +536,7 @@ func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
 		case h.recvQueue <- packet:
 		case <-h.closeChan:
 		case <-timer.C:
-			flog("processInboundPacket", logger.Fields{"msg_type": packet.MessageType}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
+			flog("ProcessInboundPacket", logger.Fields{"msg_type": packet.MessageType}).Warn("recvQueue full; dropped handshake packet after enqueue timeout")
 		}
 		timer.Stop()
 	}

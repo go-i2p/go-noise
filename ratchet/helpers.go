@@ -43,10 +43,6 @@ const (
 	// Java I2P uses 320 (MAX_RCV_WINDOW_ES); we follow the spec value of 160.
 	tagWindowMax = 160
 
-	// tagWindowSize is the initial ES tag window size (alias for tagWindowMin,
-	// kept for backward compatibility with existing tests).
-	tagWindowSize = tagWindowMin
-
 	// nextKeyTagThreshold is the tag number within a tagset at which the
 	// sender must initiate a NextKey exchange.
 	// Spec ref: ecies.rst §"Parameters" — "Send next key at tag: 4096".

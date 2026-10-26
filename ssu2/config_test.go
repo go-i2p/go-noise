@@ -12,11 +12,16 @@ import (
 
 // newTestResponderConfig creates a responder SSU2Config with DefaultRouterInfoValidator
 // set, suitable for tests that need to call Validate() or ToConnConfig().
+//
+// It also sets a 32-byte IntroKey: ssu2.md keys the ephemeral-key obfuscation
+// with Bob's intro key, so ToConnConfig() requires one whenever obfuscation is
+// enabled. A responder's own intro key IS Bob's intro key.
 func newTestResponderConfig(t *testing.T, routerHash data.Hash) *SSU2Config {
 	t.Helper()
 	config, err := NewSSU2Config(routerHash, false)
 	require.NoError(t, err)
 	config.RouterInfoValidator = DefaultRouterInfoValidator
+	config.IntroKey = generateIntroKey()
 	return config
 }
 
@@ -394,6 +399,9 @@ func TestSSU2Config_ToConnConfig(t *testing.T) {
 		ssu2Config, err := NewSSU2Config(routerHash, false)
 		require.NoError(t, err)
 		ssu2Config.RouterInfoValidator = DefaultRouterInfoValidator
+		// Responder: its own intro key is Bob's intro key, which is what the
+		// ephemeral-key obfuscation is keyed with (ssu2.md).
+		ssu2Config.IntroKey = generateIntroKey()
 
 		ssu2Config.WithStaticKey(staticKey).
 			WithHandshakeTimeout(20 * time.Second).
@@ -430,6 +438,7 @@ func TestSSU2Config_ToConnConfig(t *testing.T) {
 		config.RouterInfoValidator = DefaultRouterInfoValidator
 
 		config.EnableChaChaObfuscation = true
+		config.IntroKey = generateIntroKey()
 		config.PaddingEnabled = true
 
 		connConfig, err := config.ToConnConfig()
@@ -463,6 +472,7 @@ func TestSSU2Config_ToConnConfig(t *testing.T) {
 
 		config, _ := NewSSU2Config(routerHash, false)
 		config.RouterInfoValidator = DefaultRouterInfoValidator
+		config.IntroKey = generateIntroKey()
 		config.WithStaticKey(staticKey)
 
 		connConfig, err := config.ToConnConfig()
@@ -551,6 +561,9 @@ func BenchmarkSSU2Config_ToConnConfig(b *testing.B) {
 	routerHash := generateRandomHash()
 	config, _ := NewSSU2Config(routerHash, false)
 	config.RouterInfoValidator = DefaultRouterInfoValidator
+	// Without an intro key, ToConnConfig returns early with MISSING_INTRO_KEY
+	// and the benchmark would measure nothing.
+	config.IntroKey = generateIntroKey()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

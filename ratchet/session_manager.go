@@ -220,7 +220,7 @@ func tagReplenishThreshold(usedTags uint32) int {
 // Collision handling: if installGeneratedTagsLocked skips some tags due to
 // cross-session hash collisions, the window can end up under-sized after the
 // first install pass.  We retry up to maxReplenishAttempts times so that the
-// window reaches tagWindowSize despite isolated collisions.  If the window is
+// window reaches tagWindowMin despite isolated collisions.  If the window is
 // still under-sized after all retries, a warning is logged so the condition is
 // visible rather than silent.
 func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {

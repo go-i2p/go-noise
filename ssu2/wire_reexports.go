@@ -179,7 +179,6 @@ var (
 	DeserializeBlocks = wire.DeserializeBlocks
 	FindBlockByType   = wire.FindBlockByType
 	IsKnownBlockType  = wire.IsKnownBlockType
-	BlockTypeName     = wire.BlockTypeName
 	GetBlockTypeName  = wire.GetBlockTypeName
 	GetBlockCategory  = wire.GetBlockCategory
 	AllBlockTypes     = wire.AllBlockTypes

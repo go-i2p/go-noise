@@ -74,7 +74,7 @@ const (
 	// expired pending packets.
 	retransmitInterval = 250 * time.Millisecond
 
-	// handshakeEnqueueTimeout bounds how long processInboundPacket will block
+	// handshakeEnqueueTimeout bounds how long ProcessInboundPacket will block
 	// trying to hand a handshake packet to the handshake reader when the
 	// recvQueue is transiently full, before dropping it.
 	// The value is kept short (10 ms) so that all 8 packetWorker

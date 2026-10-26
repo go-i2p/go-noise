@@ -419,7 +419,7 @@ func TestMessage3Part2Validation_RejectsExcessiveM3P2Len(t *testing.T) {
 // between the static key and LocalRouterInfo is reported as an error by
 // verifyLocalRouterInfoMatchesStaticKey. Enforcement of this error is now
 // unconditional in performInitiatorHandshake (the handshake fails with
-// ROUTER_INFO_KEY_MISMATCH); StrictRouterInfoVerification no longer gates it.
+// ROUTER_INFO_KEY_MISMATCH). There is no configuration option that relaxes it.
 //
 // NOTE: The full handshake failure path cannot be trivially triggered
 // end-to-end because crafting a valid RouterInfo with a *wrong* NTCP2 `s=`
@@ -479,34 +479,11 @@ func TestRouterInfoVerification_MatchingKey(t *testing.T) {
 	assert.NoError(t, err, "verifyLocalRouterInfoMatchesStaticKey should succeed when key matches")
 }
 
-// TestStrictRouterInfoVerification_BuilderIsNoOp verifies that the deprecated
-// WithStrictRouterInfoVerification builder still sets the (now-unused) field
-// for backward compatibility. Enforcement of the RouterInfo/static-key match
-// is unconditional and no longer gated by this field.
-func TestStrictRouterInfoVerification_BuilderIsNoOp(t *testing.T) {
-	staticKey := make([]byte, StaticKeySize)
-	var bobHash data.Hash // zero-value hash is fine for this test
-
-	cfg, err := NewNTCP2Config(bobHash, true) // initiator
-	require.NoError(t, err)
-
-	cfg.WithStaticKey(staticKey).
-		WithStrictRouterInfoVerification(true)
-
-	assert.True(t, cfg.StrictRouterInfoVerification,
-		"WithStrictRouterInfoVerification(true) should set the field to true")
-
-	// Also verify the field can be set to false
-	cfg.WithStrictRouterInfoVerification(false)
-	assert.False(t, cfg.StrictRouterInfoVerification,
-		"WithStrictRouterInfoVerification(false) should set the field to false")
-}
-
-// TestStrictRouterInfoVerification_EdgeCases verifies that
+// TestVerifyLocalRouterInfo_EdgeCases verifies that
 // verifyLocalRouterInfoMatchesStaticKey handles edge cases correctly:
 //   - Empty RouterInfo bytes (no check performed, returns nil)
 //   - Wrong-length static key (no check performed, returns nil)
-func TestStrictRouterInfoVerification_EdgeCases(t *testing.T) {
+func TestVerifyLocalRouterInfo_EdgeCases(t *testing.T) {
 	// Case 1: Empty RouterInfo (common in test scenarios with synthetic RI)
 	staticPriv := make([]byte, StaticKeySize)
 	err := verifyLocalRouterInfoMatchesStaticKey(staticPriv, nil)

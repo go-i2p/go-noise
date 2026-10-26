@@ -139,10 +139,10 @@ func (l *SSU2Listener) matchesNetworkID(packet *SSU2Packet) bool {
 // handleIncomingPacket processes a received packet and routes it appropriately.
 // This is called in a goroutine for each received packet.
 //
-// The listener attempts multiple header-protection strategies:
-// 1. Plaintext (testing/legacy)
-// 2. Intro-key (SessionRequest/TokenRequest)
-// 3. Outbound session protectors (SessionCreated/Retry replies)
+// The listener attempts, in order: the intro-key protector, the pending-outbound
+// session protectors, the accepted-session protectors, and finally an unprotected
+// header read for the out-of-session types only. See parseInboundPacket and
+// ssu2.md §"Header Protection" -> "Recommended processing steps".
 //
 // Design:
 // - Attempts to parse the packet with all available protectors

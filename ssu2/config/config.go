@@ -39,13 +39,19 @@ type SSU2Config struct {
 	// StaticKey is the long-term static key for this peer (32 bytes for Curve25519)
 	StaticKey []byte
 
-	// LocalRouterInfo is the local router's RouterInfo to transmit during the SSU2
-	// handshake (SessionConfirmed message for initiators). This RouterInfo MUST contain
-	// an SSU2 RouterAddress with the "s" parameter set to the static public key derived
-	// from StaticKey, otherwise the peer will reject the handshake.
-	// Required for initiator connections (Initiator=true); optional for responders.
-	// If nil or empty, the connection will transmit RouterHash instead (legacy behavior,
-	// incompatible with strict static key verification).
+	// LocalRouterInfo is the local router's serialized RouterInfo, sent in the
+	// Session Confirmed message. ssu2.md §"Session Confirmed": "The Session
+	// Confirmed message must contain the full signed Router Info".
+	//
+	// Required for initiator connections (Initiator=true); optional for
+	// responders, which are authenticated by the RouterInfo the initiator sent.
+	// It MUST contain an SSU2 RouterAddress whose "s" parameter is the static
+	// public key derived from StaticKey, or the peer rejects the handshake.
+	//
+	// There is no fallback to sending a bare RouterHash: ssu2.md requires the
+	// full signed RouterInfo, and a hash carries neither the "s" parameter nor a
+	// signature, so i2pd and Java both reject it. CreateSessionConfirmed fails
+	// with MISSING_LOCAL_ROUTER_INFO when this is empty.
 	LocalRouterInfo []byte
 
 	// RemoteRouterHash is the remote peer's router identity hash

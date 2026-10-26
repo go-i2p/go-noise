@@ -226,19 +226,6 @@ func buildModifierChain(modifiers []handshake.HandshakeModifier) *handshake.Modi
 	return handshake.NewModifierChain("config-chain", modifiers...)
 }
 
-// invalidateModifierCache resets the cached modifier chain so it will be
-// recomputed on the next call to GetModifierChain. It is kept for any future
-// caller that mutates c.Modifiers directly under chainMu itself;
-// WithModifiers, AddModifier, and ClearModifiers now inline this instead of
-// calling it separately, so the whole read-modify-write of c.Modifiers
-// happens under one lock acquisition.
-func (c *ConnConfig) invalidateModifierCache() {
-	c.chainMu.Lock()
-	c.cachedChain = nil
-	c.chainCached = false
-	c.chainMu.Unlock()
-}
-
 // Validate checks that the configuration is complete and consistent. It
 // returns a descriptive error if anything is missing or wrong, such as an
 // unrecognized pattern or a static key of the wrong length.

@@ -63,6 +63,8 @@ const (
 
 	// MaxBlockDataSize is the largest amount of data a single I2P block can
 	// carry, in bytes.
+	// ntcp2.md §"Unencrypted data": "size :: 2 bytes, big endian, size of data
+	// to follow, 0 - 65516" / "Maximum single block data size is 65516 bytes."
 	MaxBlockDataSize = 65516
 
 	// MaxFrameSize is the maximum size of an NTCP2 data frame, in bytes.

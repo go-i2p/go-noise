@@ -551,16 +551,6 @@ type Config struct {
 	// the encrypted payload of message 3 part 2.
 	LocalRouterInfo []byte
 
-	// StrictRouterInfoVerification is kept only for backward
-	// compatibility.
-	//
-	// Deprecated: the local RouterInfo / static-key match is now ALWAYS
-	// enforced as a hard error during the initiator handshake, regardless
-	// of this field's value. It no longer has any effect. The check is a
-	// no-op when no static key or no LocalRouterInfo is configured, so it
-	// never fires on partially-configured connections.
-	StrictRouterInfoVerification bool
-
 	// ReplayDetector checks for replayed ephemeral keys during handshakes.
 	// If nil, replay detection is disabled (not recommended for
 	// production).
@@ -842,17 +832,6 @@ WithStaticKey sets this peer's long-term Curve25519 key. key must be 32 bytes.
 Keys of any other length are silently ignored, so call Validate() to check all
 fields before use.
 
-#### func (*Config) WithStrictRouterInfoVerification
-
-```go
-func (nc *Config) WithStrictRouterInfoVerification(strict bool) *Config
-```
-WithStrictRouterInfoVerification is kept only for backward compatibility.
-
-Deprecated: the local RouterInfo / static-key match is now always enforced as a
-hard error during the initiator handshake, so this builder does nothing. It
-still sets the (now-unused) field to avoid breaking callers that still invoke
-it.
 
 #### func (*Config) WithWriteTimeout
 
@@ -1578,15 +1557,6 @@ connection.
 This supports I2P NTCP2 options negotiation, where padding parameters can be
 updated.
 
-#### func (*NTCP2PaddingModifier) ValidateAEADFrame
-
-```go
-func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool
-```
-ValidateAEADFrame validates that a frame contains properly formatted AEAD
-blocks.
-
-Returns true if the frame structure is valid according to the I2P NTCP2 spec.
 
 #### func (*NTCP2PaddingModifier) WithTestMode
 

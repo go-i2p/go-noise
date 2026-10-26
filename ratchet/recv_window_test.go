@@ -25,7 +25,7 @@ func assertRecvWindowBase(t *testing.T, session *Session, expected uint32, msgAn
 // Receive Window Tests
 // ============================================================================
 
-// TestReceiveWindow_OutOfOrder verifies that up to tagWindowSize ES messages
+// TestReceiveWindow_OutOfOrder verifies that up to tagWindowMin ES messages
 // delivered in a shuffled order all decrypt successfully.
 func TestReceiveWindow_OutOfOrder(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
@@ -289,23 +289,23 @@ func TestRecvWindowReset_AfterNSR(t *testing.T) {
 //
 // The fix: generateAndTrackSessionTag no longer writes to pendingTags.
 // This test verifies:
-//  1. Alice sends 30 outgoing ES messages to Bob (> tagWindowSize == 24).
+//  1. Alice sends 30 outgoing ES messages to Bob (> tagWindowMin == 24).
 //  2. Bob can still send ES messages back to Alice after that.
-//  3. Alice's pendingTags count stays bounded at tagWindowSize (no pollution).
+//  3. Alice's pendingTags count stays bounded at tagWindowMin (no pollution).
 func TestSendTagPollution_RecvWindowStillWorks(t *testing.T) {
 	alice, bob := createLinkedManagers(t)
 	bobDestHash, sessionHash := mustBootstrapSessionWithHash(t, alice, bob)
 
 	// Alice sends 30 outgoing ES messages to Bob. With the old bug this
 	// would fill alice's session.pendingTags with 30 send-direction tags
-	// (> tagWindowSize == 24), preventing recv-window replenishment.
+	// (> tagWindowMin == 24), preventing recv-window replenishment.
 	const outgoingCount = 30
 	for i := 0; i < outgoingCount; i++ {
 		payload := []byte("alice→bob message " + string(rune('A'+i)))
 		assertESRoundTrip(t, alice, bob, bobDestHash, bob.ourPublicKey, payload, fmt.Sprintf("alice ES send %d", i))
 	}
 
-	// Verify alice's pendingTags is not polluted (capped at tagWindowSize,
+	// Verify alice's pendingTags is not polluted (capped at tagWindowMin,
 	// not bloated with send-direction tags).
 	aliceSess := firstSession(t, alice)
 
@@ -313,9 +313,9 @@ func TestSendTagPollution_RecvWindowStillWorks(t *testing.T) {
 	pendingCount := len(aliceSess.pendingTags)
 	aliceSess.mu.Unlock()
 
-	assert.LessOrEqual(t, pendingCount, tagWindowSize,
-		"alice.pendingTags must not exceed tagWindowSize=%d (send-tag pollution check); got %d",
-		tagWindowSize, pendingCount)
+	assert.LessOrEqual(t, pendingCount, tagWindowMin,
+		"alice.pendingTags must not exceed tagWindowMin=%d (send-tag pollution check); got %d",
+		tagWindowMin, pendingCount)
 
 	// Step 5: Bob sends 3 ES messages back to Alice. Bob's session for Alice is
 	// keyed by sessionHash (SHA-256 of Alice's pubkey), which is what was returned
@@ -488,7 +488,7 @@ func TestInstallGeneratedTagsLocked_CollisionSkip(t *testing.T) {
 // fully restores the tag window after it has been drained to zero.
 //
 // This exercises the happy path of the retry loop: the first attempt should
-// successfully generate and install tagWindowSize entries with no collisions.
+// successfully generate and install tagWindowMin entries with no collisions.
 func TestReplenishTagWindow_FullReplenishment(t *testing.T) {
 	sender, receiver := createLinkedManagers(t)
 	_ = mustBootstrapSession(t, sender, receiver)
@@ -519,18 +519,18 @@ func TestReplenishTagWindow_FullReplenishment(t *testing.T) {
 	count := len(sess.pendingTags)
 	sess.mu.Unlock()
 
-	assert.Equal(t, tagWindowSize, count,
-		"tag window must be fully replenished to tagWindowSize=%d after drain; got %d",
-		tagWindowSize, count)
+	assert.Equal(t, tagWindowMin, count,
+		"tag window must be fully replenished to tagWindowMin=%d after drain; got %d",
+		tagWindowMin, count)
 }
 
 // TestReplenishTagWindow_PartialCollisionRetries verifies that when
 // installGeneratedTagsLocked skips some tags due to collisions, the retry loop
 // in replenishTagWindowOutsideLock continues generating until the window is full.
 //
-// Setup: after the first replenishment call installs fewer than tagWindowSize
+// Setup: after the first replenishment call installs fewer than tagWindowMin
 // entries (because we pre-occupied some slots with another session's tags), we
-// verify that the final window size equals tagWindowSize.
+// verify that the final window size equals tagWindowMin.
 //
 // Implementation note: forcing a deterministic collision requires knowing the
 // ratchet's next output in advance.  We achieve this by:
@@ -550,7 +550,7 @@ func TestReplenishTagWindow_PartialCollisionRetries(t *testing.T) {
 	// Do a first replenishment so the tag ratchet has produced a full window.
 	receiver.replenishTagWindowOutsideLock(sess)
 	sess.mu.Lock()
-	require.Equal(t, tagWindowSize, len(sess.pendingTags), "precondition: first replenishment must fill window")
+	require.Equal(t, tagWindowMin, len(sess.pendingTags), "precondition: first replenishment must fill window")
 	// Record one of the live tags — it will become a collision trigger.
 	collidingTag := sess.pendingTags[0]
 	// Drain the window.
@@ -570,7 +570,7 @@ func TestReplenishTagWindow_PartialCollisionRetries(t *testing.T) {
 
 	// Run replenishment.  The first attempt will skip collidingTag (owned by
 	// phantom), leaving the window one short.  The retry generates a further tag
-	// to bring the window back to tagWindowSize.
+	// to bring the window back to tagWindowMin.
 	receiver.replenishTagWindowOutsideLock(sess)
 
 	sess.mu.Lock()
@@ -584,8 +584,8 @@ func TestReplenishTagWindow_PartialCollisionRetries(t *testing.T) {
 	}
 	receiver.mu.Unlock()
 
-	assert.Equal(t, tagWindowSize, count,
-		"retry loop must compensate for one collision so window reaches tagWindowSize")
+	assert.Equal(t, tagWindowMin, count,
+		"retry loop must compensate for one collision so window reaches tagWindowMin")
 }
 
 // ============================================================================

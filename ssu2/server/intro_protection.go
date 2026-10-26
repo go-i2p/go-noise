@@ -15,8 +15,9 @@ import (
 // The initiator obfuscates header bytes 0-15 (and, for long headers, bytes 16-63)
 // using ChaCha20 keyed on the receiver's intro key.
 //
-// If IntroKey is not set or is the wrong length, this is a no-op and the listener
-// assumes all inbound packets have plaintext headers (test/legacy mode).
+// If IntroKey is not set or is the wrong length, this is a no-op: the protected
+// stages in parseInboundPacket then have no key to try, and only the out-of-session
+// message types the spec permits without header protection are accepted.
 func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 	if len(config.IntroKey) != 32 {
 		return nil
@@ -30,9 +31,9 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 }
 
 // parseInboundPacket attempts to deserialize a received datagram. It first
-// tries each header-protection strategy, then falls back to the plaintext
-// interpretation (used by internal tests and legacy peers that do not apply
-// header protection). Returns (packet, true) on success or (nil, false) when
+// tries each header-protection strategy, then reads the header unprotected for
+// the out-of-session message types the spec allows there. Returns (packet, true)
+// on success or (nil, false) when
 // the packet should be silently dropped.
 //
 // ssu2.md §"Header Validation" requires the receiver to remove header
@@ -56,7 +57,7 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 //  2. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
 //  3. Inbound SessionConfirmed/Data for accepted/established sessions via
 //     AcceptedSessionRegistry trial-deobfuscation
-//  4. Plaintext (testing/legacy)
+//  4. Unprotected header read, out-of-session types only (spec step 2)
 //
 // For cases 2 and 3 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup
 // key because header protection XOR-masks those bytes.  TrialDeobfuscate tries
@@ -125,24 +126,38 @@ func (l *SSU2Listener) parseInboundPacket(data []byte, from *net.UDPAddr) (*SSU2
 		}
 	}
 
-	// Final fallback: plaintext interpretation (test/legacy peers that do not
-	// apply header protection). A conformant production peer never reaches
-	// here, because its protected packet is recovered by one of the stages
-	// above.
+	// Final stage: read the header without any header-protection operation.
+	//
+	// ssu2.md §"Header Protection" -> §"Recommended processing steps", step 2:
+	// "If the connection ID does not match a current session: Check the
+	// plaintext header at bytes 8-15 are valid (without doing any header
+	// protection operation). Verify the net ID and protocol version are valid,
+	// and the message type is Session Request, or other message type allowed
+	// out-of-session."
+	//
+	// This stage therefore covers only out-of-session message types. A Session
+	// Confirmed or Data packet is never sent with an unprotected header (its
+	// header keys come from the session KDF), so accepting one here would let an
+	// attacker forge an unprotected in-session packet past the classifier — the
+	// Java reference implementation rejects exactly that
+	// (PacketHandler.receiveSSU2Packet: "can't have session confirmed with null
+	// state"). It also covers a listener whose IntroKey is not configured yet,
+	// for which the protected stages above have no key to try.
 	packet := &SSU2Packet{}
-	if err := packet.Deserialize(data); err == nil {
+	if err := packet.Deserialize(data); err == nil && isIntroKeyMessageType(packet.MessageType) {
 		return stamp(packet), true
 	}
 
 	return nil, false
 }
 
-// isIntroKeyMessageType reports whether messageType belongs to the intro-key
-// protected family (SessionRequest, SessionCreated, Retry, TokenRequest,
-// PeerTest, HolePunch). SessionConfirmed and Data use per-session KDF-derived
-// header keys and are never protected with the intro key, so a header that
-// de-obfuscates to one of those short-header types under the intro key is a
-// false match and must fall through to the per-session stages.
+// isIntroKeyMessageType reports whether messageType belongs to the out-of-session
+// family protected with the intro key (SessionRequest, SessionCreated, Retry,
+// TokenRequest, PeerTest, HolePunch). SessionConfirmed and Data use per-session
+// KDF-derived header keys and are never protected with the intro key, so a header
+// that resolves to one of those short-header types under the intro key is a false
+// match and must fall through to the per-session stages — and must be rejected
+// outright by the unprotected stage.
 func isIntroKeyMessageType(messageType uint8) bool {
 	return messageType != MessageTypeSessionConfirmed && messageType != MessageTypeData
 }

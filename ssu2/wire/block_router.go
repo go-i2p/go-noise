@@ -131,9 +131,9 @@ func (r *BlockRouter) RouteBlock(block *SSU2Block) error {
 	if exists {
 		// A registered handler was tried but returned handled==false; this is
 		// a legitimate outcome (e.g. handler ignores empty Data), not an error.
-		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": BlockTypeName(block.Type), "dataLength": len(block.Data)}).Debug("Registered handler declined block (handled=false)")
+		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": GetBlockTypeName(block.Type), "dataLength": len(block.Data)}).Debug("Registered handler declined block (handled=false)")
 	} else {
-		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": BlockTypeName(block.Type), "dataLength": len(block.Data)}).Warn("No handler registered for block type")
+		flog("RouteBlock", logger.Fields{"blockType": block.Type, "blockName": GetBlockTypeName(block.Type), "dataLength": len(block.Data)}).Warn("No handler registered for block type")
 	}
 
 	return nil
@@ -195,28 +195,6 @@ func (h *funcBlockHandler) HandleBlock(block *SSU2Block) (bool, error) {
 
 func (h *funcBlockHandler) SupportedTypes() []uint8 {
 	return h.types
-}
-
-// BlockTypeName returns a human-readable name for a block type.
-// This is useful for logging and debugging.
-// BlockTypeName returns a human-readable name for the block type, for
-// legacy router-facing log/display output only.
-//
-// Unlike GetBlockTypeName (block.go), this function deliberately reports
-// "Unknown" for BlockTypeNextNonce, BlockTypeReserved14,
-// BlockTypeFirstPacketNumber, and BlockTypeCongestion, to preserve
-// pre-existing router-facing behavior for those four internal/specialized
-// block types. Callers that want the real name for every defined block type
-// (e.g. diagnostics, tests) should call GetBlockTypeName directly instead --
-// the two functions' similar names make it easy to pick the wrong one.
-func BlockTypeName(blockType uint8) string {
-	// Preserve legacy router-facing behavior: these internal/specialized block
-	// types were historically reported as Unknown by BlockTypeName.
-	switch blockType {
-	case BlockTypeNextNonce, BlockTypeReserved14, BlockTypeFirstPacketNumber, BlockTypeCongestion:
-		return "Unknown"
-	}
-	return GetBlockTypeName(blockType)
 }
 
 // AllBlockTypes returns all defined SSU2 block types.

@@ -10,12 +10,21 @@ import (
 	"github.com/samber/oops"
 )
 
-// ChaChaObfuscationModifier implements SSU2's ChaCha20-based obfuscation.
-// Per the SSU2 specification, SessionRequest and SessionCreated obfuscate
-// 48 bytes (header[16:32] || ephemeral_key) with a single ChaCha20 stream
-// at counter position n=1 ("key: Bob's intro key, n: 1, data: 48 bytes").
-// This modifier supports both the 48-byte spec-compliant mode
-// and 32-byte ephemeral-key-only mode for backward compatibility.
+// ChaChaObfuscationModifier implements SSU2's ChaCha20-based obfuscation of the
+// ephemeral key in handshake messages 1 and 2.
+//
+// ssu2.md sections "1) Session Request" and "2) Session Created":
+//
+//	X :: 32 bytes, ChaCha20 encrypted X25519 ephemeral key, little endian
+//	        key: Bob's intro key
+//	        n: 1
+//	        data: 48 bytes (bytes 16-31 of the header, followed by encrypted X)
+//
+// So the keystream covers 48 bytes -- the 16-byte long-header extension plus the
+// 32-byte ephemeral key -- in a single operation. A 32-byte input is rejected:
+// starting the keystream at the ephemeral key alone would consume bytes 32..63 of
+// the stream instead of bytes 16..47, producing ciphertext no spec-compliant peer
+// can read.
 //
 // Note: The primary obfuscation path in SSU2 is handled by
 // HeaderProtector.encryptLongHeaderExtension, which processes the assembled
@@ -56,10 +65,9 @@ func NewChaChaObfuscationModifier(name string, introKey []byte) (*ChaChaObfuscat
 	}, nil
 }
 
-// ModifyOutbound applies ChaCha20 obfuscation to handshake messages.
-// Accepts 48 bytes (header[16:32] || ephemeral key) per SSU2 spec, or
-// 32 bytes (ephemeral key only) for backward compatibility.
-// Message 3+: No obfuscation
+// ModifyOutbound applies ChaCha20 obfuscation to handshake messages 1 and 2,
+// over the 48-byte span the spec defines. Message 3 and later are passed through
+// unobfuscated.
 func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	flog("ModifyOutbound", logger.Fields{"phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyOutbound")
 	if err := validateChaChaInputLength(len(data)); err != nil {
@@ -74,9 +82,8 @@ func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePh
 	}
 }
 
-// ModifyInbound removes ChaCha20 obfuscation from handshake messages.
+// ModifyInbound removes ChaCha20 obfuscation from handshake messages 1 and 2.
 // ChaCha20 is symmetric (XOR-based), so encryption and decryption are identical.
-// Accepts 48 bytes (spec-compliant) or 32 bytes (backward compatibility).
 func (com *ChaChaObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	flog("ModifyInbound", logger.Fields{"phase": phase, "dataLen": len(data)}).Debug("ChaCha obfuscation ModifyInbound")
 	if err := validateChaChaInputLength(len(data)); err != nil {
@@ -96,8 +103,16 @@ func (com *ChaChaObfuscationModifier) Name() string {
 	return com.name
 }
 
+// EphemeralObfuscationSize is how many bytes the spec's ChaCha20 operation
+// covers for a Session Request / Session Created ephemeral key: the 16-byte
+// long-header extension plus the 32-byte ephemeral key.
+//
+// ssu2.md section "1) Session Request": "data: 48 bytes (bytes 16-31 of the
+// header, followed by encrypted X)".
+const EphemeralObfuscationSize = 48
+
 func validateChaChaInputLength(length int) error {
-	if length == 32 || length == 48 {
+	if length == EphemeralObfuscationSize {
 		return nil
 	}
 
@@ -105,12 +120,12 @@ func validateChaChaInputLength(length int) error {
 		Code("INVALID_CHACHA_INPUT_LENGTH").
 		In("wire").
 		With("length", length).
-		Errorf("unexpected data length %d for chacha obfuscation: expected 32 or 48", length)
+		Errorf("chacha obfuscation requires %d bytes (header[16:32] followed by the ephemeral key) per the SSU2 spec, got %d",
+			EphemeralObfuscationSize, length)
 }
 
 // applyChacha creates a ChaCha20 cipher at counter position n=1 per the SSU2
-// spec and XORs the data. Supports 48-byte (spec-compliant) and 32-byte
-// (ephemeral-only) inputs. Returns an error if the modifier has been closed.
+// spec and XORs the data. Returns an error if the modifier has been closed.
 func (com *ChaChaObfuscationModifier) applyChacha(data []byte) ([]byte, error) {
 	flog("applyChacha", logger.Fields{"dataLen": len(data)}).Debug("applyChacha: applying ChaCha20 XOR")
 	com.mu.RLock()

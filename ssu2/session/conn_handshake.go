@@ -55,7 +55,7 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	// but only if this connection is responsible for reading the socket.
 	// For listener-accepted responder sessions (readsOwnSocket=false), the listener's
 	// receiveLoop is the sole socket reader and feeds packets via RoutePacket →
-	// processInboundPacket → recvQueue. Starting recvLoop here would cause two
+	// ProcessInboundPacket → recvQueue. Starting recvLoop here would cause two
 	// goroutines reading the same socket, violating the SSU2 concurrent-reader
 	// multiplexing invariant.
 	// Started here rather than in the constructor so that callers who create

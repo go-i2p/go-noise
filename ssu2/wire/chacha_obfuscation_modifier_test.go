@@ -99,14 +99,14 @@ func TestChaChaObfuscationModifier_Roundtrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test message 1 (PhaseInitial)
-	original1 := make([]byte, 32)
+	original1 := make([]byte, 48)
 	_, err = rand.Read(original1)
 	require.NoError(t, err)
 
 	encrypted1, err := mod.ModifyOutbound(handshake.PhaseInitial, original1)
 	require.NoError(t, err)
 	assert.NotNil(t, encrypted1)
-	assert.Len(t, encrypted1, 32)
+	assert.Len(t, encrypted1, 48)
 	assert.False(t, bytes.Equal(original1, encrypted1), "encrypted data should differ from original")
 
 	// Create new modifier for decryption (simulates receiver)
@@ -118,14 +118,14 @@ func TestChaChaObfuscationModifier_Roundtrip(t *testing.T) {
 	assert.Equal(t, original1, decrypted1, "decrypted should match original")
 
 	// Test message 2 (PhaseExchange) - uses same key and nonce per spec
-	original2 := make([]byte, 32)
+	original2 := make([]byte, 48)
 	_, err = rand.Read(original2)
 	require.NoError(t, err)
 
 	encrypted2, err := mod.ModifyOutbound(handshake.PhaseExchange, original2)
 	require.NoError(t, err)
 	assert.NotNil(t, encrypted2)
-	assert.Len(t, encrypted2, 32)
+	assert.Len(t, encrypted2, 48)
 	assert.False(t, bytes.Equal(original2, encrypted2), "encrypted data should differ from original")
 
 	decrypted2, err := modDecrypt.ModifyInbound(handshake.PhaseExchange, encrypted2)
@@ -142,7 +142,7 @@ func TestChaChaObfuscationModifier_PhaseSpecific(t *testing.T) {
 	mod, err := NewChaChaObfuscationModifier("test-phase", introKey)
 	require.NoError(t, err)
 
-	data := make([]byte, 32)
+	data := make([]byte, 48)
 	_, err = rand.Read(data)
 	require.NoError(t, err)
 
@@ -162,15 +162,17 @@ func TestChaChaObfuscationModifier_PhaseSpecific(t *testing.T) {
 	assert.True(t, bytes.Equal(data, result3), "PhaseFinal should pass data through unchanged")
 }
 
-// TestChaChaObfuscationModifier_NonEphemeralKey tests handling of non-32-byte data
+// TestChaChaObfuscationModifier_NonSpecLength tests handling of non-48-byte data
 func TestChaChaObfuscationModifier_NonEphemeralKey(t *testing.T) {
 	introKey := make([]byte, 32)
 
 	mod, err := NewChaChaObfuscationModifier("test-size", introKey)
 	require.NoError(t, err)
 
-	// Lengths that are neither 32 nor 48 should now return an error.
-	unexpectedSizes := []int{0, 1, 16, 31, 33, 64, 128}
+	// Lengths other than the spec's 48 bytes must return an error.
+	// 32 (ephemeral key alone) is no longer accepted: the spec keystream must
+	// start at header byte 16, so only the 48-byte span is valid.
+	unexpectedSizes := []int{0, 1, 16, 31, 32, 33, 64, 128}
 
 	for _, size := range unexpectedSizes {
 		t.Run(string(rune(size))+"_bytes", func(t *testing.T) {
@@ -192,7 +194,7 @@ func TestChaChaObfuscationModifier_FixedNonce(t *testing.T) {
 	mod, err := NewChaChaObfuscationModifier("test-nonce", introKey)
 	require.NoError(t, err)
 
-	data := make([]byte, 32)
+	data := make([]byte, 48)
 	_, err = rand.Read(data)
 	require.NoError(t, err)
 
@@ -222,7 +224,7 @@ func TestChaChaObfuscationModifier_DifferentKeys(t *testing.T) {
 	mod2, err := NewChaChaObfuscationModifier("mod2", introKey2)
 	require.NoError(t, err)
 
-	data := make([]byte, 32)
+	data := make([]byte, 48)
 	_, err = rand.Read(data)
 	require.NoError(t, err)
 
@@ -244,7 +246,7 @@ func TestChaChaObfuscationModifier_SymmetricOperation(t *testing.T) {
 	mod, err := NewChaChaObfuscationModifier("test-symmetric", introKey)
 	require.NoError(t, err)
 
-	data := make([]byte, 32)
+	data := make([]byte, 48)
 	_, err = rand.Read(data)
 	require.NoError(t, err)
 
@@ -266,7 +268,7 @@ func BenchmarkChaChaObfuscation(b *testing.B) {
 	_, _ = rand.Read(introKey)
 
 	mod, _ := NewChaChaObfuscationModifier("bench", introKey)
-	data := make([]byte, 32)
+	data := make([]byte, 48)
 	_, _ = rand.Read(data)
 
 	b.ResetTimer()

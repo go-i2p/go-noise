@@ -294,13 +294,13 @@ func TestReceiveWindow_SetExpected(t *testing.T) {
 	}
 }
 
-// TestReceiveWindow_GetGapInfo verifies the diagnostics accessor reports the
+// TestReceiveWindow_RecordedSpan verifies the diagnostics accessor reports the
 // recorded span.
-func TestReceiveWindow_GetGapInfo(t *testing.T) {
+func TestReceiveWindow_RecordedSpan(t *testing.T) {
 	rw := NewReceiveWindow(1000, 100)
 
-	if min, max, count := rw.GetGapInfo(); min != 1000 || max != 1000 || count != 0 {
-		t.Errorf("empty filter gap info = (%d, %d, %d), want (1000, 1000, 0)", min, max, count)
+	if min, max, count := rw.RecordedSpan(); min != 1000 || max != 1000 || count != 0 {
+		t.Errorf("empty filter recorded span = (%d, %d, %d), want (1000, 1000, 0)", min, max, count)
 	}
 
 	for _, pktNum := range []uint32{1005, 1007, 1010} {
@@ -309,8 +309,8 @@ func TestReceiveWindow_GetGapInfo(t *testing.T) {
 		}
 	}
 
-	if min, max, count := rw.GetGapInfo(); min != 1005 || max != 1010 || count != 3 {
-		t.Errorf("gap info = (%d, %d, %d), want (1005, 1010, 3)", min, max, count)
+	if min, max, count := rw.RecordedSpan(); min != 1005 || max != 1010 || count != 3 {
+		t.Errorf("recorded span = (%d, %d, %d), want (1005, 1010, 3)", min, max, count)
 	}
 }
 
@@ -363,7 +363,7 @@ func TestReceiveWindow_ConcurrentReads(t *testing.T) {
 			for j := 0; j < readsPerGoroutine; j++ {
 				_ = rw.GetExpected()
 				_ = rw.GetWindowSize()
-				_, _, _ = rw.GetGapInfo()
+				_, _, _ = rw.RecordedSpan()
 			}
 		}()
 	}

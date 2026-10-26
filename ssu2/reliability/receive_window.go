@@ -244,24 +244,18 @@ func (rw *ReceiveWindow) Clear(expected uint32) {
 	}
 }
 
-// HasGaps reports whether any packet number is currently recorded. Nothing is
-// ever buffered waiting for a gap under the spec's no-reordering model, so the
-// name is a legacy hold-over.
+// RecordedSpan reports the lowest and highest packet numbers currently recorded
+// in the filter and how many are recorded. With nothing recorded it returns the
+// floor and a count of 0. Thread-safe.
 //
-// Deprecated: gaps are not a concept in SSU2, which "does NOT provide in-order
-// delivery of I2NP messages".
-func (rw *ReceiveWindow) HasGaps() bool {
-	return rw.GetWindowSize() > 0
-}
-
-// GetGapInfo reports the lowest and highest recorded packet numbers and how many
-// are recorded. With nothing recorded it returns the floor and a count of 0.
-// Thread-safe.
-func (rw *ReceiveWindow) GetGapInfo() (minBuffered, maxBuffered uint32, count int) {
+// SSU2 "does NOT provide in-order delivery of I2NP messages" (ssu2.md
+// §"Reliability"), so this is a duplicate filter, not a reorder buffer: nothing
+// is ever held back waiting for a missing packet number.
+func (rw *ReceiveWindow) RecordedSpan() (lowest, highest uint32, count int) {
 	rw.mutex.RLock()
 	defer rw.mutex.RUnlock()
 
-	lowest, highest := rw.capacity, uint32(0)
+	lowest, highest = rw.capacity, uint32(0)
 	for i := uint32(0); i < rw.capacity; i++ {
 		if rw.seen[i/64]&(1<<(i%64)) != 0 {
 			count++

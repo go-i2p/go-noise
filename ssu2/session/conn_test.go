@@ -1318,7 +1318,7 @@ func TestSSU2Conn_NextNonceEnabledTriggersRekey(t *testing.T) {
 
 // TestProcessInboundPacket_ReorderedDataDelivery verifies that out-of-order data
 // packets are each delivered on arrival. SSU2 does not provide in-order
-// delivery (ssu2.rst §"Delivery Guarantees"), so processInboundPacket must hand
+// delivery (ssu2.rst §"Delivery Guarantees"), so ProcessInboundPacket must hand
 // every non-duplicate packet straight to the data path instead of holding it in
 // a reordering buffer.
 func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
@@ -1359,11 +1359,11 @@ func TestProcessInboundPacket_ReorderedDataDelivery(t *testing.T) {
 	// Guarantees": SSU2 "does NOT provide in-order delivery of I2NP messages",
 	// so packet 2 must be delivered on arrival rather than held back until
 	// packet 1 shows up.
-	conn.processInboundPacket(packet2)
+	conn.ProcessInboundPacket(packet2)
 	received1 := conn.validDataPacketsReceived.Load()
 
 	// Packet 1 then arrives normally and is delivered as well.
-	conn.processInboundPacket(packet1)
+	conn.ProcessInboundPacket(packet1)
 	received2 := conn.validDataPacketsReceived.Load()
 
 	assert.Equal(t, uint64(1), received1, "out-of-order packet 2 must be delivered immediately")
@@ -1429,7 +1429,7 @@ func TestIdleTimeoutKeepaliveLoopDeadlock(t *testing.T) {
 }
 
 // TestDelayedACKSchedulerTriggersOnThreshold verifies that the delayed ACK
-// scheduler actually checks ShouldSendACK in processInboundPacket after
+// scheduler actually checks ShouldSendACK in ProcessInboundPacket after
 // RecordReceived. This is a basic sanity test that the code path doesn't
 // crash or panic. The actual ACK generation depends on ackThreshold and
 // timing configuration.
@@ -1467,8 +1467,8 @@ func TestDelayedACKSchedulerTriggersOnThreshold(t *testing.T) {
 	// panic. The actual ACK generation depends on ackThreshold and other
 	// timing factors.
 	assert.NotPanics(t, func() {
-		conn.processInboundPacket(testPacket)
-	}, "processInboundPacket should not panic when calling ShouldSendACK for delayed ACK scheduling")
+		conn.ProcessInboundPacket(testPacket)
+	}, "ProcessInboundPacket should not panic when calling ShouldSendACK for delayed ACK scheduling")
 }
 
 // WriteBlocksWithNumbers tests

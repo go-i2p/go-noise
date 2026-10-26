@@ -724,7 +724,7 @@ func TestGenerateTagWindowSameSessionNoCollision(t *testing.T) {
 	sender.mu.Unlock()
 
 	require.NoError(t, err)
-	assert.Equal(t, tagWindowSize, len(session.pendingTags))
+	assert.Equal(t, tagWindowMin, len(session.pendingTags))
 }
 
 // ============================================================================
@@ -1919,7 +1919,7 @@ func TestEncryptGarlicMessage_AcceptsValidNSPayload(t *testing.T) {
 // ordering is wrong, the test will deadlock and be caught by -timeout.
 func TestReplenishTagWindowOutsideLock_DoesNotDeadlock(t *testing.T) {
 	const goroutines = 8
-	const msgsPerPair = 20 // enough to cross the replenish threshold (tagWindowSize=10, threshold=5)
+	const msgsPerPair = 20 // enough to cross the replenish threshold (tagWindowMin=10, threshold=5)
 
 	done := make(chan struct{}, goroutines)
 
@@ -1969,7 +1969,7 @@ func TestReplenishTagWindowOutsideLock_DoesNotDeadlock(t *testing.T) {
 }
 
 // TestReplenishTagWindowOutsideLock_ReplenishesCorrectly verifies that after
-// consuming more than tagWindowSize messages the tag window is continuously
+// consuming more than tagWindowMin messages the tag window is continuously
 // replenished so that no decrypt attempt ever fails with "tag not found".
 // This is the functional regression test for the lock-split refactor.
 func TestReplenishTagWindowOutsideLock_ReplenishesCorrectly(t *testing.T) {
@@ -2309,7 +2309,7 @@ func TestTagCounterIndex_PopulatedOnSessionCreation(t *testing.T) {
 
 	assert.Equal(t, tagCount, counterCount,
 		"tagIndex and tagCounterIndex should have the same number of entries")
-	assert.Equal(t, tagWindowSize, tagCount,
+	assert.Equal(t, tagWindowMin, tagCount,
 		"tag window should be fully populated")
 }
 
@@ -2331,7 +2331,7 @@ func TestTagCounterIndex_CountersStartAtOne(t *testing.T) {
 	}
 
 	// All counters should be sequential starting from 0.
-	assert.Equal(t, tagWindowSize, len(counters))
+	assert.Equal(t, tagWindowMin, len(counters))
 	minCounter := uint32(0xFFFFFFFF)
 	for _, c := range counters {
 		if c < minCounter {
