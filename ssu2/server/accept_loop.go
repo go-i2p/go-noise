@@ -126,14 +126,20 @@ func (l *SSU2Listener) packetWorker() {
 //
 // Long-header messages record the netid they carried (wire.Deserialize), and
 // must equal our configured value; short-header messages have no netid field
-// and are left to their session keys and AEAD for authentication. Returns true
-// when the packet carries no netid at all, so a session created before this
-// field was populated is not spuriously dropped.
+// and are left to their session keys and AEAD for authentication.
+//
+// A long header that declares netid 0 is rejected, not excused: 0 is not a
+// network any deployment uses (main is 2), so accepting it would disable the
+// cross-network fast-reject that ssu2.md §"SessionRequest" -> §"Notes" assigns
+// to the field — "The network ID field is used to quickly identify
+// cross-network connections. If this field does not match Bob's network ID, Bob
+// should disconnect and block future connections."
 func (l *SSU2Listener) matchesNetworkID(packet *SSU2Packet) bool {
-	if packet.NetworkID == 0 {
+	got, ok := packet.RecordedNetworkID()
+	if !ok {
 		return true
 	}
-	return packet.NetworkID == l.networkID()
+	return got == l.networkID()
 }
 
 // handleIncomingPacket processes a received packet and routes it appropriately.
@@ -167,11 +173,12 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 	//
 	// The version half is enforced in wire.Deserialize (a format fact); the
 	// network ID is deployment policy, so it is compared here against this
-	// listener's configured value. Short-header messages carry no netid field.
+	// listener's configured value. Short-header messages carry no netid field,
+	// and a long header declaring netid 0 is dropped as a mismatch.
 	if !l.matchesNetworkID(packet) {
 		flog("handleIncomingPacket", logger.Fields{
 			"remote_addr": remoteAddr.String(),
-			"got_netid":   packet.NetworkID,
+			"got_netid":   packet.Header[14],
 			"our_netid":   l.networkID(),
 		}).Debug("dropping packet from a different I2P network")
 		return

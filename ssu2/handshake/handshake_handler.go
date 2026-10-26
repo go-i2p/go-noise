@@ -392,20 +392,22 @@ func (h *HandshakeHandler) NetworkID() uint8 {
 }
 
 // validateNetworkID rejects a long-header message whose recorded network ID
-// differs from ours. Short-header messages carry no network ID field, so the
-// wire layer leaves NetworkID zero; those are checked by the session's AEAD and
-// header-protection keys instead.
+// differs from ours — including a recorded 0, which is not a network any
+// deployment uses. Short-header messages carry no network ID field, so the wire
+// layer leaves NetworkID zero; those are checked by the session's AEAD and
+// header-protection keys instead. See SSU2Packet.CarriesNetworkID.
 func (h *HandshakeHandler) validateNetworkID(packet *SSU2Packet) error {
-	if packet.NetworkID == 0 || packet.NetworkID == h.NetworkID() {
+	got, ok := packet.RecordedNetworkID()
+	if !ok || got == h.NetworkID() {
 		return nil
 	}
 	return oops.
 		Code("WRONG_NETWORK_ID").
 		In("ssu2").
-		With("got", packet.NetworkID).
+		With("got", got).
 		With("expected", h.NetworkID()).
 		Errorf("packet network ID %d does not match ours %d; peer is on a different I2P network (proposal 147)",
-			packet.NetworkID, h.NetworkID())
+			got, h.NetworkID())
 }
 
 // PeerOptions returns the remote peer's Options parameters parsed during

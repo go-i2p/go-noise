@@ -241,6 +241,37 @@ func (p *SSU2Packet) GetHeaderSize() int {
 	return p.getHeaderSize()
 }
 
+// CarriesNetworkID reports whether this message's header contains the network
+// ID field at all.
+//
+// ssu2.md §"Header": the network ID is long-header byte 14, so only the
+// long-header types (Session Request, Session Created, Peer Test, Retry, Token
+// Request, Hole Punch) carry it. Session Confirmed and Data use the 16-byte
+// short header, which has no such field, and leave NetworkID zero.
+//
+// Callers must use this instead of testing NetworkID == 0 to mean "not
+// recorded": a long header that actually declares netid 0 is declaring a
+// network no deployment uses, and §"Header Validation" requires the receiver to
+// drop it — "If the version is != 2, or the netid is != the expected value
+// (generally 2, except in test networks), the receiver should drop the message."
+func (p *SSU2Packet) CarriesNetworkID() bool {
+	return p.getHeaderSize() == LongHeaderSize
+}
+
+// RecordedNetworkID returns the network ID the packet's header declares, and
+// whether a long header is present at all.
+//
+// This reads header byte 14 rather than the NetworkID field, because the field
+// is only stamped by Deserialize. A packet built in memory by a handshake
+// helper carries the value in its header but has not round-tripped through the
+// wire, and must not be mistaken for "no network ID".
+func (p *SSU2Packet) RecordedNetworkID() (uint8, bool) {
+	if !p.CarriesNetworkID() || len(p.Header) < LongHeaderSize {
+		return 0, false
+	}
+	return p.Header[14], true
+}
+
 // Serialize converts the packet to wire format for transmission.
 // The wire format is: Header || EphemeralKey? || Payload || MAC
 //

@@ -66,10 +66,15 @@ func (h *DataHandler) evictOldestFragment() {
 
 // handleFirstFragment processes the first fragment of a message.
 // SSU2 spec format: I2NP type(1) + messageID(4) + shortExpiration(4) + data
+//
+// The 9-byte I2NP header is mandatory and ssu2.md §"First Fragment" -> §"Notes"
+// adds "Partial message length must be greater than zero", so a 10-byte minimum
+// is enforced here — a zero-length body is a malformed fragment, not an empty
+// message.
 func (h *DataHandler) handleFirstFragment(data []byte) error {
-	if len(data) < 9 {
+	if len(data) < 10 {
 		h.incrementStat(&h.stats.MessagesDropped)
-		return oops.Errorf("first fragment too short: %d bytes, need at least 9", len(data))
+		return oops.Errorf("first fragment too short: %d bytes, need at least 10", len(data))
 	}
 
 	i2npType := data[0]
@@ -88,16 +93,12 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 			// Duplicate FirstFragment — ignore silently
 			return nil
 		}
-		// Populate missing metadata from this FirstFragment
+		// Populate missing metadata from this FirstFragment. Fragments[0] is
+		// reserved for this block: §"Follow-on Fragment" forbids fragment
+		// number 0, so no follow-on can have claimed it.
 		existing.I2NPType = i2npType
 		existing.ShortExpiration = shortExpiration
 		existing.HasFirst = true
-		// If an early FollowOnFragment with fragNum==0 arrived before this
-		// FirstFragment, its bytes were already counted in ReceivedSize.
-		// Subtract them before overwriting Fragments[0] to avoid double-counting.
-		if oldFrag, hadFrag0 := existing.Fragments[0]; hadFrag0 {
-			existing.ReceivedSize -= uint32(len(oldFrag))
-		}
 		existing.Fragments[0] = make([]byte, len(fragmentData))
 		copy(existing.Fragments[0], fragmentData)
 		existing.ReceivedSize += uint32(len(fragmentData))
@@ -147,6 +148,11 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 	return nil
 }
 
+// maxFollowOnFragmentNumber is the spec ceiling on the 7-bit fragment number.
+// ssu2.md §"Follow-on Fragment": "bits 7-1: fragment number 1 - 127 (0 not
+// allowed)".
+const maxFollowOnFragmentNumber = 127
+
 // handleFollowOnFragment processes subsequent fragments of a message.
 // SSU2 spec format: FragmentInfo(1) + MessageID(4) + Data
 // FragmentInfo: (fragNum << 1) | isLast
@@ -154,9 +160,9 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	flog("handleFollowOnFragment", logger.Fields{"dataLen": len(data)}).Debug("processing follow-on fragment")
 
 	// Early validation: ensure minimum frame size
-	if len(data) < 5 {
+	if len(data) < 6 {
 		h.incrementStat(&h.stats.MessagesDropped)
-		return oops.Errorf("follow-on fragment too short: %d bytes, need at least 5", len(data))
+		return oops.Errorf("follow-on fragment too short: %d bytes, need at least 6", len(data))
 	}
 
 	// Parse fragment header before acquiring lock
@@ -165,6 +171,30 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 	isLast := (fragInfo & 0x01) != 0
 	messageID := binary.BigEndian.Uint32(data[1:5])
 	fragmentData := data[5:]
+
+	// ssu2.md §"Follow-on Fragment": "bits 7-1: fragment number 1 - 127 (0 not
+	// allowed)". Fragment 0 is the First Fragment block's (type 4) job; a
+	// follow-on claiming number 0 would land in Fragments[0] and either shadow
+	// or overwrite the real first fragment's I2NP header-bearing body,
+	// corrupting reassembly. A compliant sender never does this, so the only
+	// senders who do are buggy or hostile — drop them.
+	if fragmentNum == 0 {
+		h.incrementStat(&h.stats.MessagesDropped)
+		return oops.
+			Code("FOLLOW_ON_FRAGMENT_NUMBER_ZERO").
+			In("ssu2").
+			With("message_id", messageID).
+			Errorf("follow-on fragment declares fragment number 0, which the spec does not allow")
+	}
+	if fragmentNum > maxFollowOnFragmentNumber {
+		h.incrementStat(&h.stats.MessagesDropped)
+		return oops.
+			Code("FOLLOW_ON_FRAGMENT_NUMBER_TOO_LARGE").
+			In("ssu2").
+			With("message_id", messageID).
+			With("fragment_number", fragmentNum).
+			Errorf("follow-on fragment number %d exceeds the maximum %d", fragmentNum, maxFollowOnFragmentNumber)
+	}
 
 	h.mutex.Lock()
 	defer h.mutex.Unlock()

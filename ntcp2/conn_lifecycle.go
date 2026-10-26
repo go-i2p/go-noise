@@ -68,13 +68,20 @@ var handshakeErrorCodes = map[string]bool{
 	// This should be an abnormal close (TCP RST)."
 	"MSG2_REPLAY": true,
 
-	// Timestamp failures are deliberately excluded. ntcp2.rst §"Clock Skew
-	// Guidelines" requires Bob to answer with a Session Created "even if the
-	// maximum skew is exceeded, rather than simply closing the connection. This
-	// allows Alice to get Bob's timestamp and calculate the skew." An immediate
-	// RST (SetLinger(0) + Close) can discard the Session Created that is still
-	// in flight, defeating the very purpose of sending it, so the skew path
-	// closes gracefully instead.
+	// Timestamp failures on message 2 are an abnormal close for the initiator.
+	// ntcp2.md §"2) SessionCreated" Notes: "On any error, including AEAD, DH,
+	// timestamp, apparent replay, or key validation failure, Alice must halt
+	// further message processing and close the connection without responding.
+	// This should be an abnormal close (TCP RST)."
+	"MSG2_CLOCK_SKEW": true,
+
+	// The message-1 timestamp failure (MSG1_CLOCK_SKEW) is deliberately NOT
+	// listed. ntcp2.rst §"Clock Skew Guidelines" requires Bob to answer with a
+	// Session Created "even if the maximum skew is exceeded, rather than simply
+	// closing the connection. This allows Alice to get Bob's timestamp and
+	// calculate the skew." An immediate RST (SetLinger(0) + Close) can discard
+	// the Session Created that is still in flight, defeating the very purpose
+	// of sending it, so the responder's skew path closes gracefully instead.
 
 	// Message-1 / message-2 field violations
 	"MSG1_NETID_MISMATCH":    true,

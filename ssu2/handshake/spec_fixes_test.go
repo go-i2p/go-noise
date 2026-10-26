@@ -75,12 +75,13 @@ func TestProcessSessionCreated_WrongSourceAddressIsDropped(t *testing.T) {
 // means "disconnect and block future connections".
 func TestProcessSessionCreated_WrongNetworkIDIsDropped(t *testing.T) {
 	initiator, responder, _, _ := setupHandshakePair(t)
+	// Both ends on the same test network so the handshake itself proceeds; the
+	// Session Created is then tampered with to declare a foreign netid.
 	initiator.SetNetworkID(7) // a test network
+	responder.SetNetworkID(7)
 
 	req, err := initiator.CreateSessionRequest(11111, 22222)
 	require.NoError(t, err)
-	// The initiator stamps its own network ID into the header; the responder
-	// echoes nothing, so build a Session Created carrying a foreign netid.
 	_, err = responder.ProcessSessionRequest(req)
 	require.NoError(t, err)
 	created, err := responder.CreateSessionCreated(22222, 11111)
@@ -90,6 +91,26 @@ func TestProcessSessionCreated_WrongNetworkIDIsDropped(t *testing.T) {
 
 	err = initiator.ProcessSessionCreated(created)
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "network ID")
+}
+
+// TestProcessSessionRequest_ZeroNetworkIDIsDropped covers ssu2.md
+// §"Header Validation": "If the version is != 2, or the netid is != the
+// expected value (generally 2, except in test networks), the receiver should
+// drop the message." A long header declaring netid 0 declares a network no
+// deployment uses, so it must be dropped rather than excused as "field not
+// populated".
+func TestProcessSessionRequest_ZeroNetworkIDIsDropped(t *testing.T) {
+	initiator, responder, _, _ := setupHandshakePair(t)
+
+	req, err := initiator.CreateSessionRequest(11111, 22222)
+	require.NoError(t, err)
+	require.Equal(t, uint8(MainNetworkID), req.Header[14])
+	req.Header[14] = 0
+	req.NetworkID = 0
+
+	_, err = responder.ProcessSessionRequest(req)
+	require.Error(t, err, "a long header declaring netid 0 must be dropped")
 	assert.Contains(t, err.Error(), "network ID")
 }
 
