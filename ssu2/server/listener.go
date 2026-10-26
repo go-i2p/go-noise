@@ -577,6 +577,13 @@ func (l *SSU2Listener) createSessionConnection(packet *SSU2Packet, remoteAddr *n
 	}
 
 	conn.SetReadsOwnSocket(false)
+	// Pin the routing/echo ID the listener chose for this session. It usually
+	// IS Alice's Session Request Destination Connection ID (the spec-mandated
+	// SessionCreated Source Connection ID echo), but responderConnID falls back
+	// to a fresh ID when Alice's is zero or already claimed by another session.
+	// Pinning keeps the wire echo and the demux key identical, so Alice's
+	// SessionConfirmed always lands on the session that answered it.
+	conn.SetResponderRoutingConnID(connID)
 	return conn, connID, nil
 }
 

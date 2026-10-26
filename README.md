@@ -196,6 +196,38 @@ Core Noise and NTCP2 implementations completed. SSU2 implementation in beta.
 The root package provides `net.Conn`, `net.Listener`, and `net.Addr` wrappers
 for the Noise Protocol Framework, used by I2P's NTCP2 transport.
 
+`Transport` is the entry point for dialing and listening. Each `Transport`
+owns its connection pool and shutdown manager, so separate parts of a program
+do not share (or race over) package-level state:
+
+```go
+transport := noise.NewTransport(pool.NewConnPool(cfg), noise.NewShutdownManager(30*time.Second))
+defer transport.GracefulShutdown()
+
+conn, err := transport.DialWithHandshake("tcp", "127.0.0.1:8080", config)
+```
+
+`WrapConn` / `WrapListener` remain for wrapping an already-established
+`net.Conn` / `net.Listener`. The former package-level `DialNoise*` /
+`ListenNoise*` functions and the shared `Default` transport have been removed;
+use a `Transport` method instead (the `examples/exampleutil` helpers show the
+pattern used by the example programs).
+
+#### NTCP2 note: `BobRouterHash` is the responder's hash
+
+`ntcp2.NewNTCP2Config(bobRouterHash, initiator)` takes **RH_B**, the
+*responder's* router hash. It is the AES key for the obfuscated ephemeral keys
+in handshake messages 1 and 2 (ntcp2.md §"1) SessionRequest": "AES encryption
+uses Bob's router hash as the key"; §"2) Created": same). For an initiator that
+is the **peer's** identity, not your own. Set `WithLocalRouterHash` to this
+side's own hash so `LocalAddr()` on a dialed connection reports your identity
+rather than the peer's.
+
+Configuration validation now rejects an initiator whose `BobRouterHash` is zero
+(`MISSING_BOB_ROUTER_HASH`, when AES obfuscation is enabled) or disagrees with
+`WithRemoteRouterHash` (`BOB_ROUTER_HASH_MISMATCH`) — both would otherwise
+obfuscate with a key no conformant peer can decrypt.
+
 ### `ratchet/` — ECIES-X25519-AEAD-Ratchet
 
 The [`ratchet`](ratchet/) package provides the ECIES-X25519-AEAD-Ratchet

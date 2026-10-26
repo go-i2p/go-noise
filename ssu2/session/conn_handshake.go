@@ -535,6 +535,19 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	}
 	h.remoteConnectionID.Store(initiatorConnID)
 
+	// Record the Destination Connection ID Alice generated for her Session
+	// Request (header bytes 0-7). ssu2.md §"Session Created" requires it to be
+	// echoed back as the SessionCreated Source Connection ID, and it is the ID
+	// Alice routes her Session Confirmed and data-phase packets to.
+	//
+	// A multiplexing listener that already pinned this session's routing ID
+	// (because Alice's destination ID was zero or claimed by another session)
+	// keeps its own value: echoing a colliding ID would make two sessions
+	// indistinguishable on the wire, which §"Connection ID Numbering" forbids.
+	if !h.responderConnIDPinned.Load() && len(sessionRequest.Header) >= 8 {
+		h.responderSourceConnID.Store(binary.BigEndian.Uint64(sessionRequest.Header[0:8]))
+	}
+
 	if err := h.installBothHeaderKeys(); err != nil {
 		return 0, err
 	}
@@ -542,8 +555,39 @@ func (h *SSU2Conn) receiveSessionRequest(ctx context.Context) (uint64, error) {
 	return initiatorConnID, nil
 }
 
-// createAndSendSessionCreated creates and sends a SessionCreated response,
-// installing the SessionConfirmed header key afterward.
+// responderEchoConnID returns the connection ID this responder identifies
+// itself with on the wire: the Destination Connection ID Alice put in the
+// Session Request we are answering, which ssu2.md §"Session Created" requires
+// us to echo as the SessionCreated Source Connection ID. It falls back to the
+// locally configured ID before a Session Request has been seen, or when the
+// learned value is not usable as a routing key (zero, or identical to Alice's
+// own source ID, which §"Connection ID Numbering" forbids).
+func (h *SSU2Conn) responderEchoConnID() uint64 {
+	if echo := h.responderSourceConnID.Load(); echo != 0 && echo != h.remoteConnectionID.Load() {
+		return echo
+	}
+	return h.config.ConnectionID
+}
+
+// SetResponderRoutingConnID pins the connection ID this responder uses as its
+// own identity on the wire -- both the SessionCreated Source Connection ID echo
+// (ssu2.md §"Session Created") and the key inbound packets are demultiplexed
+// by. A multiplexing listener calls this with the ID it chose for the session,
+// because Alice's Session Request Destination Connection ID may have been zero
+// or already claimed by another session; §"Connection ID Numbering" forbids two
+// live sessions sharing one ID, so the listener's choice must win over the value
+// read from the header.
+//
+// Call before the handshake runs. A zero ID is ignored, keeping the configured
+// value.
+func (h *SSU2Conn) SetResponderRoutingConnID(connID uint64) {
+	if connID == 0 {
+		return
+	}
+	h.responderSourceConnID.Store(connID)
+	h.responderConnIDPinned.Store(true)
+}
+
 // createAndSendSessionCreated creates and sends a SessionCreated response,
 // installing the SessionConfirmed header key afterward.
 func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Packet, error) {
@@ -568,7 +612,30 @@ func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Pac
 		h.handshakeHandler.SetPeerAddress(remote.IP, uint16(remote.Port))
 	}
 
-	sessionCreated, err := h.handshakeHandler.CreateSessionCreated(h.config.ConnectionID, initiatorConnID)
+	// ssu2.md §"Session Created" header table: "Source Connection ID :: The
+	// Destination Connection ID received from Alice in Session Request". The
+	// value on the wire is therefore Alice's Session Request destination ID
+	// (header bytes 0-7, captured in receiveSessionRequest), NOT our own
+	// locally configured connection ID. Java does the same:
+	// PacketBuilder2.buildSessionCreatedPacket() passes state.getRcvConnID()
+	// (read from the Session Request header at InboundEstablishState2:99) as
+	// the source ID.
+	//
+	// Alice enforces the echo: ssu2.md §"Session Created" -> §"Notes" says
+	// "Alice must drop the message if the Destination and Source Connection IDs
+	// do not match the Source and Destination Connection IDs of the Session
+	// Request", and our own initiator checks it in
+	// ssu2/handshake/session_created.go before MixHash. A responder that put its
+	// own ID there instead could not complete a handshake with any conformant
+	// peer, including i2pd and the Java router.
+	//
+	// The configured ID is used only when the echo is unusable: zero (not a
+	// valid routing key) or equal to Alice's source ID, which §"Connection ID
+	// Numbering" forbids ("Source and Destination IDs must NOT be identical").
+	// The listener path is unaffected: ssu2/server/listener.go adopts Alice's
+	// destination ID as the session's connection ID in the first place, so
+	// responderSourceConnID == config.ConnectionID there.
+	sessionCreated, err := h.handshakeHandler.CreateSessionCreated(h.responderEchoConnID(), initiatorConnID)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create SessionCreated")
 	}

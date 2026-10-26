@@ -176,7 +176,7 @@ func (h *SSU2Conn) LocalAddr() net.Addr {
 		if !h.initiator {
 			role = "responder"
 		}
-		addr, err := NewSSU2Addr(localUDPAddr, h.config.RouterHash, h.config.ConnectionID, role)
+		addr, err := NewSSU2Addr(localUDPAddr, h.config.RouterHash, h.responderEchoConnID(), role)
 		if err == nil {
 			return addr
 		}

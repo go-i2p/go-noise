@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"net"
 	"runtime"
 	"testing"
@@ -1694,4 +1695,166 @@ func testRouterInfoFor(t *testing.T, staticPub []byte) []byte {
 		ri = append(ri, 0x20)
 	}
 	return ri
+}
+
+// TestResponderSessionCreatedEchoesInitiatorDestConnID covers ssu2.md
+// §"Session Created" header table: "Source Connection ID :: The Destination
+// Connection ID received from Alice in Session Request". A directly-constructed
+// responder (not one created by SSU2Listener, which adopts Alice's destination
+// ID as its own connection ID) must put Alice's Session Request destination ID
+// in SessionCreated bytes 16-23 -- not its locally configured connection ID.
+// Alice enforces the echo (§"Notes": "Alice must drop the message if the
+// Destination and Source Connection IDs do not match the Source and Destination
+// Connection IDs of the Session Request"), so a responder that doesn't echo
+// cannot complete a handshake with a conformant peer.
+func TestResponderSessionCreatedEchoesInitiatorDestConnID(t *testing.T) {
+	const (
+		aliceSourceConnID = uint64(11111)
+		aliceDestConnID   = uint64(99999)
+		bobConfigConnID   = uint64(54321)
+	)
+
+	initDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	respDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+
+	config := createTestConfig(t)
+	config.ConnectionID = bobConfigConnID
+	config.StaticKey = respDH.Private
+
+	responderConn, err := NewSSU2Conn(
+		newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}),
+		&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5678},
+		config,
+		false,
+		respDH.Private,
+		nil,
+	)
+	require.NoError(t, err)
+	defer responderConn.Close()
+
+	initiatorHS, err := NewHandshakeHandlerWithKeys(true, initDH, respDH.Public, nil)
+	require.NoError(t, err)
+	requestPacket, err := initiatorHS.CreateSessionRequest(aliceSourceConnID, aliceDestConnID)
+	require.NoError(t, err)
+
+	responderConn.recvQueue <- requestPacket
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	initiatorConnID, err := responderConn.receiveSessionRequest(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, aliceSourceConnID, initiatorConnID)
+
+	created, err := responderConn.createAndSendSessionCreated(initiatorConnID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(created.Header), 24)
+
+	// bytes 0-7: Destination = Alice's source ID.
+	assert.Equal(t, aliceSourceConnID, binary.BigEndian.Uint64(created.Header[0:8]))
+	// bytes 16-23: Source = Alice's destination ID, echoed -- not bobConfigConnID.
+	assert.Equal(t, aliceDestConnID, binary.BigEndian.Uint64(created.Header[16:24]))
+	assert.NotEqual(t, bobConfigConnID, binary.BigEndian.Uint64(created.Header[16:24]))
+
+	// The responder's own address reports the same routing identity it put on
+	// the wire, so inbound demux and the echo cannot diverge.
+	assert.Equal(t, aliceDestConnID, responderConn.responderEchoConnID())
+}
+
+// TestResponderEchoConnIDFallback covers the two cases where Alice's Session
+// Request destination ID cannot be echoed: it is zero (not a usable routing
+// key) or it equals her own source ID, which ssu2.md §"Connection ID Numbering"
+// forbids ("Source and Destination IDs must NOT be identical"). The responder
+// falls back to its configured connection ID rather than emitting an illegal or
+// unroutable header. Both values are set directly because a conformant peer
+// never puts them on the wire: our own builder rejects the identical-ID case in
+// buildHandshakePacket, and ProcessSessionRequest rejects it before MixHash.
+func TestResponderEchoConnIDFallback(t *testing.T) {
+	respDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+
+	config := createTestConfig(t)
+	config.ConnectionID = 54321
+	config.StaticKey = respDH.Private
+
+	conn, err := NewSSU2Conn(
+		newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}),
+		&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5678},
+		config,
+		false,
+		respDH.Private,
+		nil,
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	// Before any Session Request: the configured ID stands.
+	assert.Equal(t, uint64(54321), conn.responderEchoConnID())
+
+	// Zero destination ID is not a usable routing key.
+	conn.remoteConnectionID.Store(11111)
+	conn.responderSourceConnID.Store(0)
+	assert.Equal(t, uint64(54321), conn.responderEchoConnID())
+
+	// A destination ID equal to Alice's source ID would violate §"Connection ID
+	// Numbering", so it is not echoed either.
+	conn.remoteConnectionID.Store(22222)
+	conn.responderSourceConnID.Store(22222)
+	assert.Equal(t, uint64(54321), conn.responderEchoConnID())
+
+	// A normal, usable destination ID is echoed.
+	conn.remoteConnectionID.Store(22222)
+	conn.responderSourceConnID.Store(33333)
+	assert.Equal(t, uint64(33333), conn.responderEchoConnID())
+}
+
+// TestSetResponderRoutingConnIDPinsEcho verifies that a multiplexing listener's
+// explicitly chosen routing ID wins over the value learned from the Session
+// Request header, so the wire echo and the demux key stay identical even when
+// the listener had to fall back to a fresh ID.
+func TestSetResponderRoutingConnIDPinsEcho(t *testing.T) {
+	initDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+	respDH, err := noise.DH25519.GenerateKeypair(nil)
+	require.NoError(t, err)
+
+	config := createTestConfig(t)
+	config.ConnectionID = 54321
+	config.StaticKey = respDH.Private
+
+	responderConn, err := NewSSU2Conn(
+		newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}),
+		&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5678},
+		config,
+		false,
+		respDH.Private,
+		nil,
+	)
+	require.NoError(t, err)
+	defer responderConn.Close()
+
+	const listenerChosen = uint64(77777)
+	responderConn.SetResponderRoutingConnID(listenerChosen)
+
+	initiatorHS, err := NewHandshakeHandlerWithKeys(true, initDH, respDH.Public, nil)
+	require.NoError(t, err)
+	requestPacket, err := initiatorHS.CreateSessionRequest(11111, 99999)
+	require.NoError(t, err)
+
+	responderConn.recvQueue <- requestPacket
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err = responderConn.receiveSessionRequest(ctx)
+	require.NoError(t, err)
+
+	// The pinned ID survives the header-derived value.
+	assert.Equal(t, listenerChosen, responderConn.responderEchoConnID())
+
+	created, err := responderConn.createAndSendSessionCreated(11111)
+	require.NoError(t, err)
+	assert.Equal(t, listenerChosen, binary.BigEndian.Uint64(created.Header[16:24]))
+
+	// A zero pin is ignored rather than producing an unroutable identity.
+	responderConn.SetResponderRoutingConnID(0)
+	assert.Equal(t, listenerChosen, responderConn.responderEchoConnID())
 }

@@ -221,6 +221,30 @@ type SSU2Conn struct {
 	// §"Connection ID Numbering"). Only meaningful on the initiator.
 	initiatorDestConnID uint64
 
+	// responderSourceConnID is the Destination Connection ID Alice put in the
+	// Session Request we are answering (header bytes 0-7), learned in
+	// receiveSessionRequest. ssu2.md §"Session Created" requires "Source
+	// Connection ID :: The Destination Connection ID received from Alice in
+	// Session Request", so SessionCreated bytes 16-23 MUST carry this value --
+	// not our own locally chosen connection ID. It is also the ID Alice routes
+	// her Session Confirmed and data-phase packets to, so it is adopted as this
+	// connection's inbound routing key.
+	//
+	// A multiplexing listener may pin a different value via
+	// SetResponderRoutingConnID when Alice's destination ID is already claimed
+	// by another session (ssu2.md §"Connection ID Numbering" forbids two
+	// sessions sharing an ID); the pinned value then wins, and the wire echo
+	// matches the demux key. Only meaningful on the responder.
+	//
+	// Stored atomically: it is written during the handshake goroutine and read
+	// from LocalAddr()/send paths on other goroutines.
+	responderSourceConnID atomic.Uint64
+
+	// responderConnIDPinned records that a listener chose this session's
+	// inbound routing/echo connection ID explicitly, so the value learned from
+	// the Session Request header must not override it.
+	responderConnIDPinned atomic.Bool
+
 	// Nonce rekeying: tracks whether a NextNonce block has been sent
 	// for the current send cipher. Reset after rekey completes.
 	rekeyInFlight atomic.Bool
