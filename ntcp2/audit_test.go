@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/crypto/curve25519"
+	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -435,19 +435,29 @@ func TestRouterInfoVerification_MismatchIsError(t *testing.T) {
 		staticPriv[i] = byte(i)
 	}
 
-	// Create RouterInfo bytes that do NOT contain the derived public key
-	// (in a real RouterInfo, the NTCP2 address would have `s=<base64pubkey>`)
-	riBytes := []byte("fake-router-info-without-matching-s-option")
+	// A real signed RouterInfo advertising a DIFFERENT key. Crafting one with a
+	// wrong `s=` option is now possible: the check parses the RouterInfo instead
+	// of substring-scanning it, so an unrelated blob is rejected as unparseable
+	// rather than as a key mismatch, and this test would no longer prove the
+	// mismatch path.
+	otherPriv := make([]byte, StaticKeySize)
+	otherPriv[0] = 0x42
+	otherPub := derivePubForTest(t, otherPriv)
+	riBytes := signedRouterInfoWithKey(t, otherPub)
 
-	// Verify that verifyLocalRouterInfoMatchesStaticKey returns an error
-	// when the key does not appear in the RouterInfo bytes
 	err := verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes)
-	assert.Error(t, err, "verifyLocalRouterInfoMatchesStaticKey should return error when key mismatches")
-	assert.Contains(t, err.Error(), "derived public key from live NTCP2 static private key does not appear",
+	require.Error(t, err, "a RouterInfo advertising another key must be rejected")
+	assert.Contains(t, err.Error(), "is not the one derived from the configured NTCP2 static private key",
 		"error message should indicate key mismatch")
 
-	// In the actual handshake code (performInitiatorHandshake), this error
-	// always aborts the handshake with ROUTER_INFO_KEY_MISMATCH.
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "ROUTER_INFO_KEY_MISMATCH", oopsErr.Code(),
+		"the mismatch must abort the handshake with the local-config code")
+
+	// A blob that is not a RouterInfo at all is rejected too.
+	err = verifyLocalRouterInfoMatchesStaticKey(staticPriv, []byte("fake-router-info-without-matching-s-option"))
+	assert.Error(t, err, "unparseable LocalRouterInfo must be rejected")
 }
 
 // TestRouterInfoVerification_MatchingKey verifies that when the
@@ -468,11 +478,8 @@ func TestRouterInfoVerification_MatchingKey(t *testing.T) {
 	require.NoError(t, err)
 	pub := pubKey.Bytes()
 
-	// Encode to base64 exactly as the code does (github.com/go-i2p/common/base64)
-	pubB64 := i2pbase64.EncodeToString(pub)
-
-	// Embed the base64 public key in fake RouterInfo bytes
-	riBytes := []byte("fake-router-info-ntcp2-address-s=" + pubB64 + "-end")
+	// Build a real signed RouterInfo advertising that public key.
+	riBytes := signedRouterInfoWithKey(t, pub)
 
 	// Verify that verifyLocalRouterInfoMatchesStaticKey returns nil (success)
 	err = verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes)
@@ -494,7 +501,9 @@ func TestVerifyLocalRouterInfo_EdgeCases(t *testing.T) {
 
 	// Case 2: Wrong-length static key (defensive path)
 	shortKey := make([]byte, 16)
-	riBytes := []byte("fake-router-info")
+	validPriv := make([]byte, StaticKeySize)
+	validPriv[0] = 0x08
+	riBytes := signedRouterInfoWithKey(t, derivePubForTest(t, validPriv))
 	err = verifyLocalRouterInfoMatchesStaticKey(shortKey, riBytes)
 	assert.NoError(t, err, "wrong-length static key should return nil (no check performed)")
 }
@@ -655,4 +664,14 @@ func TestMaxMsg2CleartextPaddingMatchesSpec(t *testing.T) {
 		"message 2 cleartext padding cap must be the spec's 848")
 	assert.Greater(t, MaxNTCP2HandshakePadding, maxMsg2CleartextPaddingBytes,
 		"message 1 allows more padding than message 2 per ntcp2.md lines 429/640")
+}
+
+// derivePubForTest derives the X25519 public key for a 32-byte private scalar.
+func derivePubForTest(t *testing.T, priv []byte) []byte {
+	t.Helper()
+	privKey, err := curve25519.NewCurve25519PrivateKey(priv)
+	require.NoError(t, err)
+	pubKey, err := privKey.Public()
+	require.NoError(t, err)
+	return pubKey.Bytes()
 }
