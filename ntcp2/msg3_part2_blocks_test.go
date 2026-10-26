@@ -20,8 +20,8 @@ func msg3Block(t byte, data []byte) []byte {
 // Router Info (required), Options (optional), Padding (optional)" and "must
 // never contain any other block type".
 func TestValidateMsg3Part2Blocks(t *testing.T) {
-	ri := msg3Block(routerInfoBlockType, make([]byte, 4))
-	opt := msg3Block(optionsBlockType, make([]byte, 4))
+	ri := msg3Block(RouterInfoBlockType, make([]byte, 4))
+	opt := msg3Block(OptionsBlockType, make([]byte, 4))
 	pad := msg3Block(PaddingBlockType, make([]byte, 4))
 	i2np := msg3Block(0x03, make([]byte, 4)) // forbidden type
 
@@ -65,7 +65,7 @@ func TestValidateMsg3Part2Blocks(t *testing.T) {
 func TestValidateMsg3Part2Blocks_TruncatedHeader(t *testing.T) {
 	// A valid RouterInfo block followed by a single stray byte (an incomplete
 	// header) must fail.
-	frame := append(msg3Block(routerInfoBlockType, make([]byte, 4)), 0xFF)
+	frame := append(msg3Block(RouterInfoBlockType, make([]byte, 4)), 0xFF)
 	if err := validateMsg3Part2Blocks(frame); err == nil {
 		t.Error("expected error for truncated block header, got nil")
 	}
@@ -76,7 +76,7 @@ func TestValidateMsg3Part2Blocks_TruncatedHeader(t *testing.T) {
 func TestValidateMsg3Part2Blocks_SizeOverrun(t *testing.T) {
 	// RouterInfo header claims 200 bytes but only 4 follow.
 	bad := make([]byte, BlockHeaderSize+4)
-	bad[0] = routerInfoBlockType
+	bad[0] = RouterInfoBlockType
 	binary.BigEndian.PutUint16(bad[1:3], 200)
 	if err := validateMsg3Part2Blocks(bad); err == nil {
 		t.Error("expected error for block size overrun, got nil")

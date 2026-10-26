@@ -325,7 +325,7 @@ const extraHandshakeProbeWindow = 10 * time.Millisecond
 //	 2) Options block (optional)
 //	 3) Padding block (optional)
 //	 This frame must never contain any other block type."
-var msg3Part2BlockOrder = []byte{routerInfoBlockType, optionsBlockType, PaddingBlockType}
+var msg3Part2BlockOrder = []byte{RouterInfoBlockType, OptionsBlockType, PaddingBlockType}
 
 // blockTypeRank returns the position of blockType in the message 3 part 2
 // ordering rules, or -1 when the type is not permitted in that frame.

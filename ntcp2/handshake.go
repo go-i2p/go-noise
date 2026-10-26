@@ -58,13 +58,6 @@ const (
 	// ntcp2OptionsSize is the fixed size of the options block in bytes.
 	ntcp2OptionsSize = 16
 
-	// routerInfoBlockType is the NTCP2 block type for RouterInfo (type 2).
-	routerInfoBlockType = 0x02
-
-	// optionsBlockType is the NTCP2 block type for Options (type 1), permitted
-	// in message 3 part 2 and in data-phase frames.
-	optionsBlockType = 0x01
-
 	// msg3OptionsSize is the size of the Options block data sent in message 3
 	// part 2: tmin(1) tmax(1) rmin(1) rmax(1) tdmy(2) rdmy(2) tdelay(2) rdelay(2).
 	// ntcp2.md §"Options": "size :: 2 bytes, big endian, size of options to
@@ -1200,7 +1193,7 @@ func randomNTCP2PaddingLength() (int, error) {
 //   - Zero-init provides defense-in-depth against partial-write bugs
 func buildMsg3Part2Payload(routerInfoBytes []byte) []byte {
 	payload := make([]byte, BlockHeaderSize+1+len(routerInfoBytes)+BlockHeaderSize+msg3OptionsSize)
-	payload[0] = routerInfoBlockType
+	payload[0] = RouterInfoBlockType
 	binary.BigEndian.PutUint16(payload[1:3], uint16(1+len(routerInfoBytes)))
 	payload[3] = 0x00 // flag byte: no flood request
 	copy(payload[4:], routerInfoBytes)
@@ -1208,7 +1201,7 @@ func buildMsg3Part2Payload(routerInfoBytes []byte) []byte {
 	// Options block (type 1) immediately after the RouterInfo block, per the
 	// §"SessionConfirmed" ordering (RouterInfo, Options, Padding).
 	off := BlockHeaderSize + 1 + len(routerInfoBytes)
-	payload[off] = optionsBlockType
+	payload[off] = OptionsBlockType
 	binary.BigEndian.PutUint16(payload[off+1:off+3], uint16(msg3OptionsSize))
 	copy(payload[off+3:], msg3Part2OptionsData())
 	return payload
@@ -1358,7 +1351,7 @@ func extractRouterInfoBlock(frame []byte) []byte {
 		if dataEnd > len(frame) {
 			return nil // malformed: declared size overruns the frame
 		}
-		if blockType == routerInfoBlockType {
+		if blockType == RouterInfoBlockType {
 			if blockSize < riFlag {
 				return nil
 			}

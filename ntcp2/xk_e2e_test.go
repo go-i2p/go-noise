@@ -64,7 +64,9 @@ func TestXKHandshake_NTCP2_FullE2E(t *testing.T) {
 	// SipHash is enabled by default — this is what we want to test.
 
 	// ── Step 4: Build NTCP2Config for initiator ───────────────────────
-	initiatorConfig, err := NewNTCP2Config(initiatorHash, true)
+	// Initiator: RH_B is the responder's hash (ntcp2.md Â§"1) SessionRequest"),
+	// not the initiator's own.
+	initiatorConfig, err := NewNTCP2Config(responderHash, true)
 	require.NoError(t, err, "create initiator NTCP2Config")
 
 	initiatorConfig = initiatorConfig.
@@ -457,7 +459,8 @@ func TestInboundRouterHash(t *testing.T) {
 	// know the initiator's identity ahead of time.
 
 	// --- Initiator config ---
-	initiatorConfig, err := NewNTCP2Config(initiatorHash, true)
+	// Initiator: RH_B is the responder's hash, not the initiator's own.
+	initiatorConfig, err := NewNTCP2Config(responderHash, true)
 	require.NoError(t, err)
 	initiatorConfig = initiatorConfig.
 		WithStaticKey(initiatorKP.Private).

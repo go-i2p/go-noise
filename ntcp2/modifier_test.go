@@ -584,7 +584,7 @@ func TestNTCP2PaddingModifier_ProductionFeatures(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("AEAD Frame Validation", func(t *testing.T) {
+	t.Run("AEAD Frame Round Trip", func(t *testing.T) {
 		modifier, err := newNTCP2TestModifier(t, "validation_test", 4, 8, true)
 		require.NoError(t, err)
 
@@ -592,13 +592,24 @@ func TestNTCP2PaddingModifier_ProductionFeatures(t *testing.T) {
 		i2npBlock := []byte{3, 0, 5, 1, 2, 3, 4, 5} // I2NP block type 3, size 5, data
 		padded, err := modifier.ModifyOutbound(handshake.PhaseData, i2npBlock)
 		require.NoError(t, err)
+		require.Greater(t, len(padded), len(i2npBlock), "outbound padding must be applied")
 
-		// Valid frame should pass validation
-		assert.True(t, modifier.ValidateAEADFrame(padded))
+		// The inbound path must strip exactly what the outbound path added,
+		// recovering the original block frame.
+		unpadded, err := modifier.ModifyInbound(handshake.PhaseData, padded)
+		require.NoError(t, err)
+		assert.Equal(t, i2npBlock, unpadded)
 
-		// Test invalid frames
-		assert.False(t, modifier.ValidateAEADFrame([]byte{254, 0}))           // Incomplete header
-		assert.False(t, modifier.ValidateAEADFrame([]byte{254, 0, 10, 1, 2})) // Size mismatch
+		// A truncated block header must be left untouched rather than panic or
+		// mis-parse.
+		truncated, err := modifier.ModifyInbound(handshake.PhaseData, []byte{254, 0})
+		require.NoError(t, err)
+		assert.Equal(t, []byte{254, 0}, truncated)
+
+		// A block whose declared size exceeds the frame must be left untouched.
+		sizeMismatch, err := modifier.ModifyInbound(handshake.PhaseData, []byte{254, 0, 10, 1, 2})
+		require.NoError(t, err)
+		assert.Equal(t, []byte{254, 0, 10, 1, 2}, sizeMismatch)
 	})
 
 	t.Run("Padding Size Estimation", func(t *testing.T) {
@@ -690,9 +701,13 @@ func TestNTCP2PaddingModifier_SecurityProperties(t *testing.T) {
 		// Should handle gracefully
 		assert.NotNil(t, result)
 
-		// Validation should catch multiple padding blocks
+		// A frame with two padding blocks is malformed: the trailing one is not
+		// a valid removal target, so the frame is returned unchanged for the
+		// block-ordering validator in the router transport layer to reject.
 		multiPadding := []byte{254, 0, 2, 1, 2, 254, 0, 2, 3, 4}
-		assert.False(t, modifier.ValidateAEADFrame(multiPadding))
+		result, err = modifier.ModifyInbound(handshake.PhaseData, multiPadding)
+		require.NoError(t, err)
+		assert.Equal(t, multiPadding, result)
 	})
 }
 
@@ -731,14 +746,12 @@ func TestNTCP2PaddingModifier_I2PCompliance(t *testing.T) {
 		padded, err := modifier.ModifyOutbound(handshake.PhaseData, i2npBlock)
 		require.NoError(t, err)
 
-		// Should append padding block after I2NP block
-		assert.True(t, modifier.ValidateAEADFrame(padded))
-
-		// Padding block should be last
-		lastBlockPos := len(i2npBlock)
-		if len(padded) > len(i2npBlock) {
-			assert.Equal(t, byte(254), padded[lastBlockPos])
-		}
+		// Should append a padding block after the I2NP block, and that padding
+		// block must be the last block in the frame (ntcp2.md §"Padding":
+		// "If there is a Padding block, it must be the last block in the frame").
+		require.Greater(t, len(padded), len(i2npBlock))
+		assert.Equal(t, byte(PaddingBlockType), padded[len(i2npBlock)],
+			"the appended block must be a Padding block (type 254)")
 
 		// Should be able to remove padding cleanly
 		recovered, err := modifier.ModifyInbound(handshake.PhaseData, padded)
@@ -1105,7 +1118,7 @@ func TestAuditFix_RemoveTrailingPaddingBlock_BoundedByMaxPadding(t *testing.T) {
 	data[len(payload)+1] = byte(paddingSize >> 8)
 	data[len(payload)+2] = byte(paddingSize)
 
-	result, err := modifier.removeAEADPadding(data)
+	result, err := modifier.ModifyInbound(handshake.PhaseData, data)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(data), len(result),
@@ -1125,7 +1138,7 @@ func TestAuditFix_RemoveTrailingPaddingBlock_WithinMaxPadding(t *testing.T) {
 	data[len(payload)+1] = 0
 	data[len(payload)+2] = byte(paddingSize)
 
-	result, err := modifier.removeAEADPadding(data)
+	result, err := modifier.ModifyInbound(handshake.PhaseData, data)
 	require.NoError(t, err)
 
 	assert.Equal(t, len(payload), len(result),
@@ -1160,38 +1173,6 @@ func buildI2PBlock(blockType byte, data []byte) []byte {
 // Forward block parsing is no longer used (it misparses raw data), so block
 // order violations are not detected at this layer — the trailing padding scan
 // simply finds no valid trailing padding block and returns the original data.
-func TestAuditFix_RemoveAEADPadding_BlocksAfterPaddingReturnsData(t *testing.T) {
-	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, false)
-	require.NoError(t, err)
-
-	// Build: [data_block][padding_block][data_block2] — padding is NOT last.
-	var buf []byte
-	buf = append(buf, buildI2PBlock(0x00, []byte("hello"))...)
-	buf = append(buf, buildI2PBlock(PaddingBlockType, []byte{0x00, 0x00})...)
-	buf = append(buf, buildI2PBlock(0x00, []byte("world"))...) // spec violation
-
-	result, err := modifier.removeAEADPadding(buf)
-	require.NoError(t, err, "trailing scan returns data unchanged when no trailing padding found")
-	assert.Equal(t, buf, result, "data should be returned unchanged")
-}
-
-// TestAuditFix_ParseBlockStructure_BlocksAfterPaddingDetected verifies that
-// parseBlockStructure sets blocksAfterPadding=true when any non-padding block
-// follows the first padding block.
-func TestAuditFix_ParseBlockStructure_BlocksAfterPaddingDetected(t *testing.T) {
-	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, false)
-	require.NoError(t, err)
-
-	// [data_block][padding_block][extra_data_block]
-	var buf []byte
-	buf = append(buf, buildI2PBlock(0x00, []byte("data"))...)
-	buf = append(buf, buildI2PBlock(PaddingBlockType, []byte{0x00})...)
-	buf = append(buf, buildI2PBlock(0x01, []byte{})...) // trailing non-padding block
-
-	result := modifier.parseBlockStructure(buf)
-	assert.True(t, result.foundValidBlocks, "blocks were parsed")
-	assert.True(t, result.blocksAfterPadding, "must detect data block following padding block")
-}
 
 // TestAuditFix_RemoveAEADPadding_CompliantOrderSucceeds verifies that a
 // spec-compliant payload ([data_block][padding_block]) is still processed
@@ -1205,7 +1186,7 @@ func TestAuditFix_RemoveAEADPadding_CompliantOrderSucceeds(t *testing.T) {
 	buf = append(buf, buildI2PBlock(0x00, dataContent)...)
 	buf = append(buf, buildI2PBlock(PaddingBlockType, []byte{0x00, 0x00, 0x00})...)
 
-	result, err := modifier.removeAEADPadding(buf)
+	result, err := modifier.ModifyInbound(handshake.PhaseData, buf)
 	require.NoError(t, err)
 	expected := buildI2PBlock(0x00, dataContent)
 	assert.Equal(t, expected, result, "data block must be preserved; padding block must be stripped")
@@ -1231,4 +1212,23 @@ func TestAuditFix_SipHashMask_StackAllocZero(t *testing.T) {
 
 	assert.Zero(t, outboundAllocs, "NextOutboundMask must not heap-allocate (uses stack [8]byte)")
 	assert.Zero(t, inboundAllocs, "NextInboundMask must not heap-allocate (uses stack [8]byte)")
+}
+
+// ntcp2.md §"Padding": "If there is a Padding block, it must be the last block
+// in the frame." A frame whose padding block is followed by more data is
+// malformed, so the inbound path must not strip anything from it — the router
+// transport layer's block-ordering validator is what rejects it.
+func TestPaddingModifier_DataBlockAfterPaddingIsNotStripped(t *testing.T) {
+	modifier, err := NewNTCP2PaddingModifier("test", 0, 64, true)
+	require.NoError(t, err)
+
+	// [data_block][padding_block][data_block2] — padding is NOT last.
+	var buf []byte
+	buf = append(buf, buildI2PBlock(0x00, []byte("hello"))...)
+	buf = append(buf, buildI2PBlock(PaddingBlockType, []byte{0x00, 0x00})...)
+	buf = append(buf, buildI2PBlock(0x00, []byte("world"))...)
+
+	result, err := modifier.ModifyInbound(handshake.PhaseData, buf)
+	require.NoError(t, err, "malformed frame must be returned, not errored")
+	assert.Equal(t, buf, result, "no padding may be removed from a frame ending in a data block")
 }

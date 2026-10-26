@@ -82,7 +82,11 @@ func RunLongRunningClient(addr, pattern string, clientID int, staticKey []byte) 
 	if staticKey != nil {
 		config = config.WithStaticKey(staticKey)
 	}
-	conn, err := noise.DialNoise("tcp", addr, config)
+	transport := NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	// SendPeriodicMessages writes immediately, so the handshake must be done.
+	conn, err := DialWithHandshake(transport, addr, config)
 	if err != nil {
 		log.Printf("Client %d connection failed: %v", clientID, err)
 		return

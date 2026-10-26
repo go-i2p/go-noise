@@ -26,7 +26,10 @@ func RunServer(args *CommonArgs, staticKey []byte, label string, handler func(ne
 		config = config.WithStaticKey(staticKey)
 	}
 
-	listener, err := noise.ListenNoise("tcp", args.ServerAddr, config)
+	transport := NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	listener, err := Listen(transport, args.ServerAddr, config)
 	if err != nil {
 		log.Fatalf("Failed to start %s server: %v", label, err)
 	}
@@ -68,7 +71,12 @@ func RunClient(args *CommonArgs, staticKey, remoteKey []byte, label string, post
 		config = config.WithRemoteKey(remoteKey)
 	}
 
-	conn, err := noise.DialNoise("tcp", args.ClientAddr, config)
+	transport := NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	// RunClient hands the connection to postConnect, which writes to it, so the
+	// handshake must already be done.
+	conn, err := DialWithHandshake(transport, args.ClientAddr, config)
 	if err != nil {
 		log.Fatalf("Failed to connect to server: %v", err)
 	}

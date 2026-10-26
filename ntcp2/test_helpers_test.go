@@ -195,9 +195,14 @@ func newTestInitiatorConfig(t *testing.T) (*Config, testCryptoMaterial) {
 
 // newTestInitiatorConfigFrom builds a fully-configured initiator NTCP2Config
 // from the given crypto material.
+//
+// An initiator is constructed with m.remoteHash, not m.routerHash: RH_B is the
+// responder's router hash, which is the AES ephemeral-key obfuscation key for
+// messages 1 and 2 (ntcp2.md §"1) SessionRequest"). It must therefore equal the
+// peer identity the initiator is dialing, i.e. RemoteRouterHash.
 func newTestInitiatorConfigFrom(t *testing.T, m testCryptoMaterial) *Config {
 	t.Helper()
-	config, err := NewNTCP2Config(m.routerHash, true)
+	config, err := NewNTCP2Config(m.remoteHash, true)
 	require.NoError(t, err)
 	config = config.
 		WithStaticKey(m.staticKey).
@@ -266,7 +271,10 @@ func newTestXKConfigPair(t *testing.T) testXKConfigPair {
 		WithStaticKey(responderKP.Private).
 		WithAESObfuscation(false, nil)
 
-	initiatorConfig, err := NewNTCP2Config(initiatorHash, true)
+	// RH_B is the RESPONDER's router hash and both sides use it as the AES
+	// ephemeral-key obfuscation key (ntcp2.md §1) SessionRequest / §2) Created),
+	// so an initiator must be constructed with the peer's hash, not its own.
+	initiatorConfig, err := NewNTCP2Config(responderHash, true)
 	require.NoError(t, err)
 	initiatorConfig = initiatorConfig.
 		WithStaticKey(initiatorKP.Private).

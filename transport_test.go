@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDialNoise(t *testing.T) {
+func TestTransportDial(t *testing.T) {
 	tests := []struct {
 		name        string
 		network     string
@@ -69,7 +69,10 @@ func TestDialNoise(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn, err := DialNoise(tt.network, tt.addr, tt.config)
+			transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+			defer transport.GracefulShutdown()
+
+			conn, err := transport.Dial(tt.network, tt.addr, tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -86,7 +89,7 @@ func TestDialNoise(t *testing.T) {
 	}
 }
 
-func TestListenNoise(t *testing.T) {
+func TestTransportListen(t *testing.T) {
 	tests := []struct {
 		name        string
 		network     string
@@ -140,7 +143,10 @@ func TestListenNoise(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			listener, err := ListenNoise(tt.network, tt.addr, tt.config)
+			transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+			defer transport.GracefulShutdown()
+
+			listener, err := transport.Listen(tt.network, tt.addr, tt.config)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -187,13 +193,16 @@ func TestWrapListener(t *testing.T) {
 }
 
 func TestTransportIntegration(t *testing.T) {
-	// Test that ListenNoise and DialNoise work together
+	// Test that Transport.Listen and Transport.Dial work together
 	listenerConfig := NewListenerConfig("XX").
 		WithStaticKey(generateTestKey()).
 		WithHandshakeTimeout(5 * time.Second)
 
+	transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+	defer transport.GracefulShutdown()
+
 	// Create a listener
-	listener, err := ListenNoise("tcp", "localhost:0", listenerConfig)
+	listener, err := transport.Listen("tcp", "localhost:0", listenerConfig)
 	require.NoError(t, err)
 	require.NotNil(t, listener)
 	defer listener.Close()
@@ -218,7 +227,10 @@ func TestTransportWithDifferentNetworks(t *testing.T) {
 				WithStaticKey(generateTestKey()).
 				WithHandshakeTimeout(5 * time.Second)
 
-			listener, err := ListenNoise(tt.network, "localhost:0", config)
+			transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+			defer transport.GracefulShutdown()
+
+			listener, err := transport.Listen(tt.network, "localhost:0", config)
 			if err != nil {
 				// Some networks might not be available (e.g., IPv6)
 				t.Skipf("Network %s not available: %v", tt.network, err)
@@ -236,13 +248,7 @@ func TestTransportWithDifferentNetworks(t *testing.T) {
 
 // Test functions for pool integration
 
-func TestDialNoiseWithPool(t *testing.T) {
-	// Save original pool and restore after test
-	originalPool := GetGlobalConnPool()
-	defer func() {
-		SetGlobalConnPool(originalPool)
-	}()
-
+func TestTransportDialWithPool(t *testing.T) {
 	// Create test pool
 	testPool := pool.NewConnPool(&pool.PoolConfig{
 		MaxSize: 5,
@@ -251,7 +257,8 @@ func TestDialNoiseWithPool(t *testing.T) {
 	})
 	defer testPool.Close()
 
-	SetGlobalConnPool(testPool)
+	transport := NewTransport(testPool, NewShutdownManager(5*time.Second))
+	defer transport.GracefulShutdown()
 
 	tests := []struct {
 		name    string
@@ -289,7 +296,7 @@ func TestDialNoiseWithPool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := DialNoiseWithPool(tt.network, tt.addr, tt.config)
+			_, err := transport.DialWithPool(tt.network, tt.addr, tt.config)
 
 			if tt.wantErr {
 				if err == nil {
@@ -313,28 +320,6 @@ func TestDialNoiseWithPool(t *testing.T) {
 	}
 }
 
-func TestSetGetGlobalConnPool(t *testing.T) {
-	// Save original pool and restore after test
-	originalPool := GetGlobalConnPool()
-	defer func() {
-		SetGlobalConnPool(originalPool)
-	}()
-
-	testPool := pool.NewConnPool(&pool.PoolConfig{
-		MaxSize: 3,
-		MaxAge:  time.Hour,
-		MaxIdle: time.Minute,
-	})
-	defer testPool.Close()
-
-	SetGlobalConnPool(testPool)
-
-	retrieved := GetGlobalConnPool()
-	if retrieved != testPool {
-		t.Error("SetGlobalConnPool/GetGlobalConnPool did not work correctly")
-	}
-}
-
 // Helper functions for testing
 
 func generateTestKey() []byte {
@@ -347,7 +332,7 @@ func generateTestKey() []byte {
 
 // Tests from transport_retry_test.go
 
-func TestDialNoiseWithHandshake(t *testing.T) {
+func TestTransportDialWithHandshake(t *testing.T) {
 	tests := []struct {
 		name        string
 		network     string
@@ -380,7 +365,10 @@ func TestDialNoiseWithHandshake(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := DialNoiseWithHandshake(tt.network, tt.addr, tt.config)
+			transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+			defer transport.GracefulShutdown()
+
+			_, err := transport.DialWithHandshake(tt.network, tt.addr, tt.config)
 
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error but got none")
@@ -393,13 +381,16 @@ func TestDialNoiseWithHandshake(t *testing.T) {
 	}
 }
 
-func TestDialNoiseWithHandshakeContext(t *testing.T) {
+func TestTransportDialWithHandshakeContext(t *testing.T) {
 	config := NewConnConfig("XX", true)
+
+	transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+	defer transport.GracefulShutdown()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
 
-	_, err := DialNoiseWithHandshakeContext(ctx, "tcp", "127.0.0.1:65535", config)
+	_, err := transport.DialWithHandshakeContext(ctx, "tcp", "127.0.0.1:65535", config)
 	if err == nil {
 		t.Errorf("Expected dial error for non-existent address")
 	}
@@ -463,7 +454,7 @@ func TestDialWithPoolAndHandshake_DiscardsBrokenConnectionOnFailure(t *testing.T
 	}
 }
 
-func TestDialNoiseWithPoolAndHandshake(t *testing.T) {
+func TestTransportDialWithPoolAndHandshake(t *testing.T) {
 	tests := []struct {
 		name        string
 		network     string
@@ -489,7 +480,10 @@ func TestDialNoiseWithPoolAndHandshake(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := DialNoiseWithPoolAndHandshake(tt.network, tt.addr, tt.config)
+			transport := NewTransport(nil, NewShutdownManager(5*time.Second))
+			defer transport.GracefulShutdown()
+
+			_, err := transport.DialWithPoolAndHandshake(tt.network, tt.addr, tt.config)
 
 			if tt.expectError && err == nil {
 				t.Errorf("Expected error but got none")
@@ -527,7 +521,7 @@ func (m *mockTransportConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // TestPutOnCloseWrapper verifies that closing a putOnCloseWrapper returns the
 // underlying connection to the pool (Put) instead of closing it to the OS.
-// This is the mechanism that makes DialNoiseWithPool return new connections to
+// This is the mechanism that makes Transport.DialWithPool return new connections to
 // the pool when the caller closes the NoiseConn.
 func TestPutOnCloseWrapper(t *testing.T) {
 	p := pool.NewConnPool(&pool.PoolConfig{

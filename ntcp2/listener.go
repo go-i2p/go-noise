@@ -160,6 +160,9 @@ func (nl *Listener) createResponderConnConfig() (*noise.ConnConfig, *Config, err
 // full RouterIdentity is available from msg3.
 func (nl *Listener) createRemoteNTCP2Addr(noiseConn *noise.NoiseConn) (*Addr, error) {
 	var remoteHash data.Hash
+	// resolved is true only when remoteHash is the peer's real router identity
+	// hash, not a stand-in derived from the static key.
+	resolved := false
 	remoteRouterHash := noiseConn.PeerStatic()
 	if len(remoteRouterHash) >= 32 {
 		// Hash the static key with SHA-256 rather than copying the raw bytes
@@ -167,11 +170,16 @@ func (nl *Listener) createRemoteNTCP2Addr(noiseConn *noise.NoiseConn) (*Addr, er
 		// 32-byte key verbatim which is not SHA-256(RouterIdentity).
 		remoteHash = data.HashData(remoteRouterHash[:32])
 	} else if cfg := nl.config.Load(); cfg != nil && cfg.RemoteRouterHash != nil {
+		// Explicitly configured: this is the real router hash we expected.
 		remoteHash = *cfg.RemoteRouterHash
+		resolved = true
 	}
 	// else remoteHash stays zero value
 
-	remoteAddr, err := NewNTCP2Addr(noiseConn.RemoteAddr(), remoteHash, "initiator")
+	// The hash derived from the peer's static key is a placeholder, not RH_A:
+	// the real router identity hash only becomes available once the transport
+	// layer parses the RouterInfo from message 3.
+	remoteAddr, err := NewNTCP2AddrResolved(noiseConn.RemoteAddr(), remoteHash, "initiator", resolved)
 	if err != nil {
 		return nil, oops.
 			Code("REMOTE_ADDR_FAILED").

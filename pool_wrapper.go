@@ -9,7 +9,7 @@ import (
 
 // putOnCloseWrapper wraps a freshly-dialed net.Conn so that its Close() call
 // returns the connection to the pool for reuse rather than closing it to the OS.
-// This is used by DialNoiseWithPool for new (non-pool-retrieved) connections.
+// This is used by Transport.DialWithPool for new (non-pool-retrieved) connections.
 type putOnCloseWrapper struct {
 	net.Conn
 	p    pool.Pool

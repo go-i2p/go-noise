@@ -72,7 +72,10 @@ func runEchoClient(args *exampleutil.CommonArgs, staticKey, remoteKey []byte) {
 	config := createClientConfig(args, staticKey, remoteKey)
 
 	// Establish connection
-	conn := establishConnection(args.ClientAddr, config)
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	conn := establishConnection(transport, args.ClientAddr, config)
 	defer conn.Close()
 
 	// Perform handshake
@@ -111,9 +114,10 @@ func applyOptionalKeys(config *noise.ConnConfig, staticKey, remoteKey []byte) *n
 	return config
 }
 
-// establishConnection creates and returns a connection to the server
-func establishConnection(serverAddr string, config *noise.ConnConfig) *noise.NoiseConn {
-	conn, err := noise.DialNoise("tcp", serverAddr, config)
+// establishConnection creates and returns a connection to the server. The
+// handshake is performed separately by performHandshake, so this only dials.
+func establishConnection(transport *noise.Transport, serverAddr string, config *noise.ConnConfig) *noise.NoiseConn {
+	conn, err := exampleutil.Dial(transport, serverAddr, config)
 	if err != nil {
 		log.Fatalf("Failed to connect to server: %v", err)
 	}

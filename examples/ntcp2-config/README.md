@@ -17,7 +17,11 @@ The `NTCP2Config` is a configuration system that:
 ### 1. Builder Pattern Configuration
 
 ```go
-config, err := ntcp2.NewNTCP2Config(routerHash, true) // true = initiator
+// The first argument is RH_B: the RESPONDER's router hash, which both sides
+// use as the AES key that obfuscates the ephemeral keys in messages 1 and 2.
+// An initiator therefore passes the PEER's hash (and it must equal
+// RemoteRouterHash); a responder passes its own.
+config, err := ntcp2.NewNTCP2Config(remoteHash, true) // true = initiator
 if err != nil {
     log.Fatal(err)
 }
@@ -25,6 +29,7 @@ if err != nil {
 config = config.
     WithStaticKey(staticKey).
     WithRemoteRouterHash(remoteHash).
+    WithLocalRouterHash(localHash). // our own identity, for LocalAddr()
     WithHandshakeTimeout(45 * time.Second).
     WithHandshakeRetries(5).
     WithRetryBackoff(2 * time.Second)
@@ -114,7 +119,10 @@ listener, err := ntcp2.NewNTCP2Listener(tcpListener, config)
 ### Advanced Initiator (Client)
 
 ```go
-config, err := ntcp2.NewNTCP2Config(localRouterHash, true)
+// For an initiator the constructor argument is the peer's hash (RH_B), not our
+// own. Our identity goes in WithLocalRouterHash so LocalAddr() is labelled
+// correctly.
+config, err := ntcp2.NewNTCP2Config(remoteRouterHash, true)
 if err != nil {
     return err
 }
@@ -122,6 +130,7 @@ if err != nil {
 config = config.
     WithStaticKey(staticKey).
     WithRemoteRouterHash(remoteRouterHash).
+    WithLocalRouterHash(localRouterHash).
     WithHandshakeRetries(5).
     WithFrameSettings(32768, true, 32, 256)
 

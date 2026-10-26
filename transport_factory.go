@@ -16,7 +16,7 @@ type shutdownRegisterer interface {
 
 // wrapTransportError creates a contextual error with transport metadata.
 // This consolidates the repeated oops error wrapping pattern used by
-// DialNoise and ListenNoise.
+// Transport.Dial and Transport.Listen.
 func wrapTransportError(code, network, addr, msg string, err error, args ...interface{}) error {
 	return oops.
 		Code(code).
@@ -63,7 +63,7 @@ func openAndWrapTransport[R shutdownRegisterer](
 // connection fails.
 //
 // Note: net.Dial has no timeout. A caller using the non-context variants
-// (Dial, DialWithPool, DialNoise, DialNoiseWithPool) that route through this
+// (Dial, DialWithPool) that route through this
 // function can block indefinitely if the peer never responds to the TCP
 // handshake (for example, a firewall silently drops SYN packets). Callers
 // that need a bounded connect time should use the *Context variants
@@ -131,33 +131,4 @@ func createNoiseListener(listener net.Listener, config *ListenerConfig, network,
 			"failed to create noise listener", err)
 	}
 	return noiseListener, nil
-}
-
-// tryGetPooledConn attempts to retrieve a connection to addr from the
-// Default Transport's pool. It returns the connection and a boolean
-// indicating whether it came from the pool.
-func tryGetPooledConn(addr string) (net.Conn, bool) {
-	dt := getDefault()
-	dt.mu.RLock()
-	p := dt.pool
-	dt.mu.RUnlock()
-	if p != nil {
-		conn := p.Get(addr)
-		if conn != nil {
-			return conn, true
-		}
-	}
-	return nil, false
-}
-
-// createAndHandshakeConn creates a NoiseConn and performs the handshake with
-// retry logic. On error, the function closes conn (directly or via
-// noiseConn.Close), so the caller must NOT close conn when an error is
-// returned.
-//
-// It delegates to the Default Transport's createAndHandshakeConnTransport to
-// avoid duplicating the wrap-then-handshake logic.
-func createAndHandshakeConn(ctx context.Context, conn net.Conn, config *ConnConfig, network, addr string) (*NoiseConn, error) {
-	sm := GetGlobalShutdownManager()
-	return getDefault().createAndHandshakeConnTransport(ctx, conn, config, network, addr, sm)
 }

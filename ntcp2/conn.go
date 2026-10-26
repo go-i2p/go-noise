@@ -94,12 +94,12 @@ type Conn struct {
 	underlyingClosed atomic.Bool
 
 	// writeNonce tracks the number of frames written (data-phase encrypt operations).
-	// The connection MUST be terminated before this reaches MaxNonce (2^64-2).
-	// Only accessed under writeMu.
+	// The connection MUST be terminated after this reaches MaxNonce (2^64-2);
+	// the message sent AT MaxNonce is still legal. Only accessed under writeMu.
 	writeNonce uint64
 
 	// readNonce tracks the number of frames read (data-phase decrypt operations).
-	// The connection MUST be terminated before this reaches MaxNonce (2^64-2).
+	// The connection MUST be terminated after this reaches MaxNonce (2^64-2).
 	// Only accessed under readMu.
 	readNonce uint64
 
@@ -424,8 +424,12 @@ func (nc *Conn) PropagatePeerStaticKey() error {
 	// SHA-256(static_key) as the placeholder is consistent with how the
 	// SSU2 listener builds its placeholder hash and is a closer analogue
 	// to the I2P router-hash definition.
+	//
+	// It is still a placeholder, not RH_A: store it via
+	// SetPlaceholderRouterHash so RouterHashResolved() keeps reporting false
+	// until the transport layer supplies the real RouterIdentity hash.
 	hash := data.HashData(peerKey)
-	nc.remoteAddr.SetRouterHash(hash)
+	nc.remoteAddr.SetPlaceholderRouterHash(hash)
 	return nil
 }
 
@@ -518,7 +522,7 @@ func (nc *Conn) PeerRouterInfoBytes() []byte {
 		if dataEnd > len(payload) {
 			return nil // malformed: declared size overruns payload
 		}
-		if blockType == routerInfoBlockType {
+		if blockType == RouterInfoBlockType {
 			if blockSize < riFlag {
 				return nil
 			}

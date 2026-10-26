@@ -29,13 +29,16 @@ const (
 	// the real size of a message.
 	PaddingBlockType = 254
 
-	// Data-phase block type numbers.
+	// Data-phase block type numbers. This is the complete set the spec
+	// enumerates; the package emits RouterInfo, Options, Termination and
+	// Padding, and the router transport layer parses the rest.
 	// ntcp2.md §"4) Data Phase" / §"Unencrypted data": "blk :: 0 (datetime),
 	// 1 (options), 2 (RouterInfo), 3 (I2NP), 4 (termination), 254 (padding)".
 	// Reference: i2pd libi2pd/NTCP2.h enum NTCP2BlockTypes (eNTCP2BlkDateTime
 	// = 0 … eNTCP2BlkTermination = 4, eNTCP2BlkPadding = 254).
 	DateTimeBlockType    = 0
-	OptionsBlockTypeSpec = 1
+	OptionsBlockType     = 1
+	RouterInfoBlockType  = 2
 	I2NPBlockType        = 3
 	TerminationBlockType = 4
 

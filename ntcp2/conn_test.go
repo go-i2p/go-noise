@@ -637,25 +637,48 @@ func TestReadFramed_BufferRemainder(t *testing.T) {
 // Tests from audit_fixes_4_test.go — conn-related
 // ============================================================================
 
-func TestAuditFix_NonceExhaustion_WriteRejectsAtMaxNonce(t *testing.T) {
+// ntcp2.md §"Cipher states": "Maximum value is 2**64 - 2. … The value 2**64 - 1
+// must never be sent." nonce == MaxNonce is therefore the LAST legal message, not
+// the first rejected one. Only a nonce above MaxNonce may not be sent.
+func TestAuditFix_NonceExhaustion_WriteRejectsAboveMaxNonce(t *testing.T) {
 	conn := createTestNTCP2ConnWithSLM(t)
 
-	conn.writeNonce = MaxNonce
+	conn.writeNonce = MaxNonce + 1
 
 	_, err := conn.Write([]byte("hello"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonce exhausted")
 }
 
-func TestAuditFix_NonceExhaustion_ReadRejectsAtMaxNonce(t *testing.T) {
+func TestAuditFix_NonceExhaustion_ReadRejectsAboveMaxNonce(t *testing.T) {
 	conn := createTestNTCP2ConnWithSLM(t)
 
-	conn.readNonce = MaxNonce
+	conn.readNonce = MaxNonce + 1
 
 	buf := make([]byte, 64)
 	_, err := conn.Read(buf)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nonce exhausted")
+}
+
+// The message AT nonce == MaxNonce must still be allowed through, and the
+// connection must not be marked broken by the guard. Exercised through
+// guardNonce directly: driving Write/Read would proceed past the guard into a
+// real (blocking) frame exchange, which is the intended behavior but not what
+// this assertion is about.
+func TestNonce_MaxAtLimitIsLegalMessage(t *testing.T) {
+	conn := createTestNTCP2ConnWithSLM(t)
+
+	require.NoError(t, conn.guardNonce(MaxNonce, "write"),
+		"nonce == MaxNonce (2**64-2) is the last legal nonce and must not be rejected")
+	require.NoError(t, conn.guardNonce(MaxNonce, "read"))
+	assert.False(t, conn.broken.Load(), "the last legal nonce must not mark the connection broken")
+
+	// One past the ceiling is the first rejected nonce.
+	err := conn.guardNonce(MaxNonce+1, "write")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nonce exhausted")
+	assert.True(t, conn.broken.Load())
 }
 
 func TestAuditFix_NonceExhaustion_BelowMaxNonceAllowed(t *testing.T) {
@@ -892,7 +915,7 @@ func TestAuditFix_BrokenAndNonceExhausted_BrokenTakesPriority(t *testing.T) {
 func TestAuditFix_NonceExhaustionError_ContainsCode(t *testing.T) {
 	conn := createTestNTCP2ConnWithSLM(t)
 
-	conn.writeNonce = MaxNonce
+	conn.writeNonce = MaxNonce + 1
 
 	_, err := conn.Write([]byte("hello"))
 	require.Error(t, err)
@@ -938,7 +961,7 @@ func TestAuditFix_NonceExhaustion_ReadMarksBroken(t *testing.T) {
 	p := newPipedNTCP2Conn(t)
 	p.withSipHash([2]uint64{1, 2})
 
-	p.conn.readNonce = MaxNonce
+	p.conn.readNonce = MaxNonce + 1
 
 	buf := make([]byte, 64)
 	p.conn.readMu.Lock()
@@ -953,7 +976,7 @@ func TestAuditFix_NonceExhaustion_WriteMarksBroken(t *testing.T) {
 	p := newPipedNTCP2Conn(t)
 	p.withSipHash([2]uint64{1, 2})
 
-	p.conn.writeNonce = MaxNonce
+	p.conn.writeNonce = MaxNonce + 1
 
 	_, err := p.conn.writeSingleFrame([]byte("hello"))
 	assert.Error(t, err)

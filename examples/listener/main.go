@@ -205,7 +205,11 @@ func connectSimulatedClient(serverAddr, pattern string, serverKey []byte) (*nois
 		clientConfig = clientConfig.WithStaticKey(serverKey)
 	}
 
-	conn, err := noise.DialNoise("tcp", serverAddr, clientConfig)
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	// The handshake is performed below on the returned conn, so dial only.
+	conn, err := exampleutil.Dial(transport, serverAddr, clientConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}

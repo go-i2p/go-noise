@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,7 +66,8 @@ func TestNewNTCP2ConfigWithInitiator(t *testing.T) {
 func TestNTCP2ConfigBuilderMethods(t *testing.T) {
 	m := newTestCryptoMaterial(t)
 
-	config, err := NewNTCP2Config(m.routerHash, true)
+	// Initiator: RH_B is the peer's hash, so it is built from m.remoteHash.
+	config, err := NewNTCP2Config(m.remoteHash, true)
 	require.NoError(t, err)
 
 	// Test all builder methods
@@ -476,10 +478,11 @@ func TestAudit_ConfigUsesXKPattern(t *testing.T) {
 	assert.Equal(t, "XK", NTCP2Pattern)
 
 	validKey := make([]byte, 32)
-	rh := generateRandomHash()
+	// For an initiator RH_B is the peer's hash, so RemoteRouterHash must be the
+	// same value the config was constructed with.
 	config = config.
 		WithStaticKey(validKey).
-		WithRemoteRouterHash(rh).
+		WithRemoteRouterHash(config.BobRouterHash).
 		WithRemoteStaticKey(make([]byte, 32)).
 		WithAESObfuscation(true, make([]byte, 16))
 	connConfig, err2 := config.ToConnConfig()
@@ -585,13 +588,86 @@ func TestAuditFix_BobRouterHash_FieldRenamed(t *testing.T) {
 }
 
 func TestAuditFix_BobRouterHash_ValidationWorks(t *testing.T) {
-	// data.Hash is [32]byte, so invalid-length router hash is no longer possible
-	// Verify that a zero hash still creates a valid config
+	// data.Hash is [32]byte, so invalid-length router hash is no longer possible.
+	// A zero hash is a syntactically valid AES key, so it must be caught here:
+	// RH_B is the AES key for the obfuscated ephemeral keys in messages 1 and 2
+	// (ntcp2.md §"1) SessionRequest"), and an all-zero RH_B means the config has
+	// no peer identity at all.
 	config, err := NewNTCP2Config(data.Hash{}, false)
 	require.NoError(t, err)
 
 	err = config.Validate()
-	assert.NoError(t, err)
+	require.Error(t, err, "zero BobRouterHash with AES obfuscation enabled must be rejected")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "MISSING_BOB_ROUTER_HASH", oopsErr.Code())
+
+	// With AES obfuscation turned off the hash is unused, so a zero value is fine.
+	config = config.WithAESObfuscation(false, nil)
+	require.NoError(t, config.Validate())
+}
+
+// An initiator must be configured with the PEER's router hash as RH_B. If it
+// also sets RemoteRouterHash, the two are the same value reached by different
+// paths; a mismatch means one of them was wired up from the wrong peer, which
+// would obfuscate the ephemeral keys with a key that does not match the identity
+// being connected to.
+func TestConfig_InitiatorBobRouterHashMustMatchRemote(t *testing.T) {
+	peerHash := generateRandomHash()
+	otherHash := generateRandomHash()
+
+	config, err := NewNTCP2Config(peerHash, true)
+	require.NoError(t, err)
+	config = config.
+		WithStaticKey(make([]byte, 32)).
+		WithRemoteRouterHash(peerHash).
+		WithRemoteStaticKey(make([]byte, 32)).
+		WithAESObfuscation(true, make([]byte, 16))
+	require.NoError(t, config.Validate(), "matching RH_B and RemoteRouterHash must validate")
+
+	mismatched := config.WithRemoteRouterHash(otherHash)
+	err = mismatched.Validate()
+	require.Error(t, err, "RH_B != RemoteRouterHash on an initiator must be rejected")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "BOB_ROUTER_HASH_MISMATCH", oopsErr.Code())
+
+	// A responder legitimately has no RemoteRouterHash, and its RH_B is its own
+	// hash, so the equality rule must not apply to it.
+	responder, err := NewNTCP2Config(peerHash, false)
+	require.NoError(t, err)
+	responder = responder.
+		WithStaticKey(make([]byte, 32)).
+		WithRemoteRouterHash(otherHash).
+		WithAESObfuscation(true, make([]byte, 16))
+	require.NoError(t, responder.Validate(),
+		"responder RH_B is its own hash and need not equal RemoteRouterHash")
+}
+
+func TestConfig_LocalRouterHashForDialedAddr(t *testing.T) {
+	peerHash := generateRandomHash()
+	ourHash := generateRandomHash()
+
+	config, err := NewNTCP2Config(peerHash, true)
+	require.NoError(t, err)
+
+	// For an initiator BobRouterHash is the peer's hash, so the local address
+	// must come from LocalRouterHash instead — never from BobRouterHash.
+	assert.True(t, config.localRouterHash().IsZero(),
+		"unset LocalRouterHash yields a zero local hash, not the peer's")
+	assert.NotEqual(t, peerHash, config.localRouterHash(),
+		"an initiator's local hash must not be the peer's RH_B")
+
+	config = config.WithLocalRouterHash(ourHash)
+	assert.Equal(t, ourHash, config.localRouterHash())
+
+	// For a responder RH_B is its own identity, so localRouterHash is BobRouterHash.
+	responder, err := NewNTCP2Config(ourHash, false)
+	require.NoError(t, err)
+	assert.Equal(t, ourHash, responder.localRouterHash())
+
+	// Clone must carry the local hash over.
+	assert.Equal(t, ourHash, config.Clone().LocalRouterHash)
 }
 
 func TestAuditFix_BobRouterHash_DefensiveCopy(t *testing.T) {
@@ -928,14 +1004,13 @@ func TestClone_ValueFieldIndependence(t *testing.T) {
 // remote static key, and AES obfuscation).
 func newSipHashTestConfig(t *testing.T) *Config {
 	t.Helper()
-	var routerHash data.Hash
-	copy(routerHash[:], "test-router-hash-32-bytes-long!")
-
-	config, err := NewNTCP2Config(routerHash, true)
-	require.NoError(t, err)
-
 	var remoteHash data.Hash
 	copy(remoteHash[:], "remote-hash-32-bytes-long!!!!!")
+
+	// Initiator: RH_B is the peer's router hash, so it is built from remoteHash.
+	config, err := NewNTCP2Config(remoteHash, true)
+	require.NoError(t, err)
+
 	config.RemoteRouterHash = &remoteHash
 	config.StaticKey = make([]byte, 32)
 	copy(config.StaticKey, "static-key-32-bytes-long!!!!!!!")
@@ -1027,11 +1102,12 @@ func TestNTCP2ConfigAcceptsValidModifiers(t *testing.T) {
 // rejects LocalRouterInfo that is too large to fit in the uint16 m3p2Len field
 // without overflow. This test addresses the MEDIUM-severity finding.
 func TestNTCP2ConfigValidatesOversizedRouterInfo(t *testing.T) {
-	routerHash := generateRandomHash()
-	config, err := NewNTCP2Config(routerHash, true)
+	m := newTestCryptoMaterial(t)
+	// Initiator: RH_B is the peer's hash, so build from m.remoteHash and set
+	// RemoteRouterHash to the same value.
+	config, err := NewNTCP2Config(m.remoteHash, true)
 	require.NoError(t, err)
 
-	m := newTestCryptoMaterial(t)
 	config.WithStaticKey(m.staticKey).
 		WithRemoteRouterHash(m.remoteHash).
 		WithRemoteStaticKey(generateRandomBytes(32))

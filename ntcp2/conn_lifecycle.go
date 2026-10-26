@@ -10,11 +10,17 @@ import (
 	"github.com/samber/oops"
 )
 
-// guardNonce rejects read or write operations when the nonce counter has
-// reached MaxNonce. Per the spec: "Connection must be dropped and restarted
-// after it reaches that value." direction should be "read" or "write".
+// guardNonce rejects read or write operations once the nonce counter has passed
+// MaxNonce. Direction should be "read" or "write".
+//
+// ntcp2.md §"Cipher states" (line 105): "Maximum value is 2**64 - 2. … The value
+// 2**64 - 1 must never be sent." So nonce == MaxNonce is still a legal message;
+// only a nonce ABOVE it must be refused. The comparison is therefore `>`, which
+// also matches the underlying library (go-i2p/noise cipher_state.go: "if s.n >
+// MaxNonce { return nil, ErrMaxNonce }") and the spec's "Connection must be
+// dropped and restarted after it reaches that value" — "after", not "at".
 func (nc *Conn) guardNonce(nonce uint64, direction string) error {
-	if nonce >= MaxNonce {
+	if nonce > MaxNonce {
 		nc.broken.Store(true)
 		flog("NTCP2Conn.guardNonce", logger.Fields{direction + "_nonce": nonce}).Error(direction + " nonce exhausted, connection must be terminated")
 		return oops.

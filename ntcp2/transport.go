@@ -331,10 +331,14 @@ func createDialAddresses(conn net.Conn, config *Config) (*Addr, *Addr, error) {
 		remoteRole = "initiator"
 	}
 
-	// Create local address from connection's local address
+	// Create local address from connection's local address.
+	//
+	// This must be OUR router hash, not BobRouterHash: for an initiator
+	// BobRouterHash is the peer's hash (it is the RH_B AES key), so using it
+	// here would label our own address with the remote identity.
 	localAddr, err := NewNTCP2Addr(
 		conn.LocalAddr(),
-		config.BobRouterHash,
+		config.localRouterHash(),
 		localRole,
 	)
 	if err != nil {
@@ -354,14 +358,17 @@ func createDialAddresses(conn net.Conn, config *Config) (*Addr, *Addr, error) {
 	// completes and PeerStaticKey() is available. Use a placeholder zero
 	// hash in that case.
 	var remoteHash data.Hash
+	remoteResolved := false
 	if config.RemoteRouterHash != nil {
 		remoteHash = *config.RemoteRouterHash
+		remoteResolved = true
 	}
 
-	remoteAddr, err := NewNTCP2Addr(
+	remoteAddr, err := NewNTCP2AddrResolved(
 		conn.RemoteAddr(),
 		remoteHash,
 		remoteRole,
+		remoteResolved,
 	)
 	if err != nil {
 		return nil, nil, oops.

@@ -41,11 +41,11 @@ func TestDialNTCP2(t *testing.T) {
 		{
 			name: "successful dial with valid config",
 			setupConfig: func() *Config {
-				routerHash := generateRandomHash()
+				// Initiator: RH_B is the peer's hash, so the config is built from remoteHash.
 				remoteHash := generateRandomHash()
 				staticKey := generateRandomBytes(32)
 
-				config, err := NewNTCP2Config(routerHash, true)
+				config, err := NewNTCP2Config(remoteHash, true)
 				require.NoError(t, err)
 
 				config = config.WithStaticKey(staticKey).
@@ -251,12 +251,12 @@ func TestWrapNTCP2Conn(t *testing.T) {
 				return client
 			},
 			setupConfig: func() *Config {
-				routerHash := generateRandomHash()
+				// Initiator: RH_B is the peer's hash, so the config is built from remoteHash.
 				remoteHash := generateRandomHash()
 				staticKey := generateRandomBytes(32)
 				obfuscationIV := generateRandomBytes(16)
 
-				config, err := NewNTCP2Config(routerHash, true)
+				config, err := NewNTCP2Config(remoteHash, true)
 				require.NoError(t, err)
 
 				config = config.WithStaticKey(staticKey).
@@ -391,9 +391,8 @@ func TestDialNTCP2WithHandshake(t *testing.T) {
 			ntcp2Conn.Close()
 		}()
 
-		// Create initiator (dial) config
-		clientRouterHash := generateRandomHash()
-		dialConfig, err := NewNTCP2Config(clientRouterHash, true)
+		// Create initiator (dial) config — RH_B is the responder's hash (routerHash).
+		dialConfig, err := NewNTCP2Config(routerHash, true)
 		require.NoError(t, err)
 		dialConfig = dialConfig.WithStaticKey(initiatorKP.Private).
 			WithRemoteRouterHash(routerHash).
@@ -435,10 +434,10 @@ func TestValidateDialParams(t *testing.T) {
 			network: "tcp",
 			addr:    "127.0.0.1:8080",
 			setupConfig: func() *Config {
-				routerHash := generateRandomHash()
+				// Initiator: RH_B is the peer's hash, so the config is built from remoteHash.
 				remoteHash := generateRandomHash()
 				staticKey := generateRandomBytes(32)
-				config, _ := NewNTCP2Config(routerHash, true)
+				config, _ := NewNTCP2Config(remoteHash, true)
 				config = config.WithStaticKey(staticKey).
 					WithRemoteRouterHash(remoteHash).
 					WithRemoteStaticKey(generateRandomBytes(32))
@@ -602,12 +601,16 @@ func TestCreateDialAddresses(t *testing.T) {
 		defer server.Close()
 
 		// Create config
-		routerHash := generateRandomHash()
+		ourHash := generateRandomHash()
 		remoteHash := generateRandomHash()
 
-		config, err := NewNTCP2Config(routerHash, true)
+		// Initiator: RH_B is the peer's hash, so the config is built from
+		// remoteHash, and our own identity goes in LocalRouterHash.
+		config, err := NewNTCP2Config(remoteHash, true)
 		require.NoError(t, err)
-		config = config.WithRemoteRouterHash(remoteHash)
+		config = config.
+			WithRemoteRouterHash(remoteHash).
+			WithLocalRouterHash(ourHash)
 
 		// Create addresses
 		localAddr, remoteAddr, err := createDialAddresses(client, config)
@@ -619,8 +622,51 @@ func TestCreateDialAddresses(t *testing.T) {
 		// Verify addresses
 		assert.Equal(t, "initiator", localAddr.Role())
 		assert.Equal(t, "responder", remoteAddr.Role())
-		assert.Equal(t, routerHash, localAddr.RouterHash())
+
+		// The local address must carry OUR hash, never RH_B (which is the
+		// peer's hash for an initiator).
+		assert.Equal(t, ourHash, localAddr.RouterHash())
+		assert.NotEqual(t, config.BobRouterHash, localAddr.RouterHash())
+
+		// The remote address carries the peer's identity and is resolved.
 		assert.Equal(t, remoteHash, remoteAddr.RouterHash())
+		assert.True(t, remoteAddr.RouterHashResolved())
+	})
+
+	t.Run("responder local address uses RH_B", func(t *testing.T) {
+		client, server := net.Pipe()
+		defer client.Close()
+		defer server.Close()
+
+		// For a responder RH_B is its own hash, so localRouterHash() is
+		// BobRouterHash and LocalRouterHash need not be set.
+		ourHash := generateRandomHash()
+		config, err := NewNTCP2Config(ourHash, false)
+		require.NoError(t, err)
+
+		localAddr, remoteAddr, err := createDialAddresses(client, config)
+		require.NoError(t, err)
+
+		assert.Equal(t, "responder", localAddr.Role())
+		assert.Equal(t, "initiator", remoteAddr.Role())
+		assert.Equal(t, ourHash, localAddr.RouterHash())
+		// Remote identity unknown until the handshake completes.
+		assert.True(t, remoteAddr.RouterHash().IsZero())
+		assert.False(t, remoteAddr.RouterHashResolved())
+	})
+
+	t.Run("unresolved initiator local hash stays zero", func(t *testing.T) {
+		client, server := net.Pipe()
+		defer client.Close()
+		defer server.Close()
+
+		config, err := NewNTCP2Config(generateRandomHash(), true)
+		require.NoError(t, err)
+
+		localAddr, _, err := createDialAddresses(client, config)
+		require.NoError(t, err)
+		assert.True(t, localAddr.RouterHash().IsZero(),
+			"a dialed local address must not be labelled with the peer's RH_B")
 	})
 }
 
@@ -671,9 +717,8 @@ func TestDialNTCP2WithHandshake_Wrapper(t *testing.T) {
 			ntcp2Conn.Close()
 		}()
 
-		// Create initiator config
-		clientRouterHash := generateRandomHash()
-		dialConfig, err := NewNTCP2Config(clientRouterHash, true)
+		// Create initiator config — RH_B is the responder's hash (routerHash).
+		dialConfig, err := NewNTCP2Config(routerHash, true)
 		require.NoError(t, err)
 		dialConfig = dialConfig.WithStaticKey(initiatorKP.Private).
 			WithRemoteRouterHash(routerHash).

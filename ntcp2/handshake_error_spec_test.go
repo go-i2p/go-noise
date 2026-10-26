@@ -162,7 +162,7 @@ func routerInfoFrame(t *testing.T, ri []byte) []byte {
 	t.Helper()
 	size := 1 + len(ri)
 	out := make([]byte, 0, 3+size)
-	out = append(out, routerInfoBlockType, byte(size>>8), byte(size))
+	out = append(out, RouterInfoBlockType, byte(size>>8), byte(size))
 	out = append(out, 0) // flag
 	out = append(out, ri...)
 	return out

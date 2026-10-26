@@ -83,24 +83,28 @@ func runRetryExample(args *exampleutil.CommonArgs, staticKey []byte) {
 	fmt.Printf("📋 Configuration: retries=%d, backoff=%v, timeout=%v\n",
 		config.HandshakeRetries, config.RetryBackoff, config.HandshakeTimeout)
 
+	// Each example owns its Transport rather than relying on shared state.
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
 	// Test 1: Successful connection with retry capability
 	fmt.Println("\n🧪 Test 1: Successful connection")
-	testSuccessfulConnection(args.ServerAddr, config)
+	testSuccessfulConnection(transport, args.ServerAddr, config)
 
 	// Test 2: Using high-level transport functions with retry
 	fmt.Println("\n🧪 Test 2: High-level transport functions")
-	testTransportFunctions(args.ServerAddr, config)
+	testTransportFunctions(transport, args.ServerAddr, config)
 
 	// Test 3: Context cancellation during retry
 	fmt.Println("\n🧪 Test 3: Context cancellation")
-	testContextCancellation(args.ServerAddr, config)
+	testContextCancellation(transport, args.ServerAddr, config)
 
 	fmt.Println("\n✅ Retry example completed!")
 }
 
 // testSuccessfulConnection tests a successful connection with retry capability
-func testSuccessfulConnection(serverAddr string, config *noise.ConnConfig) {
-	conn, err := noise.DialNoise("tcp", serverAddr, config)
+func testSuccessfulConnection(transport *noise.Transport, serverAddr string, config *noise.ConnConfig) {
+	conn, err := exampleutil.Dial(transport, serverAddr, config)
 	if err != nil {
 		log.Printf("❌ Failed to connect: %v", err)
 		return
@@ -130,27 +134,27 @@ func sendAndReceive(conn *noise.NoiseConn, message, responseLabel string) {
 	exampleutil.SendAndReceive(conn, message, responseLabel)
 }
 
-// testTransportFunctions tests high-level transport functions with retry
-func testTransportFunctions(serverAddr string, config *noise.ConnConfig) {
-	fmt.Println("Testing DialNoiseWithHandshake...")
+// testTransportFunctions tests the Transport handshake-with-retry path
+func testTransportFunctions(transport *noise.Transport, serverAddr string, config *noise.ConnConfig) {
+	fmt.Println("Testing Transport.DialWithHandshakeContext...")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	conn, err := noise.DialNoiseWithHandshakeContext(ctx, "tcp", serverAddr, config)
+	conn, err := exampleutil.DialWithHandshakeContext(ctx, transport, serverAddr, config)
 	if err != nil {
-		log.Printf("❌ DialNoiseWithHandshake failed: %v", err)
+		log.Printf("❌ DialWithHandshakeContext failed: %v", err)
 		return
 	}
 	defer conn.Close()
 
-	fmt.Println("✅ DialNoiseWithHandshake completed successfully!")
+	fmt.Println("✅ DialWithHandshakeContext completed successfully!")
 
 	sendAndReceive(conn, "Hello from transport function!", "Transport function response")
 }
 
 // testContextCancellation tests context cancellation during retry
-func testContextCancellation(serverAddr string, config *noise.ConnConfig) {
+func testContextCancellation(transport *noise.Transport, serverAddr string, config *noise.ConnConfig) {
 	// Create a context that will timeout quickly
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -161,7 +165,7 @@ func testContextCancellation(serverAddr string, config *noise.ConnConfig) {
 	badAddr := "127.0.0.1:9999" // Assume this port is not listening
 
 	start := time.Now()
-	conn, err := noise.DialNoiseWithHandshakeContext(ctx, "tcp", badAddr, config)
+	conn, err := exampleutil.DialWithHandshakeContext(ctx, transport, badAddr, config)
 	duration := time.Since(start)
 
 	if conn != nil {
@@ -234,11 +238,11 @@ func showConfigValidation() {
 		}
 	}
 
-	fmt.Println("\n6. Available Transport Functions with Retry:")
-	fmt.Println("   - DialNoiseWithHandshake(network, addr, config)")
-	fmt.Println("   - DialNoiseWithHandshakeContext(ctx, network, addr, config)")
-	fmt.Println("   - DialNoiseWithPoolAndHandshake(network, addr, config)")
-	fmt.Println("   - DialNoiseWithPoolAndHandshakeContext(ctx, network, addr, config)")
+	fmt.Println("\n6. Retry-capable Transport methods:")
+	fmt.Println("   - Transport.DialWithHandshake(network, addr, config)")
+	fmt.Println("   - Transport.DialWithHandshakeContext(ctx, network, addr, config)")
+	fmt.Println("   - Transport.DialWithPoolAndHandshake(network, addr, config)")
+	fmt.Println("   - Transport.DialWithPoolAndHandshakeContext(ctx, network, addr, config)")
 }
 
 // demonstrateRetryConfigurations shows various retry configuration examples
@@ -261,7 +265,10 @@ func startRetryTestServer(addr, pattern string, staticKey []byte) {
 		config = config.WithStaticKey(staticKey)
 	}
 
-	listener, err := noise.ListenNoise("tcp", addr, config)
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	listener, err := exampleutil.Listen(transport, addr, config)
 	if err != nil {
 		log.Fatalf("Failed to start retry test server: %v", err)
 	}

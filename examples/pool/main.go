@@ -33,15 +33,17 @@ func runPoolExample(args *exampleutil.CommonArgs, staticKey []byte) {
 	fmt.Printf("🏊‍♂️ Connection Pool Example with pattern %s\n", args.Pattern)
 	fmt.Printf("Server: %s, Pool size: %d, Test connections: %d\n", args.ServerAddr, poolSize, numConnections)
 
+	// The example owns its pool and Transport rather than mutating global state.
 	customPool := setupConnectionPool(poolSize)
-	defer customPool.Close()
+	transport := noise.NewTransport(customPool, noise.NewShutdownManager(30*time.Second))
+	defer transport.GracefulShutdown()
 
 	startTestServer(args.ServerAddr, args.Pattern, staticKey)
 	config := createClientConfig(args.Pattern, staticKey)
 
 	fmt.Printf("📊 Pool statistics before connections: %+v\n", customPool.Stats())
 
-	connections := createPooledConnections(args.ServerAddr, config, numConnections)
+	connections := createPooledConnections(transport, args.ServerAddr, config, numConnections)
 	fmt.Printf("\n📊 Pool statistics after creating connections: %+v\n", customPool.Stats())
 
 	testConnectionCommunication(connections)
@@ -51,7 +53,8 @@ func runPoolExample(args *exampleutil.CommonArgs, staticKey []byte) {
 	fmt.Println("✅ Pool example completed!")
 }
 
-// setupConnectionPool creates and configures the connection pool
+// setupConnectionPool creates and configures the connection pool the example
+// dials through.
 func setupConnectionPool(poolSize int) *pool.ConnPool {
 	customPool := pool.NewConnPool(&pool.PoolConfig{
 		MaxSize: poolSize,         // Maximum connections per remote address
@@ -59,7 +62,6 @@ func setupConnectionPool(poolSize int) *pool.ConnPool {
 		MaxIdle: 5 * time.Minute,  // Close idle connections after 5 minutes
 	})
 
-	noise.SetGlobalConnPool(customPool)
 	fmt.Printf("✓ Created connection pool (MaxSize: %d)\n", poolSize)
 
 	return customPool
@@ -86,11 +88,11 @@ func createClientConfig(pattern string, staticKey []byte) *noise.ConnConfig {
 }
 
 // createPooledConnections establishes multiple connections using the pool
-func createPooledConnections(serverAddr string, config *noise.ConnConfig, numConnections int) []*noise.NoiseConn {
+func createPooledConnections(transport *noise.Transport, serverAddr string, config *noise.ConnConfig, numConnections int) []*noise.NoiseConn {
 	connections := make([]*noise.NoiseConn, numConnections)
 
 	for i := 0; i < numConnections; i++ {
-		conn := createSingleConnection(serverAddr, config, i+1)
+		conn := createSingleConnection(transport, serverAddr, config, i+1)
 		connections[i] = conn
 	}
 
@@ -98,10 +100,10 @@ func createPooledConnections(serverAddr string, config *noise.ConnConfig, numCon
 }
 
 // createSingleConnection creates and handshakes a single connection
-func createSingleConnection(serverAddr string, config *noise.ConnConfig, connectionNum int) *noise.NoiseConn {
+func createSingleConnection(transport *noise.Transport, serverAddr string, config *noise.ConnConfig, connectionNum int) *noise.NoiseConn {
 	fmt.Printf("\n🔌 Creating connection %d...\n", connectionNum)
 
-	conn, err := noise.DialNoiseWithPool("tcp", serverAddr, config)
+	conn, err := exampleutil.DialWithPool(transport, serverAddr, config)
 	if err != nil {
 		log.Printf("Failed to create connection %d: %v", connectionNum, err)
 		return nil
@@ -198,7 +200,10 @@ func startEchoServer(addr, pattern string, staticKey []byte) {
 	}
 
 	// Start server
-	listener, err := noise.ListenNoise("tcp", addr, config)
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	listener, err := exampleutil.Listen(transport, addr, config)
 	if err != nil {
 		log.Fatalf("Failed to start echo server: %v", err)
 	}

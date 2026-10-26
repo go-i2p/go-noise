@@ -45,9 +45,9 @@
 //
 //	listener, err := transport.Listen("tcp", "0.0.0.0:7001", config)
 //
-// The package-level functions DialNoise, ListenNoise, and the Default
-// variable are convenience wrappers around a shared Transport. They are
-// deprecated; build your own Transport instead.
+// Build your own Transport and call its methods. The package does not keep a
+// shared, package-level Transport: pool and shutdown state belong to whoever
+// constructs them.
 //
 // # Package layout
 //

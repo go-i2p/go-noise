@@ -16,9 +16,8 @@ import (
 // closes everything in order on the way out), and it provides Dial and
 // Listen methods for opening and accepting Noise connections.
 //
-// Build one with NewTransport. The package-level Default variable is a
-// shared Transport for convenience, but it is deprecated; build your own
-// Transport so each part of your program controls its own connections.
+// Build one with NewTransport. Each Transport owns its own pool and shutdown
+// manager, so different parts of a program do not share (or race over) one.
 type Transport struct {
 	mu   sync.RWMutex
 	pool pool.Pool

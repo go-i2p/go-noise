@@ -73,12 +73,17 @@ import (
 // end (its router hash) and whether this side started the connection
 // ("initiator") or accepted it ("responder").
 type Addr struct {
-	// mu protects routerHash from concurrent access
+	// mu protects routerHash and hashResolved from concurrent access
 	mu sync.RWMutex
 	// underlying is the TCP network address
 	underlying net.Addr
-	// routerHash is the I2P router identity hash
+	// routerHash is the I2P router identity hash. Until the real identity is
+	// known it holds a placeholder (see hashResolved).
 	routerHash data.Hash
+	// hashResolved is true when routerHash is the real SHA-256 of the peer's
+	// RouterIdentity, and false when it is a placeholder derived from the peer's
+	// static key (or not yet known at all).
+	hashResolved bool
 	// role indicates if this is an initiator or responder address
 	role string
 }
@@ -87,7 +92,23 @@ type Addr struct {
 // role. The router hash identifies the I2P router on the other end of the
 // connection. The role must be "initiator" (this side dialed out) or
 // "responder" (this side accepted the connection).
+//
+// A non-zero hash is treated as the real router identity hash; a zero hash is
+// treated as "not yet known". Use [NewNTCP2AddrResolved] when the hash is
+// known to be a placeholder (e.g. SHA-256 of the peer's static key), so that
+// [Addr.RouterHashResolved] reports it accurately.
 func NewNTCP2Addr(underlying net.Addr, routerHash data.Hash, role string) (*Addr, error) {
+	return newNTCP2Addr(underlying, routerHash, role, !routerHash.IsZero())
+}
+
+// NewNTCP2AddrResolved creates an Addr and records whether routerHash is the
+// peer's real router identity hash (resolved true) or a stand-in that must not
+// be used as an identity or as the AES obfuscation key (resolved false).
+func NewNTCP2AddrResolved(underlying net.Addr, routerHash data.Hash, role string, resolved bool) (*Addr, error) {
+	return newNTCP2Addr(underlying, routerHash, role, resolved)
+}
+
+func newNTCP2Addr(underlying net.Addr, routerHash data.Hash, role string, resolved bool) (*Addr, error) {
 	flog("NewNTCP2Addr", logger.Fields{"role": role}).Debug("Creating new NTCP2Addr")
 	if underlying == nil {
 		return nil, oops.
@@ -105,9 +126,10 @@ func NewNTCP2Addr(underlying net.Addr, routerHash data.Hash, role string) (*Addr
 	}
 
 	return &Addr{
-		underlying: underlying,
-		routerHash: routerHash,
-		role:       role,
+		underlying:   underlying,
+		routerHash:   routerHash,
+		hashResolved: resolved,
+		role:         role,
 	}, nil
 }
 
@@ -134,18 +156,32 @@ func (na *Addr) String() string {
 // RouterHash returns the router hash of the router on the other end of the
 // connection.
 //
-// Naming caveat: before [PropagatePeerStaticKey] has run, this is a
-// *placeholder* — SHA-256 of the peer's 32-byte Noise static key — and not the
-// I2P router hash. The real RH is defined over the serialized RouterIdentity
-// (ntcp2.rst uses RH_A/RH_B for exactly that value, and it is what NTCP2's AES
-// ephemeral-key obfuscation is keyed with), so the placeholder must never be
-// used as an obfuscation key or as a netdb identity. It exists only so the
+// Naming caveat: until the peer's RouterIdentity has been seen, this may be a
+// *placeholder* — SHA-256 of the peer's 32-byte Noise static key, or the zero
+// hash — and not the I2P router hash. The real RH is defined over the serialized
+// RouterIdentity (ntcp2.md uses RH_A/RH_B for exactly that value, and it is what
+// NTCP2's AES ephemeral-key obfuscation is keyed with), so a placeholder must
+// never be used as an obfuscation key or as a netdb identity. Call
+// [Addr.RouterHashResolved] to tell the two apart. It exists only so the
 // transport layer can correlate a connection with a peer it has not yet looked
 // up.
 func (na *Addr) RouterHash() data.Hash {
 	na.mu.RLock()
 	defer na.mu.RUnlock()
 	return na.routerHash
+}
+
+// RouterHashResolved reports whether [Addr.RouterHash] holds the peer's real
+// router identity hash.
+//
+// It is false before the handshake reveals the peer's RouterIdentity, while the
+// address still carries a placeholder. The router transport layer is expected to
+// call [Addr.SetRouterHash] once it has parsed and verified the RouterInfo block
+// from handshake message 3; at that point this starts returning true.
+func (na *Addr) RouterHashResolved() bool {
+	na.mu.RLock()
+	defer na.mu.RUnlock()
+	return na.hashResolved
 }
 
 // IdentHash returns the router identity hash as a fixed-size [32]byte
@@ -156,13 +192,27 @@ func (na *Addr) IdentHash() [32]byte {
 	return na.routerHash.Bytes()
 }
 
-// SetRouterHash updates the router identity hash. The handshake reveals the
-// remote router's real identity, so this is used to replace the placeholder
-// zero hash that was set before the handshake finished.
+// SetRouterHash records the peer's real router identity hash, computed as
+// SHA-256 over the serialized RouterIdentity. Calling this marks the address as
+// resolved ([Addr.RouterHashResolved] starts returning true), so it should only
+// be used once the RouterInfo block has been parsed and verified.
 func (na *Addr) SetRouterHash(routerHash data.Hash) {
 	flog("NTCP2Addr.SetRouterHash").Debug("Updating router identity hash")
 	na.mu.Lock()
 	na.routerHash = routerHash
+	na.hashResolved = true
+	na.mu.Unlock()
+}
+
+// SetPlaceholderRouterHash stores a stand-in hash that is NOT the peer's router
+// identity (typically SHA-256 of the peer's Noise static key), used to
+// correlate a connection with a peer that has not yet been looked up. The
+// address stays unresolved, so callers cannot mistake it for RH_A/RH_B.
+func (na *Addr) SetPlaceholderRouterHash(hash data.Hash) {
+	flog("NTCP2Addr.SetPlaceholderRouterHash").Debug("Storing placeholder router hash")
+	na.mu.Lock()
+	na.routerHash = hash
+	na.hashResolved = false
 	na.mu.Unlock()
 }
 

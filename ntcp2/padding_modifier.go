@@ -1,7 +1,6 @@
 package ntcp2
 
 import (
-	"encoding/binary"
 	"math"
 	"sync"
 
@@ -146,89 +145,6 @@ func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, d
 	return data, nil
 }
 
-// removeAEADPadding removes a trailing AEAD padding block via the shared engine.
-func (npm *NTCP2PaddingModifier) removeAEADPadding(data []byte) ([]byte, error) {
-	return npm.engine.RemoveTrailingAEADPadding(data, npm.engine.Config.MaxPadding)
-}
-
-// parseBlockStructure analyzes data as I2P block format and tracks parsing state.
-// Per the I2P NTCP2 spec, padding MUST be the last block. If any valid block
-// appears after the first padding block, result.blocksAfterPadding is set to
-// true so callers can reject the malformed payload.
-func (npm *NTCP2PaddingModifier) parseBlockStructure(data []byte) blockParseResult {
-	result := blockParseResult{}
-	offset := 0
-	foundPadding := false
-
-	for offset < len(data) {
-		blockType, blockSize, ok := npm.validateBlockAtOffset(data, offset)
-		if !ok {
-			break
-		}
-
-		result.foundValidBlocks = true
-
-		if blockType == PaddingBlockType {
-			foundPadding = true
-			// Continue scanning to detect any data blocks that follow the padding block.
-			offset += 3 + blockSize
-			continue
-		}
-
-		if foundPadding {
-			// A non-padding block was found after the padding block — spec violation.
-			result.blocksAfterPadding = true
-			return result
-		}
-
-		result.lastDataEnd = offset + 3 + blockSize
-		offset = result.lastDataEnd
-	}
-
-	return result
-}
-
-// blockParseResult holds the state from parsing I2P block structure.
-type blockParseResult struct {
-	foundValidBlocks bool
-	lastDataEnd      int
-	// blocksAfterPadding is true when at least one additional valid block was
-	// found after the first padding block. Per the I2P NTCP2 spec, padding MUST
-	// be the last block; data blocks after padding indicate a malformed payload.
-	blocksAfterPadding bool
-}
-
-// validateBlockBounds checks if there's enough data for a block header at the given offset.
-func (npm *NTCP2PaddingModifier) validateBlockBounds(data []byte, offset int) bool {
-	return offset+3 <= len(data)
-}
-
-// extractBlockHeader reads the block type and size from the data at the given offset.
-func (npm *NTCP2PaddingModifier) extractBlockHeader(data []byte, offset int) (blockType byte, blockSize int) {
-	blockType = data[offset]
-	blockSize = int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
-	return blockType, blockSize
-}
-
-// validateBlockSize ensures the block size doesn't exceed the available data.
-func (npm *NTCP2PaddingModifier) validateBlockSize(data []byte, offset, blockSize int) bool {
-	return offset+3+blockSize <= len(data)
-}
-
-// validateBlockAtOffset validates header and size bounds, then returns parsed fields.
-func (npm *NTCP2PaddingModifier) validateBlockAtOffset(data []byte, offset int) (blockType byte, blockSize int, ok bool) {
-	if !npm.validateBlockBounds(data, offset) {
-		return 0, 0, false
-	}
-
-	blockType, blockSize = npm.extractBlockHeader(data, offset)
-	if !npm.validateBlockSize(data, offset, blockSize) {
-		return 0, 0, false
-	}
-
-	return blockType, blockSize, true
-}
-
 // SetPaddingRatio updates the padding ratio, allowing dynamic adjustment
 // during a connection.
 //
@@ -306,50 +222,6 @@ func (npm *NTCP2PaddingModifier) EstimatePaddingSize(dataLen int) int {
 		return ratioPadding
 	}
 	return (npm.engine.Config.MinPadding + npm.engine.Config.MaxPadding) / 2
-}
-
-// ValidateAEADFrame validates that a frame contains properly formatted
-// AEAD blocks.
-//
-// Returns true if the frame structure is valid according to the I2P NTCP2
-// spec.
-func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool {
-	if len(data) == 0 {
-		return true // Empty frame is valid
-	}
-
-	offset := 0
-	hasPadding := false
-
-	for offset < len(data) {
-		blockType, blockSize, ok := npm.validateBlockAtOffset(data, offset)
-		if !ok {
-			return false
-		}
-
-		if !npm.validateFramePaddingRules(blockType, blockSize, offset, len(data), &hasPadding) {
-			return false
-		}
-
-		offset += 3 + blockSize
-	}
-
-	return true
-}
-
-// validateFramePaddingRules enforces I2P NTCP2 padding block ordering rules
-func (npm *NTCP2PaddingModifier) validateFramePaddingRules(blockType byte, blockSize, offset, dataLen int, hasPadding *bool) bool {
-	if blockType == PaddingBlockType { // Padding block
-		if *hasPadding {
-			return false // Multiple padding blocks not allowed
-		}
-		*hasPadding = true
-		// Padding must be last block
-		if offset+3+blockSize != dataLen {
-			return false
-		}
-	}
-	return true
 }
 
 // Name returns the modifier name, used for logging and debugging.

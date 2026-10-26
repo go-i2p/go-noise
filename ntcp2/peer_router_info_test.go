@@ -51,7 +51,8 @@ func TestResponderCapturesPeerRouterInfo(t *testing.T) {
 		WithStaticKey(responderKP.Private).
 		WithAESObfuscation(false, nil)
 
-	initiatorConfig, err := NewNTCP2Config(initiatorHash, true)
+	// Initiator: RH_B is the responder's hash, not the initiator's own.
+	initiatorConfig, err := NewNTCP2Config(responderHash, true)
 	require.NoError(t, err)
 	initiatorConfig = initiatorConfig.
 		WithStaticKey(initiatorKP.Private).
@@ -130,7 +131,7 @@ func TestResponderCapturesPeerRouterInfo(t *testing.T) {
 	require.NotNil(t, payload, "responder must capture msg3 payload")
 	require.GreaterOrEqual(t, len(payload), 4+len(aliceRI),
 		"payload must include block header + flag byte + RI bytes")
-	assert.Equal(t, byte(routerInfoBlockType), payload[0], "first block must be RouterInfo (type 2)")
+	assert.Equal(t, byte(RouterInfoBlockType), payload[0], "first block must be RouterInfo (type 2)")
 	assert.Equal(t, byte(0x00), payload[3], "RouterInfo flag byte must be 0x00 (no flood request)")
 
 	// Convenience parse: just the inner RI bytes.

@@ -49,7 +49,20 @@ type Config struct {
 	// (one-time) keys sent in the clear during the handshake.
 	// A responder sets its own router hash here; an initiator sets the
 	// remote peer's router hash.
+	//
+	// Because an initiator stores the *peer's* hash here, this field is never
+	// this side's own identity for an outbound connection. Use LocalRouterHash
+	// (or Addr.RouterHash on the remote side) for the local identity.
 	BobRouterHash data.Hash
+
+	// LocalRouterHash is this side's own router hash, used to populate the
+	// local [Addr] of a dialed connection.
+	//
+	// A responder does not need to set it: for a responder BobRouterHash already
+	// is its own hash, and it is used when this field is left zero. An initiator
+	// should set it to its own router hash so that LocalAddr() does not report
+	// the peer's identity.
+	LocalRouterHash data.Hash
 
 	// StaticKey is this peer's long-term Curve25519 private key (32 bytes).
 	// It is used in the Noise XK handshake's Diffie-Hellman steps to derive
@@ -305,6 +318,26 @@ func (nc *Config) WithRemoteRouterHash(hash data.Hash) *Config {
 	return nc
 }
 
+// WithLocalRouterHash sets this side's own router hash, used to populate the
+// local address of a dialed connection. See [Config.LocalRouterHash].
+func (nc *Config) WithLocalRouterHash(hash data.Hash) *Config {
+	nc.LocalRouterHash = hash
+	return nc
+}
+
+// localRouterHash returns the router hash that identifies this side.
+//
+// For a responder that is BobRouterHash (RH_B is its own hash). For an
+// initiator, BobRouterHash is the peer's hash, so the explicitly configured
+// LocalRouterHash is used; when that is unset the caller gets a zero hash,
+// which the transport layer replaces once the peer identity is known.
+func (nc *Config) localRouterHash() data.Hash {
+	if !nc.Initiator {
+		return nc.BobRouterHash
+	}
+	return nc.LocalRouterHash
+}
+
 // WithRemoteStaticKey sets the remote peer's Curve25519 static public key.
 // key must be exactly 32 bytes; other lengths are silently ignored, so
 // call Validate() to check all fields before use.
@@ -502,8 +535,6 @@ func (nc *Config) validateCoreConfiguration() error {
 		return err
 	}
 
-	// BobRouterHash validation is implicit via data.Hash type (always 32 bytes).
-
 	if err := validation.ValidateKeyLength(nc.StaticKey, "static key", "ntcp2"); err != nil {
 		return err
 	}
@@ -514,6 +545,36 @@ func (nc *Config) validateCoreConfiguration() error {
 			Code("MISSING_REMOTE_ROUTER_HASH").
 			In("ntcp2").
 			Errorf("remote router hash is required for initiator connections")
+	}
+
+	// BobRouterHash is the AES-256 key that obfuscates the cleartext ephemeral
+	// keys in messages 1 and 2 (ntcp2.md §"1) SessionRequest": "AES encryption
+	// uses Bob's router hash as the key"; §"2) Created": same). An all-zero
+	// hash is a syntactically valid AES key, so a mis-populated config would
+	// otherwise silently encrypt with the wrong key and produce a handshake no
+	// spec-compliant peer could decrypt — a hard-to-diagnose interop failure.
+	// Reject it up front instead.
+	if nc.EnableAESObfuscation && nc.BobRouterHash.IsZero() {
+		return oops.
+			Code("MISSING_BOB_ROUTER_HASH").
+			In("ntcp2").
+			Errorf("Bob router hash (RH_B) is required for AES ephemeral-key obfuscation")
+	}
+
+	// For an initiator, BobRouterHash and RemoteRouterHash are the same value
+	// (the peer's router hash) reached by two different paths. If they disagree,
+	// the caller has wired up one of them from the wrong peer, and the AES
+	// obfuscation would use a key that does not match the identity we are
+	// connecting to. Fail loudly rather than obfuscating with a mismatched key.
+	if nc.Initiator && nc.RemoteRouterHash != nil &&
+		nc.BobRouterHash != *nc.RemoteRouterHash {
+		return oops.
+			Code("BOB_ROUTER_HASH_MISMATCH").
+			In("ntcp2").
+			With("bob_router_hash", nc.BobRouterHash.String()).
+			With("remote_router_hash", nc.RemoteRouterHash.String()).
+			Errorf("BobRouterHash must equal RemoteRouterHash for initiator connections: " +
+				"RH_B is both the AES ephemeral-key obfuscation key and the remote peer identity")
 	}
 
 	if err := validation.ValidateKeyLength(nc.RemoteStaticKey, "remote static key", "ntcp2"); err != nil {
@@ -957,6 +1018,7 @@ func (nc *Config) Clone() *Config {
 		ReplayDetector:       nc.ReplayDetector, // Shared across clones for responder
 	}
 	clone.BobRouterHash = nc.BobRouterHash
+	clone.LocalRouterHash = nc.LocalRouterHash
 	clone.StaticKey = copyKeyBytes(nc.StaticKey)
 	if nc.RemoteRouterHash != nil {
 		h := *nc.RemoteRouterHash

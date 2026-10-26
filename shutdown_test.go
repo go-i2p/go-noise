@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-i2p/pool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -78,22 +79,22 @@ func TestShutdownManagerContext(t *testing.T) {
 	}
 }
 
-func TestGlobalShutdownFunctions(t *testing.T) {
-	// Test setting and getting global shutdown manager
-	originalSM := GetGlobalShutdownManager()
-	assert.NotNil(t, originalSM)
+// TestTransportGracefulShutdown verifies that shutting a Transport down shuts
+// down its own shutdown manager and closes its own pool. Each Transport owns
+// these components; there is no package-level shutdown state.
+func TestTransportGracefulShutdown(t *testing.T) {
+	sm := NewShutdownManager(10 * time.Second)
+	cp := pool.NewConnPool(&pool.PoolConfig{MaxSize: 4})
 
-	newSM := NewShutdownManager(10 * time.Second)
-	SetGlobalShutdownManager(newSM)
+	transport := NewTransport(cp, sm)
 
-	assert.Equal(t, newSM, GetGlobalShutdownManager())
+	require.NoError(t, transport.GracefulShutdown())
 
-	// Test graceful shutdown
-	err := GracefulShutdown()
-	assert.NoError(t, err)
+	// The pool must be closed by the transport shutdown.
+	assert.Nil(t, cp.Get("127.0.0.1:1"), "pool should be closed after GracefulShutdown")
 
-	// Restore original for other tests
-	SetGlobalShutdownManager(originalSM)
+	// A second shutdown must not panic on the already-closed components.
+	assert.NoError(t, transport.GracefulShutdown())
 }
 
 // shutdownRegistrationTest verifies the shutdown registration lifecycle:

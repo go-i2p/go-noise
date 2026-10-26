@@ -79,9 +79,12 @@ func (nc *Conn) applyHandshakeInbound(phase handshake.HandshakePhase, data []byt
 	return nc.applyModifierChain(false, phase, data)
 }
 
-// validateConnState validates the connection state before I/O operations.
+// checkConnState validates the connection state before I/O operations.
 // isSend: true for write validation, false for read validation.
-func (nc *Conn) validateConnState(isSend bool) error {
+//
+// Callers should use the named wrappers [Conn.validateReadState] and
+// [Conn.validateWriteState] rather than passing a bare boolean.
+func (nc *Conn) checkConnState(isSend bool) error {
 	if nc.isClosed() {
 		return oops.
 			Code("CONN_CLOSED").
@@ -120,17 +123,13 @@ func (nc *Conn) validateConnState(isSend bool) error {
 }
 
 // validateReadState validates the connection state before reading.
-//
-// Deprecated: use validateConnState(false) instead.
 func (nc *Conn) validateReadState() error {
-	return nc.validateConnState(false)
+	return nc.checkConnState(false)
 }
 
 // validateWriteState validates the connection state before writing.
-//
-// Deprecated: use validateConnState(true) instead.
 func (nc *Conn) validateWriteState() error {
-	return nc.validateConnState(true)
+	return nc.checkConnState(true)
 }
 
 // configureWriteTimeout sets the write timeout if configured.

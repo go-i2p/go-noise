@@ -125,7 +125,11 @@ func runShutdownClient(args *exampleutil.CommonArgs, staticKey []byte) {
 		config = config.WithStaticKey(staticKey)
 	}
 
-	conn, err := noise.DialNoise("tcp", args.ClientAddr, config)
+	transport := exampleutil.NewExampleTransport()
+	defer transport.GracefulShutdown()
+
+	// The demo writes immediately, so the handshake must already be done.
+	conn, err := exampleutil.DialWithHandshake(transport, args.ClientAddr, config)
 	if err != nil {
 		log.Fatalf("Failed to connect: %v", err)
 	}

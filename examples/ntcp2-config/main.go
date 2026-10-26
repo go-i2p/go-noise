@@ -34,22 +34,26 @@ func runNTCP2ConfigDemo(args *ntcp2shared.NTCP2Args) {
 	ntcp2shared.RunNTCP2Demo()
 
 	// Generate demo materials for configuration examples
-	routerHash, err := generateDemoMaterial()
+	routerHash, peerHash, err := generateDemoMaterial()
 	if err != nil {
 		log.Fatalf("Failed to generate demo material: %v", err)
 	}
 
 	fmt.Printf("\n🔧 NTCP2Config Builder Pattern Examples:\n")
-	demonstrateBasicConfigurations(routerHash)
-	demonstrateAdvancedConfigurations(routerHash)
+	demonstrateBasicConfigurations(routerHash, peerHash)
+	demonstrateAdvancedConfigurations(routerHash, peerHash)
 
 	fmt.Println("\n✅ Demo completed - run without -demo for interactive configuration")
 }
 
-// generateDemoMaterial creates sample cryptographic material for demo
-func generateDemoMaterial() ([]byte, error) {
+// generateDemoMaterial creates sample cryptographic material for demo. It
+// returns this router's own hash and a peer's hash; an initiator example needs
+// both, since RH_B is the peer's hash while LocalRouterHash is our own.
+func generateDemoMaterial() ([]byte, []byte, error) {
 	// Use the shared utility for consistency
-	return []byte("example_demo_router_hash_32_byte"), nil
+	own := []byte("example_demo_router_hash_32_byte")
+	peer := []byte("example_demo_peer_hash_32_bytes")
+	return own, peer, nil
 }
 
 // runNTCP2ConfigurationDemo shows configuration examples with real material
@@ -90,7 +94,7 @@ func createAndDisplayBasicConfig(routerHash []byte, isInitiator bool, roleName s
 }
 
 // demonstrateBasicConfigurations shows basic NTCP2 configuration examples
-func demonstrateBasicConfigurations(routerHash []byte) {
+func demonstrateBasicConfigurations(routerHash, peerHash []byte) {
 	fmt.Println("\n1. Basic Configuration Examples:")
 	fmt.Println("===============================")
 
@@ -102,7 +106,8 @@ func demonstrateBasicConfigurations(routerHash []byte) {
 	fmt.Printf("  SipHash Length: %t\n", responder.EnableSipHashLength)
 
 	fmt.Println()
-	initiator := createAndDisplayBasicConfig(routerHash, true, "Initiator")
+	// An initiator is constructed with the PEER's hash (RH_B), not its own.
+	initiator := createAndDisplayBasicConfig(peerHash, true, "Initiator")
 	if initiator == nil {
 		return
 	}
@@ -110,7 +115,7 @@ func demonstrateBasicConfigurations(routerHash []byte) {
 }
 
 // demonstrateAdvancedConfigurations shows advanced builder pattern usage
-func demonstrateAdvancedConfigurations(routerHash []byte) {
+func demonstrateAdvancedConfigurations(routerHash, peerHash []byte) {
 	fmt.Println("\n2. Advanced Builder Pattern:")
 	fmt.Println("============================")
 
@@ -127,14 +132,20 @@ func demonstrateAdvancedConfigurations(routerHash []byte) {
 		return
 	}
 
-	// Advanced configuration with chained builder methods
-	var rh data.Hash
-	copy(rh[:], routerHash)
-	config, err := ntcp2.NewNTCP2Config(rh, true) // true = initiator
+	// Advanced configuration with chained builder methods.
+	// The initiator config takes the peer's hash (RH_B); our own hash is set
+	// separately via WithLocalRouterHash.
+	var rhb data.Hash
+	copy(rhb[:], peerHash)
+	config, err := ntcp2.NewNTCP2Config(rhb, true) // true = initiator
 	if err != nil {
 		fmt.Printf("❌ Failed to create config: %v\n", err)
 		return
 	}
+
+	var ours data.Hash
+	copy(ours[:], routerHash)
+	config = config.WithLocalRouterHash(ours)
 
 	config = config.
 		WithHandshakeTimeout(60*time.Second).
@@ -218,7 +229,18 @@ func demonstrateInitiatorConfiguration(routerHash, remoteRouterHash, staticKey [
 	fmt.Println("\n🔧 Initiator (Client) Configuration:")
 	fmt.Println("====================================")
 
-	configBuilder := createBaseInitiatorConfig(routerHash, staticKey, args)
+	// An initiator has no peer hash to work with unless -remote-router-hash was
+	// supplied, and RH_B (the AES key for the obfuscated ephemeral keys in
+	// messages 1 and 2) is that peer hash. Without it there is no valid
+	// initiator configuration to demonstrate.
+	if remoteRouterHash == nil {
+		fmt.Printf("❌ Initiator configuration requires a remote router hash (-remote-router-hash):\n")
+		fmt.Printf("   NTCP2 keys the ephemeral-key obfuscation with the RESPONDER's router hash (RH_B),\n")
+		fmt.Printf("   not the initiator's own.\n")
+		return
+	}
+
+	configBuilder := createBaseInitiatorConfig(routerHash, remoteRouterHash, staticKey, args)
 	configBuilder = applyNTCP2Features(configBuilder, remoteRouterHash, args)
 	configBuilder = addCustomModifiers(configBuilder, args)
 	finalConfig := configBuilder
@@ -226,14 +248,23 @@ func demonstrateInitiatorConfiguration(routerHash, remoteRouterHash, staticKey [
 	validateAndDisplayConfig(finalConfig, remoteRouterHash)
 }
 
-// createBaseInitiatorConfig creates the basic NTCP2 configuration with core settings
-func createBaseInitiatorConfig(routerHash, staticKey []byte, args *ntcp2shared.NTCP2Args) *ntcp2.Config {
-	var rh data.Hash
-	copy(rh[:], routerHash)
-	config, err := ntcp2.NewNTCP2Config(rh, true) // true = initiator
+// createBaseInitiatorConfig creates the basic NTCP2 configuration with core
+// settings.
+//
+// The config is constructed from remoteRouterHash, not our own: for an
+// initiator the constructor argument is RH_B, the responder's router hash. Our
+// own identity goes to WithLocalRouterHash so LocalAddr() reports it correctly.
+func createBaseInitiatorConfig(routerHash, remoteRouterHash, staticKey []byte, args *ntcp2shared.NTCP2Args) *ntcp2.Config {
+	var rhb data.Hash
+	copy(rhb[:], remoteRouterHash)
+	config, err := ntcp2.NewNTCP2Config(rhb, true) // true = initiator
 	if err != nil {
 		log.Fatalf("Failed to create initiator config: %v", err)
 	}
+
+	var ours data.Hash
+	copy(ours[:], routerHash)
+	config = config.WithLocalRouterHash(ours)
 
 	return config.
 		WithStaticKey(staticKey).
