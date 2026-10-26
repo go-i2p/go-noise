@@ -10,21 +10,30 @@ import (
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/crypto/rand"
 
-	i2pbase64 "github.com/go-i2p/common/base64"
 	noise "github.com/go-i2p/go-noise"
+	"github.com/go-i2p/go-noise/internal/testri"
 	upstreamnoise "github.com/go-i2p/noise"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeRouterInfoWithKey builds synthetic RouterInfo bytes that embed the
-// base64-encoded Curve25519 public key as an `s=` option, so that the
-// always-on initiator-side RouterInfo/static-key verification
-// (verifyLocalRouterInfoMatchesStaticKey) accepts them. Tests that run a real
-// initiator handshake with a real static key must use this instead of arbitrary
-// fake bytes, otherwise the handshake fails with ROUTER_INFO_KEY_MISMATCH.
-func fakeRouterInfoWithKey(pub []byte) []byte {
-	return []byte("fake-router-info-s=" + i2pbase64.EncodeToString(pub) + "-end")
+// signedRouterInfoWithKey builds a real, signed RouterInfo advertising pub as
+// the `s` option of an NTCP2 address with `v=2`.
+//
+// ntcp2.md §"3) SessionConfirmed" -> §"Notes" requires the responder to verify
+// the RouterInfo signature and timestamp and to search for an NTCP/NTCP2 address
+// with a matching version option, so synthetic bytes that merely mention the key
+// cannot satisfy the check — and the initiator-side mirror
+// (verifyLocalRouterInfoMatchesStaticKey) now parses the RouterInfo too. Tests
+// that run a real handshake must therefore send a genuine RouterInfo.
+func signedRouterInfoWithKey(t testing.TB, pub []byte) []byte {
+	t.Helper()
+	return testri.New(t, &testri.Options{
+		StaticKey: pub,
+		Transport: "NTCP2",
+		Host:      "127.0.0.1",
+		Port:      "8887",
+	}).Bytes
 }
 
 // mustRandomBytes generates a random byte slice of the given size,
@@ -281,7 +290,7 @@ func newTestXKConfigPair(t *testing.T) testXKConfigPair {
 		WithRemoteRouterHash(responderHash).
 		WithRemoteStaticKey(responderKP.Public).
 		WithAESObfuscation(false, nil).
-		WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+		WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 	return testXKConfigPair{
 		initiatorConfig: initiatorConfig,

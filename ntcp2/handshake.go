@@ -1,7 +1,6 @@
 package ntcp2
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"io"
@@ -9,14 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-i2p/crypto/curve25519"
 	noise "github.com/go-i2p/go-noise"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/cryptorand"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
-
-	i2pbase64 "github.com/go-i2p/common/base64"
 )
 
 // NTCP2 handshake wire-format constants.
@@ -396,10 +392,10 @@ func performInitiatorHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time
 	// observable symptom is "frame #0 EOF" in the data phase. This check is
 	// always enforced as a hard error so the misconfiguration fails fast at
 	// handshake time rather than manifesting as a silent post-handshake EOF;
-	// the authoritative fix lives in the caller (go-i2p/go-i2p) — see
-	// PROMPT.md in this repo. verifyLocalRouterInfoMatchesStaticKey is a no-op
-	// when no static key or no RouterInfo is configured, so it never fires on
-	// partially-configured connections.
+	// the authoritative fix lives in the caller (go-i2p/go-i2p).
+	// verifyLocalRouterInfoMatchesStaticKey is a no-op when no static key or no
+	// RouterInfo is configured, so it never fires on partially-configured
+	// connections.
 	if err := verifyLocalRouterInfoMatchesStaticKey(cfg.StaticKey, riBytes); err != nil {
 		return oops.
 			Code("ROUTER_INFO_KEY_MISMATCH").
@@ -778,14 +774,19 @@ func performResponderHandshake(cfg *Config, nc *noise.NoiseConn, hsDeadline time
 		"payload_len": len(payload),
 	}).Debug("NTCP2 responder: msg3 done, handshake complete")
 
-	// ntcp2.rst §"Session Confirmed": "Bob must verify that Alice's static key
-	// received in the first frame matches the static key in the Router Info.
-	// Bob must first search the Router Info for a NTCP or NTCP2 Router Address
-	// with a matching version (v) option." The same bullet list requires an
-	// abnormal close on "RI ... or key validation failure", so a mismatch is
-	// reported with the PEER_ROUTER_INFO_KEY_MISMATCH code that the handshake
-	// error path turns into a probing-resistant RST.
-	if err := validatePeerRouterInfoStaticKey(nc.PeerStatic(), payload); err != nil {
+	// ntcp2.md §"3) SessionConfirmed" -> §"Notes": "Bob must perform the usual
+	// Router Info validation. Ensure the signature type is supported, verify the
+	// signature, verify the timestamp is within bounds", and "Bob must verify
+	// that Alice's static key received in the first frame matches the static key
+	// in the Router Info. Bob must first search the Router Info for a NTCP or
+	// NTCP2 Router Address with a matching version (v) option." The same bullet
+	// list requires an abnormal close on "AEAD, DH, timestamp, apparent replay,
+	// or key validation failure", so these failures carry codes that the
+	// handshake error path turns into a probing-resistant RST.
+	//
+	// This runs before the payload is handed to the transport layer (and from
+	// there to the netdb): an unverified RouterInfo must not be stored.
+	if err := validatePeerRouterInfo(extractRouterInfoBlock(payload), nc.PeerStatic()); err != nil {
 		return nil, err
 	}
 
@@ -1236,104 +1237,6 @@ func msg3Part2OptionsData() []byte {
 		0x00, 0x00, // tdelay
 		0x00, 0x00, // rdelay
 	}
-}
-
-// verifyLocalRouterInfoMatchesStaticKey is a defense-in-depth check that
-// verifies the public key derived from staticPriv (32-byte Curve25519 scalar)
-// is actually advertised in riBytes (a serialized RouterInfo).
-//
-// The check is intentionally cheap: it derives the public key, encodes it
-// using i2p-base64 (the encoding used in RouterAddress option mappings),
-// and substring-scans riBytes for that 43-character text.
-//
-// This avoids depending on the full RouterInfo parser (which would create a
-// dep cycle: go-noise is below go-i2p in the layer stack). The trade-off is
-// that this can produce a false negative if i2p-base64 substring happens to
-// appear elsewhere in the RI by coincidence (probability ≈ 2^-258, ignorable).
-//
-// staticPriv == nil or len != 32 returns nil (no-op): the caller is responsible
-// for static-key length validation elsewhere; this helper exists only to
-// catch the specific mismatch failure mode and not to second-guess validation.
-//
-// riBytes == nil or len == 0 also returns nil: caller checks for that
-// (msg3 will fail later with a clearer error).
-func verifyLocalRouterInfoMatchesStaticKey(staticPriv, riBytes []byte) error {
-	if len(staticPriv) != StaticKeySize {
-		return nil
-	}
-	if len(riBytes) == 0 {
-		return nil
-	}
-	priv, err := curve25519.NewCurve25519PrivateKey(staticPriv)
-	if err != nil {
-		return oops.Wrapf(err, "failed to create Curve25519 private key")
-	}
-	pubKey, err := priv.Public()
-	if err != nil {
-		return oops.Wrapf(err, "failed to derive Curve25519 public key from static private key")
-	}
-	pub := pubKey.Bytes()
-	pubB64 := i2pbase64.EncodeToString(pub)
-	if bytes.Contains(riBytes, []byte(pubB64)) {
-		return nil
-	}
-	return oops.
-		With("derived_public_key_b64", pubB64).
-		With("ri_bytes_len", len(riBytes)).
-		Errorf("derived public key from live NTCP2 static private key does not " +
-			"appear in serialized LocalRouterInfo (no NTCP2 address publishes " +
-			"this key as its `s=` option)")
-}
-
-// validatePeerRouterInfoStaticKey enforces the responder half of the NTCP2
-// static-key/RouterInfo cross-check.
-//
-// ntcp2.rst §"Session Confirmed": "Bob must verify that Alice's static key
-// received in the first frame matches the static key in the Router Info." The
-// key arrives in message 3 part 1 (EncryptedS) and is published in the
-// RouterInfo carried in message 3 part 2 as the `s=` option of a
-// published/unpublished NTCP or NTCP2 RouterAddress, "Base 64 encoded using the
-// standard I2P Base 64 alphabet, 32 bytes in binary, little-endian X25519 public
-// key" (§"Published Router Info").
-//
-// A mismatch means the RouterInfo does not belong to the router that completed
-// the Noise handshake, so it must be rejected rather than stored: the router
-// transport layer hands PeerRouterInfoBytes() to the netdb, and accepting a
-// mismatched pair would let a peer register a router identity it cannot prove.
-//
-// peerStatic is the key the Noise handshake proved (Conn.PeerStatic). It is a
-// no-op when the payload has no RouterInfo block or peerStatic is not a full
-// key, so it never fires on a partially-performed handshake.
-func validatePeerRouterInfoStaticKey(peerStatic, msg3Payload []byte) error {
-	if len(msg3Payload) == 0 {
-		return nil
-	}
-	if len(peerStatic) != StaticKeySize {
-		return nil
-	}
-
-	riBytes := extractRouterInfoBlock(msg3Payload)
-	if len(riBytes) == 0 {
-		return nil
-	}
-
-	// The RouterInfo may advertise several RouterAddresses (NTCP, SSU, NTCP2,
-	// ...). The spec's check is scoped to NTCP/NTCP2 addresses with a matching
-	// version option, but every `s=` value in the document is the same Noise
-	// static key for the router (§"Published Router Info": "all must contain the
-	// same static key and iv"), so a match on any base64-encoded occurrence of
-	// the peer's key is sufficient and avoids re-parsing the RouterInfo format
-	// here.
-	if bytes.Contains(riBytes, []byte(i2pbase64.EncodeToString(peerStatic))) {
-		return nil
-	}
-
-	return oops.
-		Code("PEER_ROUTER_INFO_KEY_MISMATCH").
-		In("ntcp2").
-		With("peer_static_key_b64", i2pbase64.EncodeToString(peerStatic)).
-		With("ri_bytes_len", len(riBytes)).
-		Errorf("message 3 RouterInfo does not advertise the static key received in the handshake")
 }
 
 // extractRouterInfoBlock returns the RouterInfo block data (block type 2) from

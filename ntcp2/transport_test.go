@@ -399,7 +399,7 @@ func TestDialNTCP2WithHandshake(t *testing.T) {
 			WithRemoteStaticKey(responderKP.Public).
 			WithAESObfuscation(false, nil).
 			WithHandshakeTimeout(5 * time.Second).
-			WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+			WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 		// Dial with handshake — should succeed now that a responder is running
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -725,7 +725,7 @@ func TestDialNTCP2WithHandshake_Wrapper(t *testing.T) {
 			WithRemoteStaticKey(responderKP.Public).
 			WithAESObfuscation(false, nil).
 			WithHandshakeTimeout(5 * time.Second).
-			WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+			WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 		ntcp2Addr := listener.Addr().(*Addr)
 		underlyingAddr := ntcp2Addr.UnderlyingAddr().String()

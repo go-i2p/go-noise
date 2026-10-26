@@ -125,7 +125,14 @@ func New(t testing.TB, opts *Options) *SignedRouterInfo {
 	addressOptions := map[string]string{"host": host, "port": port}
 	if !opts.SkipOptions {
 		addressOptions["s"] = i2pbase64.EncodeToString(staticPub)
-		addressOptions["i"] = i2pbase64.EncodeToString(introKey)
+		// The "i" option differs by transport: ntcp2.md §"Published Addresses"
+		// defines it as a 16-byte IV, ssu2.md as a 32-byte ChaCha20 key. Emit the
+		// right width so a parser scoped to that transport accepts the fixture.
+		iKey := introKey
+		if transport == "NTCP2" || transport == "NTCP" {
+			iKey = introKey[:16]
+		}
+		addressOptions["i"] = i2pbase64.EncodeToString(iKey)
 		addressOptions["v"] = version
 	}
 	if opts.MTU > 0 {

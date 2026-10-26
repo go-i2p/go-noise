@@ -82,13 +82,22 @@ func TestHandshakeErrorCodesAreAllEmitted(t *testing.T) {
 	}
 }
 
-// TestClockSkewIsNotAbnormalClose documents the deliberate exception:
-// ntcp2.rst §"Clock Skew Guidelines" requires Bob to answer with a Session
-// Created "rather than simply closing the connection" so Alice can read tsB,
-// which an immediate RST would discard.
-func TestClockSkewIsNotAbnormalClose(t *testing.T) {
-	assert.False(t, handshakeErrorCodes["MSG1_CLOCK_SKEW"])
-	assert.False(t, handshakeErrorCodes["MSG2_CLOCK_SKEW"])
+// TestClockSkewCloseRoles pins the two opposite clock-skew behaviors.
+//
+// The responder's message-1 skew is NOT an abnormal close: ntcp2.rst §"Clock Skew
+// Guidelines" requires Bob to answer with a Session Created "rather than simply
+// closing the connection" so Alice can read tsB, which an immediate RST would
+// discard.
+//
+// The initiator's message-2 skew IS one: ntcp2.md §"2) SessionCreated" ->
+// §"Notes" — "On any error, including AEAD, DH, timestamp, apparent replay, or
+// key validation failure, Alice must halt further message processing and close
+// the connection without responding. This should be an abnormal close (TCP RST)."
+func TestClockSkewCloseRoles(t *testing.T) {
+	assert.False(t, handshakeErrorCodes["MSG1_CLOCK_SKEW"],
+		"Bob must reply before closing so Alice can measure the skew")
+	assert.True(t, handshakeErrorCodes["MSG2_CLOCK_SKEW"],
+		"Alice must abnormally close on a message-2 timestamp failure")
 }
 
 // TestReplayCacheTTLFor pins the spec floor: "Values in the cache must have a
@@ -119,10 +128,12 @@ func TestFallbackReplayDetectorIsSharedAndProtective(t *testing.T) {
 	assert.True(t, second.CheckAndAdd(key), "a replay on another connection must be detected")
 }
 
-// TestValidatePeerRouterInfoStaticKey covers ntcp2.rst §"Session Confirmed":
-// "Bob must verify that Alice's static key received in the first frame matches
-// the static key in the Router Info."
-func TestValidatePeerRouterInfoStaticKey(t *testing.T) {
+// TestValidatePeerRouterInfo covers ntcp2.md §"3) SessionConfirmed" -> §"Notes":
+//"Bob must verify that Alice's static key received in the first frame matches
+//the static key in the Router Info", and "Bob must perform the usual Router Info
+//validation. Ensure the signature type is supported, verify the signature,
+//verify the timestamp is within bounds".
+func TestValidatePeerRouterInfo(t *testing.T) {
 	staticPriv := make([]byte, StaticKeySize)
 	staticPriv[0] = 0x08
 	privKey, err := curve25519.NewCurve25519PrivateKey(staticPriv)
@@ -131,29 +142,38 @@ func TestValidatePeerRouterInfoStaticKey(t *testing.T) {
 	require.NoError(t, err)
 	peerStatic := pubKey.Bytes()
 
-	ri := []byte("router.identity&host=1.2.3.4&port=8887&s=" + i2pbase64.EncodeToString(peerStatic) + "&v=2")
-	frame := routerInfoFrame(t, ri)
+	frame := routerInfoFrame(t, signedRouterInfoWithKey(t, peerStatic))
 
-	assert.NoError(t, validatePeerRouterInfoStaticKey(peerStatic, frame),
-		"a RouterInfo advertising the peer's static key must be accepted")
+	assert.NoError(t, validatePeerRouterInfo(extractRouterInfoBlock(frame), peerStatic),
+		"a signed RouterInfo advertising the peer's static key must be accepted")
 
 	other := make([]byte, StaticKeySize)
 	other[31] = 0x7f
-	otherFrame := routerInfoFrame(t, []byte("router.identity&s="+i2pbase64.EncodeToString(other)+"&v=2"))
+	otherFrame := routerInfoFrame(t, signedRouterInfoWithKey(t, other))
 
-	err = validatePeerRouterInfoStaticKey(peerStatic, otherFrame)
+	err = validatePeerRouterInfo(extractRouterInfoBlock(otherFrame), peerStatic)
 	require.Error(t, err, "a RouterInfo advertising a different key must be rejected")
 	var oopsErr oops.OopsError
 	require.ErrorAs(t, err, &oopsErr)
 	assert.Equal(t, "PEER_ROUTER_INFO_KEY_MISMATCH", oopsErr.Code())
 	assert.True(t, isHandshakeProtocolError(err), "the mismatch must trigger an abnormal close")
 
+	// An unsigned blob that merely mentions the key is not a RouterInfo: the
+	// signature check must reject it, and the rejection must be an abnormal
+	// close like every other RI validation failure.
+	textOnly := routerInfoFrame(t, []byte("router.identity&host=1.2.3.4&port=8887&s="+i2pbase64.EncodeToString(peerStatic)+"&v=2"))
+	err = validatePeerRouterInfo(extractRouterInfoBlock(textOnly), peerStatic)
+	require.Error(t, err, "an unsigned RouterInfo must be rejected")
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "PEER_ROUTER_INFO_INVALID", oopsErr.Code())
+	assert.True(t, isHandshakeProtocolError(err), "an invalid RouterInfo must trigger an abnormal close")
+
 	// An empty frame, a frame with no RouterInfo block, and a short/absent
 	// peer key are all no-ops.
-	assert.NoError(t, validatePeerRouterInfoStaticKey(peerStatic, nil))
-	assert.NoError(t, validatePeerRouterInfoStaticKey(peerStatic, paddingFrame(t)))
-	assert.NoError(t, validatePeerRouterInfoStaticKey(nil, frame))
-	assert.NoError(t, validatePeerRouterInfoStaticKey(make([]byte, StaticKeySize-1), frame))
+	assert.NoError(t, validatePeerRouterInfo(nil, peerStatic))
+	assert.NoError(t, validatePeerRouterInfo(extractRouterInfoBlock(paddingFrame(t)), peerStatic))
+	assert.NoError(t, validatePeerRouterInfo(extractRouterInfoBlock(frame), nil))
+	assert.NoError(t, validatePeerRouterInfo(extractRouterInfoBlock(frame), make([]byte, StaticKeySize-1)))
 }
 
 // routerInfoFrame wraps ri in the message-3 part-2 block frame: block type 2,

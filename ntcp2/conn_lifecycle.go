@@ -54,6 +54,10 @@ var handshakeErrorCodes = map[string]bool{
 
 	// Key validation failures
 	"INVALID_CURVE25519_KEY": true, // X[31] & 0x80 != 0; spec: probe as for AEAD
+	// §"3) SessionConfirmed" -> §"Notes" lists "RI … validation failure"
+	// alongside AEAD/DH/timestamp/replay/key failures, so an unparseable,
+	// unsigned or stale peer RouterInfo is an abnormal close too.
+	"PEER_ROUTER_INFO_INVALID": true,
 	// The RouterInfo we received does not advertise the static key the peer
 	// proved possession of. (The ROUTER_INFO_KEY_MISMATCH code is a *local*
 	// config error on our own outbound RouterInfo, not a peer violation, so it

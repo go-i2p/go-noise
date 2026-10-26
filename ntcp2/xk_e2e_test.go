@@ -74,7 +74,7 @@ func TestXKHandshake_NTCP2_FullE2E(t *testing.T) {
 		WithRemoteRouterHash(responderHash).
 		WithRemoteStaticKey(responderKP.Public).
 		WithAESObfuscation(false, nil).
-		WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+		WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 	// ── Step 5: Start TCP listener ────────────────────────────────────
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -467,7 +467,7 @@ func TestInboundRouterHash(t *testing.T) {
 		WithRemoteRouterHash(responderHash).
 		WithRemoteStaticKey(responderKP.Public).
 		WithAESObfuscation(false, nil).
-		WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+		WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 	// --- Start NTCP2 listener ---
 	ntcp2Ln, tcpAddr := startTestNTCP2Listener(t, responderConfig)
@@ -578,7 +578,7 @@ func TestXKHandshake_NTCP2_AESObfuscation(t *testing.T) {
 		WithRemoteRouterHash(responderHash).
 		WithRemoteStaticKey(responderKP.Public).
 		WithAESObfuscation(true, aesIV). // AES ENABLED with same IV
-		WithLocalRouterInfo(fakeRouterInfoWithKey(initiatorKP.Public))
+		WithLocalRouterInfo(signedRouterInfoWithKey(t, initiatorKP.Public))
 
 	// ── Step 6: Start TCP listener ────────────────────────────────────
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
