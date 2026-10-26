@@ -122,8 +122,6 @@ func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 
 // sendSessionRequest creates a SessionRequest, installs the SessCreateHeader
 // key, sends the packet, and returns the raw request for retransmission.
-// sendSessionRequest creates a SessionRequest, installs the SessCreateHeader
-// key, sends the packet, and returns the raw request for retransmission.
 func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 	flog("sendSessionRequest", logger.Fields{"connectionID": h.config.ConnectionID}).Debug("Creating and sending SessionRequest")
 	// ssu2.md §"Session Request" -> header table: "Destination Connection ID ::
