@@ -408,6 +408,12 @@ func (h *SSU2Conn) sealPacket(packet *SSU2Packet, addr *net.UDPAddr) ([]byte, []
 
 	h.applyDataHeaderMoreFlags(packet)
 
+	// The destination family selects the outbound datagram budget: ssu2.md
+	// §"Max I2NP Message Size" allows MTU - 28 on IPv4 but only MTU - 48 on
+	// IPv6, so a 1453-1472 byte packet is legal over IPv4 and must not be
+	// refused.
+	packet.IsIPv4 = IsIPv4Addr(addr)
+
 	data, err := packet.Serialize()
 	if err != nil {
 		return nil, nil, oops.Wrapf(err, "failed to serialize packet")
@@ -778,6 +784,10 @@ func (h *SSU2Conn) sendNextNonceInline() error {
 	// Data-phase moreflags (header bytes 14-15) are set to 0 per SSU2 spec.
 	// SSU2 has no length-obfuscation field; see applyDataHeaderMoreFlags.
 	binary.BigEndian.PutUint16(packet.Header[14:16], 0)
+
+	h.remoteAddrLock.RLock()
+	packet.IsIPv4 = IsIPv4Addr(h.remoteAddr)
+	h.remoteAddrLock.RUnlock()
 
 	data, err := packet.Serialize()
 	if err != nil {

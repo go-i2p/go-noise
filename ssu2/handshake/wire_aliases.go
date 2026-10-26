@@ -47,7 +47,7 @@ const (
 	MessageTypeTokenRequest     = wire.MessageTypeTokenRequest
 	MessageTypeHolePunch        = wire.MessageTypeHolePunch
 	SSU2ProtocolVersion         = wire.SSU2ProtocolVersion
-	SSU2NetworkID               = wire.SSU2NetworkID
+	MainNetworkID               = wire.MainNetworkID
 	ShortHeaderSize             = wire.ShortHeaderSize
 	MACSize                     = wire.MACSize
 	MaxPacketNumber             = wire.MaxPacketNumber

@@ -36,6 +36,7 @@ var (
 	NewSSU2Conn     = session.NewSSU2Conn
 	NewMockSSU2Conn = session.NewMockSSU2Conn
 	NewPacketRouter = session.NewPacketRouter
+	IsIPv4Addr      = wire.IsIPv4Addr
 )
 
 // ─── From ssu2/wire ───────────────────────────────────────────────────────────
@@ -118,7 +119,7 @@ const (
 	MaxPacketSizeIPv4   = wire.MaxPacketSizeIPv4
 	MaxPacketSizeIPv6   = wire.MaxPacketSizeIPv6
 	SSU2ProtocolVersion = wire.SSU2ProtocolVersion
-	SSU2NetworkID       = wire.SSU2NetworkID
+	MainNetworkID       = wire.MainNetworkID
 	TokenSize           = wire.TokenSize
 	MaxTokenCacheSize   = wire.MaxTokenCacheSize
 	RetryTokenTTL       = wire.RetryTokenTTL

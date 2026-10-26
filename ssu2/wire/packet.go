@@ -55,6 +55,65 @@ type SSU2Packet struct {
 	// decrypts"), so it must travel with the packet rather than being consumed
 	// at parse time.
 	Source net.Addr
+
+	// IsIPv4 records the address family of the datagram's peer — the source for
+	// an inbound packet, the destination for an outbound one. It selects the
+	// legal total packet size at Serialize/Deserialize time, per ssu2.md §"Max
+	// I2NP Message Size": "IPv4: … Max message size is MTU - 28 … IPv6: … Max
+	// message size is MTU - 48." Zero (unknown family) uses the conservative
+	// IPv6 limit. Never serialized on the wire.
+	IsIPv4 bool
+
+	// NetworkID is header byte 14 of a long header — the I2P network the packet
+	// belongs to. Deserialize records the value found on the wire; the
+	// config-aware session and listener layers compare it against their own
+	// network ID and drop mismatches, per ssu2.md §"Header" ("2: SSU 2") and
+	// proposal 147, which exists so test-network traffic fails fast. The wire
+	// layer does not decide which network is correct. Short-header messages
+	// (Session Confirmed, Data) carry no network ID and leave this zero.
+	NetworkID uint8
+}
+
+// maxTotalSize returns the largest legal datagram size for the packet's address
+// family. ssu2.md §"Max I2NP Message Size" budgets IPv4 20 bytes more than IPv6
+// (the IP header difference), so an IPv4 session may send up to
+// MaxPacketSizeIPv4 while an IPv6 session is capped at MaxPacketSizeIPv6.
+func (p *SSU2Packet) maxTotalSize() int {
+	if p.IsIPv4 {
+		return MaxPacketSizeIPv4
+	}
+	return MaxPacketSizeIPv6
+}
+
+// minTotalSize returns the smallest legal datagram size for this message type.
+//
+// ssu2.md §"SessionRequest (Type 0)" / §"SessionCreated (Type 1)": "Minimum
+// Size: 88". The intro-key family (Retry, Token Request, Peer Test, Hole
+// Punch) has no per-message "Minimum Size" line, but each carries a 32-byte
+// long header, an 8-byte minimum payload and a 16-byte MAC, and the spec's
+// header-protection construction requires the last 24 bytes of the packet to be
+// payload + MAC — hence 56. Reference: Java SSU2Util.MIN_HANDSHAKE_DATA_LEN
+// (88) and SSU2Header.trialDecryptIntroKeyHeader (56).
+func (p *SSU2Packet) minTotalSize() int {
+	switch p.MessageType {
+	case MessageTypeSessionRequest, MessageTypeSessionCreated:
+		return MinHandshakePacketSize
+	case MessageTypeRetry, MessageTypeTokenRequest, MessageTypePeerTest, MessageTypeHolePunch:
+		return MinIntroKeyMessageSize
+	default:
+		return MinPacketSize
+	}
+}
+
+// IsIPv4Addr reports whether addr is an IPv4 (or IPv4-mapped) endpoint. A nil
+// or unparseable address is treated as IPv6 so that the conservative, smaller
+// packet budget applies.
+func IsIPv4Addr(addr net.Addr) bool {
+	udp, ok := addr.(*net.UDPAddr)
+	if !ok || udp == nil || udp.IP == nil {
+		return false
+	}
+	return udp.IP.To4() != nil
 }
 
 // Message type constants from ssu2.rst
@@ -101,6 +160,21 @@ const (
 	MaxPacketSizeIPv4 = 1472 // 1500 Ethernet MTU - 20 IPv4 header - 8 UDP header
 	MaxPacketSizeIPv6 = 1452 // 1500 Ethernet MTU - 40 IPv6 header - 8 UDP header
 
+	// MinHandshakePacketSize is the smallest legal Session Request or Session
+	// Created datagram: 32-byte long header + 32-byte ephemeral key + 8-byte
+	// minimum payload + 16-byte MAC. ssu2.md §"SessionRequest (Type 0)" and
+	// §"SessionCreated (Type 1)" both state "Size: 80 + payload size. Minimum
+	// Size: 88". Reference: Java SSU2Util.MIN_HANDSHAKE_DATA_LEN =
+	// SESSION_HEADER_SIZE (64) + TOTAL_PROT_SAMPLE_LEN (24) = 88, enforced in
+	// SSU2Header.trialDecryptHandshakeHeader.
+	MinHandshakePacketSize = 88
+
+	// MinIntroKeyMessageSize is the smallest legal Retry / Token Request / Peer
+	// Test / Hole Punch datagram: 32-byte long header + 8-byte minimum payload +
+	// 16-byte MAC. Reference: Java SSU2Header.trialDecryptIntroKeyHeader
+	// ("packet must be 56 bytes min").
+	MinIntroKeyMessageSize = 56
+
 	// MaxPacketNumber is the largest 32-bit packet number (2^32 - 1).
 	// ssu2.rst §"Packet Numbering": "When a max of 2**32 packets have been
 	// sent, wrapping the packet number back to the first packet number, that
@@ -111,7 +185,14 @@ const (
 // SSU2 long header field constants per specification
 const (
 	SSU2ProtocolVersion uint8 = 2 // Protocol version at header byte 13
-	SSU2NetworkID       uint8 = 2 // Network ID (I2P mainnet) at header byte 14
+
+	// MainNetworkID is the header byte 14 value for the I2P main network
+	// (ssu2.md §"Header": "2: SSU 2 (required)"). It is a default, not a
+	// requirement: proposal 147 assigns different IDs to test networks so that
+	// cross-network connections fail fast, so the value in force is
+	// configuration (SSU2Config.NetworkID), and this constant only names the
+	// main-network value.
+	MainNetworkID uint8 = 2
 )
 
 // NewSSU2Packet creates a new SSU2 packet with the specified message type.
@@ -214,8 +295,24 @@ func (p *SSU2Packet) Deserialize(data []byte) error {
 	}
 
 	p.MessageType = data[12]
+
+	// Per-message-type floor, applied as soon as the type is known and before
+	// any cryptographic work: ssu2.md §"SessionRequest (Type 0)" /
+	// §"SessionCreated (Type 1)" state "Minimum Size: 88", and the intro-key
+	// family requires 56 for header protection to have its 24-byte sample.
+	// Reference: Java SSU2Header.trialDecryptHandshakeHeader rejects anything
+	// below SSU2Util.MIN_HANDSHAKE_DATA_LEN outright.
+	if minSize := p.minTotalSize(); len(data) < minSize {
+		return oops.Errorf("packet too short for message type %d: %d bytes (minimum %d)",
+			p.MessageType, len(data), minSize)
+	}
+
 	headerSize := p.getHeaderSize()
 
+	// Record the network ID for the caller to compare against its own
+	// configuration; the wire layer has no policy about which network is
+	// correct. The version byte, by contrast, is a format fact: this
+	// implementation only speaks SSU2 version 2, so it is enforced here.
 	if err := p.validateLongHeader(data, headerSize); err != nil {
 		return err
 	}
@@ -230,7 +327,18 @@ func (p *SSU2Packet) Deserialize(data []byte) error {
 	return nil
 }
 
-// validateLongHeader checks protocol version and network ID for long-header messages.
+// validateLongHeader checks the protocol version and records the network ID for
+// long-header messages.
+//
+// The version byte is a format fact and is enforced here: this implementation
+// only speaks SSU2 version 2 (ssu2.md §"Header": "2: SSU 2 (required)").
+//
+// The network ID is deliberately NOT enforced at the wire layer. Proposal 147
+// ("I2P Network ID") makes it a deployment-scoped value — the main network uses
+// 2, each test network uses something else, so cross-network connections fail
+// fast — which means the correct value depends on configuration, not on the
+// protocol. Callers compare the recorded value against their configured
+// network ID; see ssu2/session and ssu2/server.
 func (p *SSU2Packet) validateLongHeader(data []byte, headerSize int) error {
 	flog("validateLongHeader", logger.Fields{"headerSize": headerSize}).Debug("validateLongHeader: validating long header fields")
 	if headerSize != LongHeaderSize {
@@ -239,9 +347,7 @@ func (p *SSU2Packet) validateLongHeader(data []byte, headerSize int) error {
 	if data[13] != SSU2ProtocolVersion {
 		return oops.Errorf("unsupported protocol version: %d (expected %d)", data[13], SSU2ProtocolVersion)
 	}
-	if data[14] != SSU2NetworkID {
-		return oops.Errorf("wrong network ID: %d (expected %d)", data[14], SSU2NetworkID)
-	}
+	p.NetworkID = data[14]
 	return nil
 }
 
@@ -313,20 +419,31 @@ func (p *SSU2Packet) validate() error {
 		totalSize += len(p.EphemeralKey)
 	}
 
-	if totalSize > MaxPacketSizeIPv6 {
-		return oops.Errorf("packet too large: %d bytes (maximum %d for IPv6, %d for IPv4)",
-			totalSize, MaxPacketSizeIPv6, MaxPacketSizeIPv4)
+	if totalSize > p.maxTotalSize() {
+		return oops.Errorf("packet too large: %d bytes (maximum %d for %s)",
+			totalSize, p.maxTotalSize(), packetFamily(p.IsIPv4))
 	}
 
 	// Symmetric with Deserialize()'s minimum-size check: a packet built with
 	// an empty/near-empty payload could otherwise pass validate() here but
 	// then be rejected by any spec-compliant receiver (including this same
-	// codebase's own Deserialize) as "packet too short".
-	if totalSize < MinPacketSize {
-		return oops.Errorf("packet too small: %d bytes (minimum %d)", totalSize, MinPacketSize)
+	// codebase's own Deserialize) as "packet too short". The floor is
+	// per-message-type: ssu2.md §"SessionRequest (Type 0)" / §"SessionCreated
+	// (Type 1)" require 88 bytes minimum, the intro-key family 56.
+	if minSize := p.minTotalSize(); totalSize < minSize {
+		return oops.Errorf("packet too small: %d bytes (minimum %d for message type %d)",
+			totalSize, minSize, p.MessageType)
 	}
 
 	return nil
+}
+
+// packetFamily names an address family for error messages.
+func packetFamily(isIPv4 bool) string {
+	if isIPv4 {
+		return "IPv4"
+	}
+	return "IPv6"
 }
 
 // Size returns the total wire format size in bytes.

@@ -134,6 +134,7 @@ var (
 	ExtractConnectionID       = wire.ExtractConnectionID
 	ParseNewTokenBlock        = wire.ParseNewTokenBlock
 	NewHeaderProtectorManager = wire.NewHeaderProtectorManager
+	IsIPv4Addr                = wire.IsIPv4Addr
 )
 
 // ─── From ssu2/handshake ──────────────────────────────────────────────────────

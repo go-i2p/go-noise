@@ -154,7 +154,7 @@ const (
 
 const (
 	SSU2ProtocolVersion = wire.SSU2ProtocolVersion
-	SSU2NetworkID       = wire.SSU2NetworkID
+	MainNetworkID       = wire.MainNetworkID
 )
 
 // ─── TokenCache constants ──────────────────────────────────────────────────────

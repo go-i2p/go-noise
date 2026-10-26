@@ -117,7 +117,42 @@ func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 		return err
 	}
 
+	// ssu2.md §"Packet Numbering": "For Alice, outbound packet numbering starts
+	// at 0 with Session Confirmed", and the worked example immediately below it
+	// pairs "SessionConfirmed (0)" with "Data (1)". §"Packet Number" also states
+	// "Each packet number may only be used once." Session Confirmed is sent with
+	// packet number 0 (see [SSU2Conn.sendSessionConfirmed]), so the first data
+	// packet must be 1. Without this reservation Alice's first Data packet
+	// reuses number 0 and a compliant peer discards it as a duplicate (Java
+	// marks 0 received on the inbound side, PeerState2.java:146, and starts its
+	// own counter at 1 for outbound sessions, PeerState2.java:150).
+	h.reserveInitiatorDataSequence()
+
 	return h.finalizeHandshake()
+}
+
+// reserveInitiatorDataSequence consumes Alice's packet number 0, which the
+// Session Confirmed message just used, so data-phase numbering starts at 1.
+// Must be called after the Session Confirmed has been handed to the wire.
+func (h *SSU2Conn) reserveInitiatorDataSequence() {
+	flog("reserveInitiatorDataSequence").Debug("Reserving SSU2 packet number 0 for Session Confirmed")
+	h.sendSeqMutex.Lock()
+	defer h.sendSeqMutex.Unlock()
+	if h.sendSequence == 0 {
+		h.sendSequence = 1
+	}
+}
+
+// markPeerConfirmedPacketSeen records the peer's Session Confirmed packet
+// number in the inbound packet-number filter, so that number is not later
+// accepted as a fresh data packet. Session Confirmed is the only handshake
+// message inside a direction's data-phase numbering space (ssu2.md §"Packet
+// Numbering"), and its fragments all carry the same number.
+func (h *SSU2Conn) markPeerConfirmedPacketSeen(fragments []*SSU2Packet) {
+	if len(fragments) == 0 {
+		return
+	}
+	h.recvWindow.MarkSeen(fragments[0].PacketNumber)
 }
 
 // sendSessionRequest creates a SessionRequest, installs the SessCreateHeader
@@ -564,6 +599,11 @@ func (h *SSU2Conn) receiveAndProcessSessionConfirmed(ctx context.Context, sessio
 	if err != nil {
 		return err
 	}
+
+	// Alice's Session Confirmed consumed packet number 0 in her numbering space
+	// (ssu2.md §"Packet Numbering"); record it as delivered so the data path
+	// never treats a retransmission or a peer data packet 0 as new.
+	h.markPeerConfirmedPacketSeen(fragments)
 
 	return oops.Wrapf(
 		h.handshakeHandler.ProcessSessionConfirmedFragments(fragments),

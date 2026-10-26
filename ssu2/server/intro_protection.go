@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net"
+
 	"github.com/samber/oops"
 )
 
@@ -60,7 +62,24 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 // key because header protection XOR-masks those bytes.  TrialDeobfuscate tries
 // every registered session's protectors in turn and accepts the first whose
 // decrypted dest conn ID matches the session's own conn ID.
-func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
+// parseInboundPacket de-obfuscates and parses one received datagram, stamping
+// the peer's actual source address and address family onto the returned packet.
+//
+// The source stamp is not cosmetic: ssu2.md §"Session Created" -> §"Notes"
+// requires Alice to "drop the message if the source IP and port do not match the
+// destination IP and port of the Session Request", and the family selects the
+// legal datagram budget (§"Max I2NP Message Size": IPv4 MTU - 28, IPv6
+// MTU - 48). Both are only checkable while the datagram's origin is known, so
+// the listener — which shares one socket across many sessions — must carry it
+// through to the session, exactly as the dedicated-socket read path does in
+// ssu2/session/conn_read.go.
+func (l *SSU2Listener) parseInboundPacket(data []byte, from *net.UDPAddr) (*SSU2Packet, bool) {
+	stamp := func(packet *SSU2Packet) *SSU2Packet {
+		packet.Source = from
+		packet.IsIPv4 = IsIPv4Addr(from)
+		return packet
+	}
+
 	// Try intro-key (new sessions and out-of-session intro-key messages:
 	// TokenRequest, PeerTest, HolePunch, Retry).
 	if hp := l.introHeaderProtector.Load(); hp != nil {
@@ -76,7 +95,7 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 			packet := &SSU2Packet{}
 			if err := packet.Deserialize(decrypted); err == nil &&
 				isIntroKeyMessageType(packet.MessageType) {
-				return packet, true
+				return stamp(packet), true
 			}
 		}
 	}
@@ -89,7 +108,7 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	if conn, deobfuscated, err := l.pendingOutbound.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
 		packet := &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
-			return packet, true
+			return stamp(packet), true
 		}
 	}
 
@@ -102,7 +121,7 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	if conn, deobfuscated, err := l.acceptedSessions.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
 		packet := &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
-			return packet, true
+			return stamp(packet), true
 		}
 	}
 
@@ -112,7 +131,7 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	// above.
 	packet := &SSU2Packet{}
 	if err := packet.Deserialize(data); err == nil {
-		return packet, true
+		return stamp(packet), true
 	}
 
 	return nil, false

@@ -136,6 +136,11 @@ type HandshakeHandler struct {
 	// if the source IP and port do not match the destination IP and port of the
 	// Session Request."
 	expectedPeerAddr *net.UDPAddr
+
+	// networkID is header byte 14 for outbound long-header messages, and the
+	// value required of inbound ones. Zero means MainNetworkID (2). See
+	// SetNetworkID.
+	networkID uint8
 }
 
 // buildSSU2Prologue returns the Noise prologue for SSU2 handshakes.
@@ -364,6 +369,45 @@ func (h *HandshakeHandler) SetMaxClockSkew(d time.Duration) {
 	h.maxClockSkew = d
 }
 
+// SetNetworkID configures the I2P network ID written into header byte 14 of
+// outbound long-header messages and required of inbound ones. A zero value
+// selects the main-network ID (2), so an unset config stays compliant.
+//
+// ssu2.md §"Header" fixes 2 for the main network; proposal 147 assigns other
+// values to test networks precisely so that "cross-network connections … fail
+// the test" instead of mixing traffic.
+func (h *HandshakeHandler) SetNetworkID(id uint8) {
+	if id == 0 {
+		id = MainNetworkID
+	}
+	h.networkID = id
+}
+
+// NetworkID returns the configured network ID, defaulting to the main network.
+func (h *HandshakeHandler) NetworkID() uint8 {
+	if h.networkID == 0 {
+		return MainNetworkID
+	}
+	return h.networkID
+}
+
+// validateNetworkID rejects a long-header message whose recorded network ID
+// differs from ours. Short-header messages carry no network ID field, so the
+// wire layer leaves NetworkID zero; those are checked by the session's AEAD and
+// header-protection keys instead.
+func (h *HandshakeHandler) validateNetworkID(packet *SSU2Packet) error {
+	if packet.NetworkID == 0 || packet.NetworkID == h.NetworkID() {
+		return nil
+	}
+	return oops.
+		Code("WRONG_NETWORK_ID").
+		In("ssu2").
+		With("got", packet.NetworkID).
+		With("expected", h.NetworkID()).
+		Errorf("packet network ID %d does not match ours %d; peer is on a different I2P network (proposal 147)",
+			packet.NetworkID, h.NetworkID())
+}
+
 // PeerOptions returns the remote peer's Options parameters parsed during
 // the handshake, or nil if no Options block was received.
 func (h *HandshakeHandler) PeerOptions() *OptionsParams {
@@ -464,6 +508,58 @@ func (h *HandshakeHandler) SetPeerAddress(ip net.IP, port uint16) {
 	}
 	h.peerAddress = append(net.IP(nil), ip...)
 	h.peerPort = port
+}
+
+// SetExpectedPeerAddr records the destination IP and UDP port the Session
+// Request was sent to. A Session Created must arrive from exactly that
+// endpoint.
+//
+// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the
+// message if the source IP and port do not match the destination IP and port of
+// the Session Request." §"Header Encryption Keys" relies on the same property
+// ("This design relies on endpoints retaining a stable address for the duration
+// of the handshake"), and §"Connection Migration" states migration "is defined
+// only for the data phase", so no address change is legitimate mid-handshake.
+//
+// A nil address disables the check, which is correct for a session that has not
+// sent a Session Request yet.
+func (h *HandshakeHandler) SetExpectedPeerAddr(addr *net.UDPAddr) {
+	if addr == nil {
+		h.expectedPeerAddr = nil
+		return
+	}
+	h.expectedPeerAddr = &net.UDPAddr{IP: append(net.IP(nil), addr.IP...), Port: addr.Port}
+}
+
+// validatePeerAddress enforces the Session Created source-address rule for an
+// initiator. It is a no-op when no Session Request address was recorded.
+//
+// Checked before MixHash(header), per ssu2.md §"Duplicates and Error Handling":
+// a message that must be rejected has to be discarded before it is folded into
+// the transcript, otherwise the handshake hash is unrecoverably corrupted.
+func (h *HandshakeHandler) validatePeerAddress(packet *SSU2Packet) error {
+	if !h.initiator || h.expectedPeerAddr == nil {
+		return nil
+	}
+	src, ok := packet.Source.(*net.UDPAddr)
+	if !ok || src == nil {
+		// No source recorded (e.g. a caller feeding packets directly). The
+		// spec rule is about the observed UDP source; without one there is
+		// nothing to compare, and inventing a failure would break in-process
+		// tests that drive the handler without a socket.
+		return nil
+	}
+	if !h.expectedPeerAddr.IP.Equal(src.IP) || h.expectedPeerAddr.Port != src.Port {
+		return oops.
+			Code("SESSION_CREATED_WRONG_SOURCE").
+			In("ssu2").
+			With("source", src.String()).
+			With("expected", h.expectedPeerAddr.String()).
+			Errorf("Session Created arrived from %s but the Session Request was sent to %s; dropping per ssu2.md §\"Session Created\" Notes",
+				src.String(), h.expectedPeerAddr.String())
+	}
+
+	return nil
 }
 
 // createHandshakeBlocks creates the standard blocks for handshake messages.
@@ -633,7 +729,7 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 	binary.BigEndian.PutUint32(header[8:12], uint32(packetNumber))
 	header[12] = msgType
 	header[13] = SSU2ProtocolVersion // ver=2
-	header[14] = SSU2NetworkID       // id=2 (I2P mainnet)
+	header[14] = h.NetworkID()       // id: 2 on the main network, per proposal 147
 	header[15] = 0                   // flag=0
 	binary.BigEndian.PutUint64(header[16:24], sourceConnID)
 	// bytes 24-31 = token (zero for initial SessionRequest, populated by retries)

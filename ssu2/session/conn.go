@@ -162,8 +162,12 @@ type SSU2Conn struct {
 	cipherMutex sync.RWMutex
 
 	// Packet management
-	sendQueue    chan *SSU2Packet
-	recvQueue    chan *SSU2Packet
+	sendQueue chan *SSU2Packet
+	recvQueue chan *SSU2Packet
+	// sendSequence is the next outbound data-phase packet number. For a
+	// responder it starts at 0; for an initiator it starts at 1 because
+	// Session Confirmed already consumed number 0. See
+	// [SSU2Conn.reserveInitiatorDataSequence] and ssu2.md §"Packet Numbering".
 	sendSequence uint32
 	sendSeqMutex sync.Mutex
 

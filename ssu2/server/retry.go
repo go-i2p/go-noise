@@ -97,6 +97,9 @@ func (l *SSU2Listener) sendRetry(remoteAddr *net.UDPAddr, token, originalHeader 
 	retryPacket.Header = header
 	retryPacket.Payload = ciphertext
 	retryPacket.MAC = mac
+	// The Retry goes back to the Session Request's source, so that endpoint's
+	// family selects the datagram budget (ssu2.md §"Max I2NP Message Size").
+	retryPacket.IsIPv4 = IsIPv4Addr(remoteAddr)
 
 	packetData, err := retryPacket.Serialize()
 	if err != nil {
@@ -195,7 +198,7 @@ func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte, packetNumb
 
 	header[12] = MessageTypeRetry
 	header[13] = SSU2ProtocolVersion
-	header[14] = SSU2NetworkID
+	header[14] = l.networkID()
 
 	// bytes 24-31: the token Alice must echo in her next Session Request
 	copy(header[24:32], token)

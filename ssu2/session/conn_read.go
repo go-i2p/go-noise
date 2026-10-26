@@ -239,6 +239,10 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		return nil
 	}
 
+	// The peer's address family selects the legal datagram budget
+	// (ssu2.md §"Max I2NP Message Size": IPv4 allows MTU - 28, IPv6 MTU - 48).
+	incomingIsIPv4 := IsIPv4Addr(udpAddr)
+
 	// Decrypt header protection before parsing
 	if h.headerProtector != nil {
 		if !h.decryptInboundHeader(data) {
@@ -252,7 +256,7 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 	// length (parsed by Deserialize from the UDP payload size), so there is
 	// nothing to deobfuscate here. The bytes are zeroed before AEAD below.
 
-	packet := &SSU2Packet{}
+	packet := &SSU2Packet{IsIPv4: incomingIsIPv4}
 	if !h.deserializeInboundPacket(packet, data) {
 		return nil
 	}

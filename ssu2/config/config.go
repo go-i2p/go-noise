@@ -231,6 +231,22 @@ type SSU2Config struct {
 	// Default: 4 minutes.
 	ReplayCacheTTL time.Duration
 
+	// NetworkID is the I2P network ID written into header byte 14 of every
+	// long-header SSU2 message (Session Request, Session Created, Retry, Token
+	// Request, Peer Test, Hole Punch) and required of inbound ones.
+	//
+	// ssu2.md §"Header" fixes the value for the main network ("2: SSU 2"), and
+	// proposal 147 ("I2P Network ID") defines the mechanism's purpose: a
+	// non-matching ID means the peer is on a different network, so the
+	// connection must fail fast rather than mix traffic. Test networks publish
+	// different values, which is why this is configuration rather than a
+	// hardcoded constant — the same reason NTCP2 exposes Config.NetworkID.
+	//
+	// Zero (the struct-literal default) is treated as the main network, so this
+	// field only needs setting for test networks.
+	// Default: 2.
+	NetworkID uint8
+
 	// MaxClockSkew is the maximum allowed difference between local and
 	// remote clocks for handshake timestamp validation.
 	//

@@ -137,7 +137,7 @@ func (l *SSU2Listener) packetWorker() {
 // - All other routing failures are silently ignored
 func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr) {
 	flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
-	packet, ok := l.parseInboundPacket(data)
+	packet, ok := l.parseInboundPacket(data, remoteAddr)
 	if !ok {
 		return
 	}

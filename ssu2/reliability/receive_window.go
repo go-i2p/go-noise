@@ -178,6 +178,34 @@ func (rw *ReceiveWindow) GetMaxSize() int {
 	return withRLock(&rw.mutex, func() int { return int(rw.capacity) })
 }
 
+// MarkSeen records a packet number as already delivered without delivering it.
+//
+// It exists to pre-seed the filter with a handshake packet that shares the
+// data-phase numbering space. ssu2.md §"Packet Numbering" starts Alice's
+// outbound numbering at 0 with Session Confirmed, so a responder must treat
+// packet number 0 as consumed before the first data packet arrives; otherwise
+// a peer's data-phase packet 0 (or a retransmitted Session Confirmed routed to
+// the data path) would be accepted as new. Reference: Java
+// PeerState2.java:146 "_receivedMessages.set(0)" for inbound sessions.
+//
+// Numbers below the floor are already unconditionally dropped, so marking them
+// is a no-op. Thread-safe.
+func (rw *ReceiveWindow) MarkSeen(pktNum uint32) {
+	rw.mutex.Lock()
+	defer rw.mutex.Unlock()
+
+	if seqBefore(pktNum, rw.floor) {
+		return
+	}
+	bit := pktNum - rw.floor
+	if bit >= rw.capacity {
+		// Outside the tracked span; nothing to remember without sliding, and
+		// sliding here would forget legitimately pending numbers.
+		return
+	}
+	rw.seen[bit/64] |= 1 << (bit % 64)
+}
+
 // GetWindowSize returns how many packet numbers are currently recorded as
 // delivered. Thread-safe.
 func (rw *ReceiveWindow) GetWindowSize() int {

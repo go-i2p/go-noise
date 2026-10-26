@@ -59,6 +59,11 @@ type IntroKeyMessageSpec struct {
 	// Blocks is the plaintext payload block list. PadPayloadToMin is applied
 	// if the serialized payload is below the 8-byte floor.
 	Blocks []*SSU2Block
+
+	// NetworkID is header byte 14. Zero selects the main-network value
+	// (MainNetworkID = 2); test networks pass their own value so that peers on
+	// another network reject the message, per proposal 147.
+	NetworkID uint8
 }
 
 // BuildIntroKeyMessage constructs and returns a complete, wire-ready intro-key
@@ -191,13 +196,22 @@ func buildIntroKeyHeader(spec *IntroKeyMessageSpec, packetNumber uint32) []byte 
 	binary.BigEndian.PutUint32(header[8:12], packetNumber)
 	header[12] = spec.MessageType
 	header[13] = SSU2ProtocolVersion
-	header[14] = SSU2NetworkID
+	header[14] = spec.networkID()
 	header[15] = 0 // flag: unused, set to 0 for future compatibility
 	binary.BigEndian.PutUint64(header[16:24], spec.SourceConnID)
 	if len(spec.Token) > 0 {
 		copy(header[24:32], spec.Token)
 	}
 	return header
+}
+
+// networkID returns the configured network ID, defaulting to the main network
+// when unset so that struct-literal specs stay compliant without extra wiring.
+func (spec *IntroKeyMessageSpec) networkID() uint8 {
+	if spec.NetworkID == 0 {
+		return MainNetworkID
+	}
+	return spec.NetworkID
 }
 
 // OpenIntroKeyMessage reverses BuildIntroKeyMessage: it removes header

@@ -7,6 +7,7 @@ import (
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/common/router_info"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -111,6 +112,7 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		FirstSightMaxEntries:     50000,
 		MaxSessions:              65536,
 		DestroyTimeout:           11 * time.Second,  // ssu2.rst "Session Termination" leaves the closing period TBD; 11s matches i2pd
+		NetworkID:                wire.MainNetworkID, // ssu2.md §"Header": 2 = main network
 		MaxClockSkew:             120 * time.Second, // Per spec: ±120s skew tolerance
 		ReplayCacheTTL:           4 * time.Minute,
 		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize

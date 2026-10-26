@@ -92,6 +92,30 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 		}
 	}
 
+	// Verify the message came from the endpoint we sent the Session Request to.
+	//
+	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the
+	// message if the source IP and port do not match the destination IP and port
+	// of the Session Request." The spec's §"Header Binding" rationale is that the
+	// handshake pins a stable endpoint for its duration; an answer from anywhere
+	// else means an off-path attacker injected a Session Created (or our own
+	// outbound address was guessed), and accepting it would let that party drive
+	// the transcript.
+	//
+	// Checked BEFORE MixHash(header) for the same reason as the connection-ID
+	// checks above: ssu2.md §"Duplicates and Error Handling" requires rejection
+	// before the header is folded into the transcript.
+	if err := h.validatePeerAddress(packet); err != nil {
+		return err
+	}
+
+	// Network ID check (proposal 147): a Session Created from another I2P
+	// network must fail fast rather than continue a mismatched handshake.
+	if err := h.validateNetworkID(packet); err != nil {
+		return err
+	}
+
+
 	// MixHash(header) per ssu2.rst "KDF for Session Created and Session Confirmed part 1" — binds the header into
 	// the handshake hash before processing the Noise message.
 	h.handshakeState.MixHash(packet.Header)
