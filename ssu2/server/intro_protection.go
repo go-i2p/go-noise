@@ -27,30 +27,40 @@ func (l *SSU2Listener) initHeaderProtection(config *SSU2Config) error {
 	return nil
 }
 
-// parseInboundPacket attempts to deserialize a received datagram. It first tries
-// the plaintext interpretation (used by internal tests and legacy peers that do
-// not apply header protection). If that fails and the listener has an inbound
-// HeaderProtector configured, it falls back to header-protection decryption on
-// a defensive copy and re-tries Deserialize. Returns (packet, true) on success
-// or (nil, false) when the packet should be silently dropped.
+// parseInboundPacket attempts to deserialize a received datagram. It first
+// tries each header-protection strategy, then falls back to the plaintext
+// interpretation (used by internal tests and legacy peers that do not apply
+// header protection). Returns (packet, true) on success or (nil, false) when
+// the packet should be silently dropped.
 //
-// This four-stage parse accommodates:
-//  1. Plaintext (testing/legacy)
-//  2. Header-protected SessionRequest/TokenRequest (intro key)
-//  3. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
-//  4. Inbound SessionConfirmed/Data for accepted/established sessions via
+// ssu2.md §"Header Validation" requires the receiver to remove header
+// protection BEFORE reading the message type ("Decrypting the next 8 bytes of
+// the header will then reveal the message type and be able to determine if it
+// is a short or long header"), and §"Header Encryption" states that in
+// production "connection IDs in the headers are always header-encrypted". The
+// de-obfuscation stages are therefore attempted first; the plaintext parse is
+// the final fallback.
+//
+// Attempting plaintext first would mis-interpret a header-protected packet
+// whenever its masked type byte (offset 12, XOR-masked by protection) happens
+// to decode to a short-header type (SessionConfirmed=2 or Data=6): short-header
+// parsing skips the long-header version/network-ID self-validation, so the
+// garbage would be accepted instead of falling through to the correct
+// de-obfuscation stage.
+//
+// The de-obfuscation stages are:
+//  1. Intro-key (new sessions and out-of-session intro-key messages:
+//     TokenRequest, PeerTest, HolePunch, Retry)
+//  2. Outbound session replies (SessionCreated/Retry) via trial-deobfuscation
+//  3. Inbound SessionConfirmed/Data for accepted/established sessions via
 //     AcceptedSessionRegistry trial-deobfuscation
+//  4. Plaintext (testing/legacy)
 //
-// For cases 3 and 4 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup
+// For cases 2 and 3 the raw dest conn ID (bytes 0–7) CANNOT be used as a lookup
 // key because header protection XOR-masks those bytes.  TrialDeobfuscate tries
 // every registered session's protectors in turn and accepts the first whose
 // decrypted dest conn ID matches the session's own conn ID.
 func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
-	packet := &SSU2Packet{}
-	if err := packet.Deserialize(data); err == nil {
-		return packet, true
-	}
-
 	// Try intro-key (new sessions and out-of-session intro-key messages:
 	// TokenRequest, PeerTest, HolePunch, Retry).
 	if hp := l.introHeaderProtector.Load(); hp != nil {
@@ -63,13 +73,13 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 		// bytes 16-63 of any TokenRequest/PeerTest/HolePunch longer than 64
 		// bytes (those obfuscate only bytes 16-31).
 		if err := hp.DecryptHeaderForPacket(decrypted); err == nil {
-			packet = &SSU2Packet{}
-			if err := packet.Deserialize(decrypted); err == nil {
+			packet := &SSU2Packet{}
+			if err := packet.Deserialize(decrypted); err == nil &&
+				isIntroKeyMessageType(packet.MessageType) {
 				return packet, true
 			}
 		}
 	}
-
 	// Try outbound session header protectors (replies to our dials).
 	// We cannot read bytes 0–7 in the clear: they are XOR-masked by header
 	// protection.  TrialDeobfuscate iterates all pending sessions and tries
@@ -77,7 +87,7 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	// defensive copy, accepting the first whose decrypted dest conn ID
 	// matches the session's source conn ID.
 	if conn, deobfuscated, err := l.pendingOutbound.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
-		packet = &SSU2Packet{}
+		packet := &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
 			return packet, true
 		}
@@ -90,11 +100,30 @@ func (l *SSU2Listener) parseInboundPacket(data []byte) (*SSU2Packet, bool) {
 	// Both use KDF-derived keys that differ per session and are unknown to the
 	// listener until the session's Handshake goroutine derives and notifies them.
 	if conn, deobfuscated, err := l.acceptedSessions.TrialDeobfuscate(data); err == nil && conn != nil && deobfuscated != nil {
-		packet = &SSU2Packet{}
+		packet := &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
 			return packet, true
 		}
 	}
 
+	// Final fallback: plaintext interpretation (test/legacy peers that do not
+	// apply header protection). A conformant production peer never reaches
+	// here, because its protected packet is recovered by one of the stages
+	// above.
+	packet := &SSU2Packet{}
+	if err := packet.Deserialize(data); err == nil {
+		return packet, true
+	}
+
 	return nil, false
+}
+
+// isIntroKeyMessageType reports whether messageType belongs to the intro-key
+// protected family (SessionRequest, SessionCreated, Retry, TokenRequest,
+// PeerTest, HolePunch). SessionConfirmed and Data use per-session KDF-derived
+// header keys and are never protected with the intro key, so a header that
+// de-obfuscates to one of those short-header types under the intro key is a
+// false match and must fall through to the per-session stages.
+func isIntroKeyMessageType(messageType uint8) bool {
+	return messageType != MessageTypeSessionConfirmed && messageType != MessageTypeData
 }

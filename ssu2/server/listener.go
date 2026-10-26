@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -55,14 +54,6 @@ type SSU2Listener struct {
 
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
-
-	// retrySourceConnID is the stable source connection ID used in Retry
-	// messages. Per the SSU2 spec, the responder's source ConnID in a Retry
-	// should be stable across multiple Retries for the same peer, so the
-	// initiator can use it as the destination ConnID in subsequent
-	// SessionRequests. Generated once at listener creation and reused for
-	// all Retries.
-	retrySourceConnID [8]byte
 
 	// The router is the single owner of all sessions; all session queries go
 	// through it via GetSession/SessionCount/RemoveSession.
@@ -246,12 +237,6 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		pendingOutbound:    NewPendingOutboundRegistry(config.MaxSessions, 30*time.Second),
 		acceptedSessions:   NewAcceptedSessionRegistry(config.MaxSessions * 2),
 		shutdownChan:       make(chan struct{}),
-	}
-
-	// Initialize the stable retry source connection ID. This ensures that all
-	// Retry messages from this listener use the same source ConnID.
-	if _, err := rand.Read(l.retrySourceConnID[:]); err != nil {
-		return nil, oops.Wrapf(err, "failed to generate retry source connection ID")
 	}
 
 	// Publish the config before any reader can start (Start() has not run yet).
