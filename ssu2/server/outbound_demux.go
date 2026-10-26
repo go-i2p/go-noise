@@ -271,10 +271,10 @@ func (r *PendingOutboundRegistry) TrialDeobfuscate(packetData []byte) (*session.
 	defer r.mu.RUnlock()
 
 	for _, pending := range r.sessions {
-		if conn, data := trialDeobfuscateWithProtector(pending.headerProtector, pending.conn, pending.sourceConnID, packetData); conn != nil {
+		if conn, data := trialDeobfuscateWithProtector(pending.headerProtector, pending.conn, pending.sourceConnID, MessageTypeSessionCreated, packetData); conn != nil {
 			return conn, data, nil
 		}
-		if conn, data := trialDeobfuscateWithProtector(pending.retryProtector, pending.conn, pending.sourceConnID, packetData); conn != nil {
+		if conn, data := trialDeobfuscateWithProtector(pending.retryProtector, pending.conn, pending.sourceConnID, MessageTypeRetry, packetData); conn != nil {
 			return conn, data, nil
 		}
 	}
@@ -282,9 +282,20 @@ func (r *PendingOutboundRegistry) TrialDeobfuscate(packetData []byte) (*session.
 }
 
 // trialDeobfuscateWithProtector tries to deobfuscate packetData with protector
-// and checks whether the decrypted dest conn ID (bytes 0–7) matches expectedID.
+// and checks whether the decrypted dest conn ID (bytes 0–7) matches expectedID
+// AND the decrypted message type (byte 12) matches expectedType.
 // Returns (conn, decrypted) on success, (nil, nil) on nil protector or mismatch.
-func trialDeobfuscateWithProtector(protector *HeaderProtector, conn *session.SSU2Conn, expectedID uint64, packetData []byte) (*session.SSU2Conn, []byte) {
+//
+// The message-type check is essential, not redundant. Two protectors registered
+// for the same session share k_header_1 (the introduction key), which is the
+// only key that masks bytes 0–7 (the dest conn ID). They differ only in
+// k_header_2, which masks bytes 8–15 including the type byte at 12. So the dest
+// conn ID alone cannot tell a SessionConfirmed protector from a Data protector
+// (nor a SessionCreated from a Retry): a wrong-k_header_2 protector still
+// recovers the correct dest conn ID and decrypts byte 12 to garbage. Without
+// this check, the first-tried protector false-matches the sibling message type
+// and the correct protector is never reached, silently dropping the packet.
+func trialDeobfuscateWithProtector(protector *HeaderProtector, conn *session.SSU2Conn, expectedID uint64, expectedType uint8, packetData []byte) (*session.SSU2Conn, []byte) {
 	if protector == nil || conn == nil {
 		return nil, nil
 	}
@@ -293,11 +304,14 @@ func trialDeobfuscateWithProtector(protector *HeaderProtector, conn *session.SSU
 	if err := protector.DecryptHeader(candidate); err != nil {
 		return nil, nil
 	}
-	if len(candidate) < 8 {
+	if len(candidate) < 13 {
 		return nil, nil
 	}
 	decryptedDestID := binary.BigEndian.Uint64(candidate[0:8])
 	if decryptedDestID != expectedID {
+		return nil, nil
+	}
+	if candidate[12] != expectedType {
 		return nil, nil
 	}
 	return conn, candidate

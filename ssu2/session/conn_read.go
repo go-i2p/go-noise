@@ -261,10 +261,6 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 		return nil
 	}
 
-	if !h.decryptInboundPayload(packet) {
-		return nil
-	}
-
 	// Carry the source address on the packet. Connection migration is NOT
 	// triggered here: ssu2.md §"Connection Migration" -> §"Initiating Path
 	// Validation" requires the packet to also "not [be] a duplicate packet
@@ -272,6 +268,13 @@ func (h *SSU2Conn) parseInboundPacket(data []byte, addr net.Addr) *SSU2Packet {
 	// processDataPackets. The trigger therefore happens in handleReadyDataPacket
 	// (post-dedup, post-decrypt). Handshake packets ignore Source: migration is
 	// "defined only for the data phase" and the handshake address is pinned.
+	//
+	// The Noise-AEAD payload decryption is NOT done here either. It lives in
+	// ProcessInboundPacket, the single funnel every inbound packet passes
+	// through, so that the listener-routed path (which parses the datagram in
+	// ssu2/server and delivers an already-deserialized packet) decrypts the
+	// payload exactly like this own-socket path does. Doing it here instead
+	// would leave listener-delivered Data packets encrypted.
 	packet.Source = udpAddr
 
 	h.updateActivity()
@@ -410,11 +413,22 @@ func (h *SSU2Conn) keepaliveLoop() {
 // the listener to pending outbound sessions during handshake demultiplexing,
 // preserving the single-reader invariant and the pending outbound registry.
 //
+// It is the single funnel every inbound packet passes through -- both the
+// own-socket read path (readOnePacket) and the listener-routed path
+// (ssu2/server accept_loop -> PacketRouter.RoutePacket) -- so the Noise-AEAD
+// payload decryption for Data packets happens here, not in the caller. A
+// listener-routed packet arrives with its header deobfuscated but its payload
+// still ciphertext; decrypting here is what lets a router running one shared
+// listener socket (the normal SSU2 deployment) read inbound data at all.
+//
 // Parameters:
 //   - packet: The parsed SSU2Packet to process
 func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
 	switch packet.MessageType {
 	case MessageTypeData:
+		if !h.decryptInboundPayload(packet) {
+			return
+		}
 		h.processDataPackets(packet)
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
 		h.processHandshakePacket(packet)

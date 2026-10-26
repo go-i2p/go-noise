@@ -33,11 +33,16 @@ func makeRetryProtector(remoteIntroKey []byte) (*HeaderProtector, error) {
 
 // buildMinimalPacketData builds the smallest byte slice that satisfies the
 // header-protection validation (LongHeaderSize + 24 bytes for IV extraction)
-// with the dest conn ID written big-endian into bytes 0–7.
-func buildMinimalPacketData(destConnID uint64) []byte {
+// with the dest conn ID written big-endian into bytes 0–7 and the message type
+// written into byte 12. The type must match what the registry expects, because
+// trial deobfuscation discriminates on it (bytes 0–7 are masked by the shared
+// k_header_1, so only the type byte under k_header_2 distinguishes a
+// SessionCreated from a Retry, or a SessionConfirmed from a Data packet).
+func buildMinimalPacketData(destConnID uint64, msgType uint8) []byte {
 	buf := make([]byte, LongHeaderSize+24) // 56 bytes minimum
 	binary.BigEndian.PutUint64(buf[0:8], destConnID)
-	// Bytes 8–55 are zero; the ChaCha20 IV is extracted from the last 24 bytes.
+	buf[12] = msgType
+	// Remaining bytes are zero; the ChaCha20 IV is extracted from the last 24.
 	return buf
 }
 
@@ -122,7 +127,7 @@ func TestLookupAndDeobfuscate_NilProtectorFails(t *testing.T) {
 	// Register with nil retryProtector AND no SetProtector call → headerProtector is nil.
 	require.NoError(t, reg.Register(connID, conn, nil))
 
-	pkt := buildMinimalPacketData(connID)
+	pkt := buildMinimalPacketData(connID, MessageTypeSessionCreated)
 	_, _, err := reg.LookupAndDeobfuscate(connID, pkt)
 	require.Error(t, err, "nil headerProtector must not silently pass bytes through")
 	assert.Contains(t, err.Error(), "not yet installed")
@@ -131,7 +136,7 @@ func TestLookupAndDeobfuscate_NilProtectorFails(t *testing.T) {
 // TestLookupAndDeobfuscate_NotFound verifies (nil, nil, nil) when no session matches.
 func TestLookupAndDeobfuscate_NotFound(t *testing.T) {
 	reg := NewPendingOutboundRegistry(0, 0)
-	pkt := buildMinimalPacketData(0xDEAD)
+	pkt := buildMinimalPacketData(0xDEAD, MessageTypeSessionCreated)
 	conn, data, err := reg.LookupAndDeobfuscate(0xDEAD, pkt)
 	assert.NoError(t, err)
 	assert.Nil(t, conn)
@@ -160,7 +165,7 @@ func TestTrialDeobfuscate_SessionCreated(t *testing.T) {
 	require.NoError(t, err)
 
 	// Build a packet whose cleartext dest conn ID == connID.
-	pkt := buildMinimalPacketData(connID)
+	pkt := buildMinimalPacketData(connID, MessageTypeSessionCreated)
 
 	// Encrypt (as the responder would).
 	require.NoError(t, senderProtector.EncryptHeader(pkt))
@@ -203,7 +208,7 @@ func TestTrialDeobfuscate_RetryPacket(t *testing.T) {
 	require.NoError(t, err)
 
 	// Build a packet with the cleartext dest conn ID.
-	pkt := buildMinimalPacketData(connID)
+	pkt := buildMinimalPacketData(connID, MessageTypeRetry)
 	require.NoError(t, senderProtector.EncryptHeader(pkt))
 
 	rawDestID := binary.BigEndian.Uint64(pkt[0:8])
@@ -237,7 +242,7 @@ func TestTrialDeobfuscate_WrongKey(t *testing.T) {
 	senderProtector, err := makeSessCreatedProtector(remoteIntroKey, sessCreateKey)
 	require.NoError(t, err)
 
-	pkt := buildMinimalPacketData(connID)
+	pkt := buildMinimalPacketData(connID, MessageTypeSessionCreated)
 	require.NoError(t, senderProtector.EncryptHeader(pkt))
 
 	reg := NewPendingOutboundRegistry(0, 0)
@@ -258,7 +263,7 @@ func TestTrialDeobfuscate_WrongKey(t *testing.T) {
 // registry returns (nil, nil, nil) without error.
 func TestTrialDeobfuscate_NoSessions(t *testing.T) {
 	reg := NewPendingOutboundRegistry(0, 0)
-	pkt := buildMinimalPacketData(0xABCD)
+	pkt := buildMinimalPacketData(0xABCD, MessageTypeSessionCreated)
 	gotConn, gotData, err := reg.TrialDeobfuscate(pkt)
 	assert.NoError(t, err)
 	assert.Nil(t, gotConn)
@@ -295,7 +300,7 @@ func TestTrialDeobfuscate_PostRetrySetProtectorUpdate(t *testing.T) {
 	// Step 2: Simulate Retry arrives before SessCreate key is installed.
 	retrySender, err := makeRetryProtector(remoteIntroKey)
 	require.NoError(t, err)
-	retryPkt := buildMinimalPacketData(connID)
+	retryPkt := buildMinimalPacketData(connID, MessageTypeRetry)
 	require.NoError(t, retrySender.EncryptHeader(retryPkt))
 
 	gotConn, _, err := reg.TrialDeobfuscate(retryPkt)
@@ -310,7 +315,7 @@ func TestTrialDeobfuscate_PostRetrySetProtectorUpdate(t *testing.T) {
 	// Step 4: SessionCreated arrives — must be demuxed via the new headerProtector.
 	scSender, err := makeSessCreatedProtector(remoteIntroKey, sessCreateKey)
 	require.NoError(t, err)
-	scPkt := buildMinimalPacketData(connID)
+	scPkt := buildMinimalPacketData(connID, MessageTypeSessionCreated)
 	require.NoError(t, scSender.EncryptHeader(scPkt))
 
 	gotConn, gotData, err := reg.TrialDeobfuscate(scPkt)
@@ -350,11 +355,11 @@ func TestTrialDeobfuscate_MultiplePendingSessions(t *testing.T) {
 	require.NoError(t, reg.SetProtector(connB, receiverB))
 
 	// Build SessionCreated for session A.
-	pktA := buildMinimalPacketData(connA)
+	pktA := buildMinimalPacketData(connA, MessageTypeSessionCreated)
 	require.NoError(t, senderA.EncryptHeader(pktA))
 
 	// Build SessionCreated for session B.
-	pktB := buildMinimalPacketData(connB)
+	pktB := buildMinimalPacketData(connB, MessageTypeSessionCreated)
 	require.NoError(t, senderB.EncryptHeader(pktB))
 
 	// A's packet must map to connObjA.

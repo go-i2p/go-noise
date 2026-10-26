@@ -185,10 +185,10 @@ func (r *AcceptedSessionRegistry) TrialDeobfuscate(packetData []byte) (*session.
 	defer r.mu.RUnlock()
 
 	for _, entry := range r.sessions {
-		if conn, data := trialDeobfuscateWithProtector(entry.sessionConfirmedProtector, entry.conn, entry.connID, packetData); conn != nil {
+		if conn, data := trialDeobfuscateWithProtector(entry.sessionConfirmedProtector, entry.conn, entry.connID, MessageTypeSessionConfirmed, packetData); conn != nil {
 			return conn, data, nil
 		}
-		if conn, data := trialDeobfuscateWithProtector(entry.dataInboundProtector, entry.conn, entry.connID, packetData); conn != nil {
+		if conn, data := trialDeobfuscateWithProtector(entry.dataInboundProtector, entry.conn, entry.connID, MessageTypeData, packetData); conn != nil {
 			return conn, data, nil
 		}
 	}
