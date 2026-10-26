@@ -30,7 +30,21 @@ func extractPeerRouterInfo(payload []byte) ([]byte, error) {
 		if err != nil {
 			return nil, oops.Wrapf(err, "malformed RouterInfo block in SessionConfirmed")
 		}
-		return copyBytes(decoded.Data), nil
+
+		riBytes := decoded.Data
+		// ssu2.md §"RouterInfo" block: "flag :: 1 byte ... bit 1 = gzip". A
+		// compressed RouterInfo must be inflated before it can be parsed,
+		// signature-verified, or used to extract the data-phase introduction
+		// key; handing downstream consumers the compressed bytes would fail
+		// every one of those checks.
+		if decoded.Compressed {
+			decompressed, err := Gunzip(riBytes)
+			if err != nil {
+				return nil, oops.Wrapf(err, "failed to gunzip RouterInfo block in SessionConfirmed")
+			}
+			riBytes = decompressed
+		}
+		return copyBytes(riBytes), nil
 	}
 	return nil, nil
 }

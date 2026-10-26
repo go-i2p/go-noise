@@ -6,6 +6,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	i2phkdf "github.com/go-i2p/crypto/hkdf"
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
 	"github.com/go-i2p/noise"
 	"github.com/samber/oops"
@@ -41,6 +42,63 @@ func (h *SSU2Conn) installCipherStates() error {
 
 	if err := h.validatePeerRouterInfo(); err != nil {
 		return err
+	}
+
+	if err := h.installPeerIntroKey(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// installPeerIntroKey extracts the peer's introduction key "i" from the
+// RouterInfo received in Session Confirmed and installs it as the data-phase
+// k_header_1 for outbound packets.
+//
+// ssu2.md §"KDF for data phase": "k_header_1 = Receiver's intro key (aik or
+// bik)", and §"Session Confirmed" → §"Notes": "The introduction key "i" in the
+// RI must be extracted and valid, to be used in the data phase." Bob learns
+// Alice's aik only from her RouterInfo, so without this step a responder that
+// was not pre-configured with RemoteIntroKey can receive but never send Data
+// packets.
+//
+// §"Published Addresses" makes s, i and v mandatory, so a RouterInfo that
+// parses but carries no usable SSU2 address is a validation failure: "On any
+// error, including AEAD, RI, DH, timestamp, or key validation failure, Bob
+// must halt further message processing and close the connection without
+// responding."
+func (h *SSU2Conn) installPeerIntroKey() error {
+	if h.initiator || h.headerProtector == nil {
+		return nil
+	}
+
+	peerRI := h.handshakeHandler.GetPeerRouterInfo()
+	if len(peerRI) == 0 {
+		// No RouterInfo was supplied (hidden / unpublished peer). The
+		// responder cannot derive k_header_1 and therefore cannot send
+		// data-phase packets on this session.
+		return oops.
+			Code("PEER_ROUTER_INFO_MISSING").
+			In("ssu2").
+			Errorf("Session Confirmed carried no RouterInfo; cannot extract the peer introduction key required for data-phase k_header_1")
+	}
+
+	ri, err := wire.ReadRouterInfo(peerRI)
+	if err != nil {
+		return oops.Wrapf(err, "failed to parse peer RouterInfo for introduction key extraction")
+	}
+
+	params, err := wire.ExtractSSU2AddressParams(ri)
+	if err != nil {
+		return oops.Wrapf(err, "peer RouterInfo has no usable SSU2 introduction key")
+	}
+
+	if err := h.headerProtector.SetRemoteIntroKey(params.IntroKey); err != nil {
+		return oops.Wrapf(err, "failed to install peer introduction key")
+	}
+
+	if params.HasMTU {
+		h.setPeerMTU(params.MTU)
 	}
 
 	return nil

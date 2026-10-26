@@ -116,6 +116,12 @@ type SSU2Conn struct {
 	remoteAddr     *net.UDPAddr
 	remoteAddrLock sync.RWMutex
 
+	// peerMTU is the MTU published by the peer in its RouterInfo SSU2 address
+	// ("mtu" option), 0 when unpublished. ssu2.md §"MTU": "Routers must publish
+	// a non-default MTU in each SSU or SSU2 router address." Guarded by
+	// remoteAddrLock alongside the address it constrains.
+	peerMTU int
+
 	// ssu2Addr contains SSU2-specific addressing info
 	ssu2Addr *SSU2Addr
 

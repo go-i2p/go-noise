@@ -21,12 +21,37 @@ import (
 // address family, per ssu2.md §"MTU" -> §"Max I2NP Message Size": MTU - 60 for
 // IPv4 and MTU - 80 for IPv6. An unknown or dual-stack-wildcard peer falls back
 // to the smaller IPv6 budget, so the conservative case is never exceeded.
+//
+// The MTU used is the smaller of the local MTU and the MTU the peer published
+// in its RouterInfo (§"MTU": "Routers must publish a non-default MTU in each
+// SSU or SSU2 router address"), so a peer that published mtu=1280 never
+// receives a 1500-byte datagram.
 func (h *SSU2Conn) i2npBlockBudget() int {
-	mtu := h.config.MTU
+	mtu := h.effectiveMTU()
 	if h.peerIsIPv4() {
 		return mtu - 60
 	}
 	return mtu - 80
+}
+
+// effectiveMTU returns the session MTU bounded by the peer's published MTU.
+func (h *SSU2Conn) effectiveMTU() int {
+	h.remoteAddrLock.RLock()
+	peer := h.peerMTU
+	h.remoteAddrLock.RUnlock()
+
+	mtu := h.config.MTU
+	if peer > 0 && peer < mtu {
+		return peer
+	}
+	return mtu
+}
+
+// setPeerMTU records the MTU published by the peer in its RouterInfo.
+func (h *SSU2Conn) setPeerMTU(mtu int) {
+	h.remoteAddrLock.Lock()
+	h.peerMTU = mtu
+	h.remoteAddrLock.Unlock()
 }
 
 // peerIsIPv4 reports whether the session's remote address is an IPv4 (or

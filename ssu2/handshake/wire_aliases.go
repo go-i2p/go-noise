@@ -69,4 +69,5 @@ var (
 	EncodeAddressBlock    = wire.EncodeAddressBlock
 	DecodeAddressBlock    = wire.DecodeAddressBlock
 	PadPayloadToMin       = wire.PadPayloadToMin
+	Gunzip                = wire.Gunzip
 )
