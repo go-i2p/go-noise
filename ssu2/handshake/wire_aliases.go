@@ -61,13 +61,15 @@ const (
 
 // Constructor and function aliases
 var (
-	NewSSU2Block          = wire.NewSSU2Block
-	SerializeBlocks       = wire.SerializeBlocks
-	DeserializeBlocks     = wire.DeserializeBlocks
-	EncodeRouterInfoBlock = wire.EncodeRouterInfoBlock
-	DecodeRouterInfoBlock = wire.DecodeRouterInfoBlock
-	EncodeAddressBlock    = wire.EncodeAddressBlock
-	DecodeAddressBlock    = wire.DecodeAddressBlock
-	PadPayloadToMin       = wire.PadPayloadToMin
-	Gunzip                = wire.Gunzip
+	NewSSU2Block             = wire.NewSSU2Block
+	SerializeBlocks          = wire.SerializeBlocks
+	DeserializeBlocks        = wire.DeserializeBlocks
+	EncodeRouterInfoBlock    = wire.EncodeRouterInfoBlock
+	DecodeRouterInfoBlock    = wire.DecodeRouterInfoBlock
+	EncodeAddressBlock       = wire.EncodeAddressBlock
+	DecodeAddressBlock       = wire.DecodeAddressBlock
+	PadPayloadToMin          = wire.PadPayloadToMin
+	Gunzip                   = wire.Gunzip
+	ReadRouterInfo           = wire.ReadRouterInfo
+	ExtractSSU2AddressParams = wire.ExtractSSU2AddressParams
 )

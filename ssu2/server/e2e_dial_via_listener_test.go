@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/go-i2p/crypto/curve25519"
 	"github.com/go-i2p/crypto/rand"
+	"github.com/go-i2p/go-noise/internal/testri"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,12 +32,6 @@ func randomKey(t *testing.T) []byte {
 	require.NoError(t, err)
 	return k
 }
-
-// permissiveValidator accepts any RouterInfo. The DialViaListener e2e test
-// exercises the transport/header-protection demux path (the socket-reuse fix),
-// not RouterInfo authentication, so we deliberately bypass the default
-// static-key-binding validator to avoid constructing full signed RouterInfos.
-func permissiveValidator(_, _ []byte) error { return nil }
 
 // TestE2EHandshake_DialViaListener_CompletesHandshake is the regression oracle
 // for the socket-reuse handshake fix (go-noise commit 859815f). It stands up
@@ -74,7 +68,6 @@ func TestE2EHandshake_DialViaListener_CompletesHandshake(t *testing.T) {
 	require.NoError(t, err)
 	serverConfig.WithStaticKey(serverStaticPriv)
 	serverConfig.IntroKey = serverIntroKey
-	serverConfig.RouterInfoValidator = permissiveValidator
 	serverConfig.WithHandshakeTimeout(5 * time.Second)
 
 	responderListener, err := ListenSSU2(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, serverConfig)
@@ -117,7 +110,6 @@ func TestE2EHandshake_DialViaListener_CompletesHandshake(t *testing.T) {
 	require.NoError(t, err)
 	clientListenerConfig.WithStaticKey(clientStaticPriv)
 	clientListenerConfig.IntroKey = clientIntroKey
-	clientListenerConfig.RouterInfoValidator = permissiveValidator
 	clientListenerConfig.WithHandshakeTimeout(5 * time.Second)
 
 	initiatorListener, err := ListenSSU2(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, clientListenerConfig)
@@ -148,12 +140,15 @@ func TestE2EHandshake_DialViaListener_CompletesHandshake(t *testing.T) {
 	require.NoError(t, err)
 	dialConfig.ConnectionID = binary.BigEndian.Uint64(idBuf[:]) | 1
 	dialConfig.WithHandshakeTimeout(5 * time.Second)
-	// Build a fake LocalRouterInfo that passes verifyPeerRouterInfoStaticKey.
-	// That check does: bytes.Contains(peerRouterInfo, i2pbase64(remoteStaticKey)).
-	// I2P base64 is standard base64 with '+' replaced by '-' and '/' by '~'.
-	i2pB64 := base64.NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~")
-	claimRI := append([]byte("fake-ri:"), []byte(i2pB64.EncodeToString(clientStaticPub))...)
-	dialConfig.WithLocalRouterInfo(claimRI)
+	// ssu2.md §"Session Confirmed" -> §"Notes": Session Confirmed must carry
+	// Alice's full signed RouterInfo, so build a real one advertising her
+	// handshake static key and intro key.
+	aliceRI := testri.New(t, &testri.Options{
+		StaticKey: clientStaticPub,
+		IntroKey:  clientIntroKey,
+		Host:      "127.0.0.1",
+	})
+	dialConfig.WithLocalRouterInfo(aliceRI.Bytes)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

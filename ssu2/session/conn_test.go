@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/go-noise/internal/testri"
 	"github.com/go-i2p/go-noise/mod"
 	"github.com/go-i2p/noise"
 	"github.com/stretchr/testify/assert"
@@ -1676,25 +1676,15 @@ func TestI2NPBlockBudget_PerFamily(t *testing.T) {
 	}
 }
 
-// testRouterInfoFor builds a stand-in RouterInfo carrying the given static
+// testRouterInfoFor builds a real signed RouterInfo carrying the given static
 // public key. ssu2.md §"Session Confirmed Fragmentation" requires the Session
 // Confirmed to carry Alice's full signed RouterInfo, and §"Session Confirmed" ->
-// §"Notes" requires Bob to verify the Noise-authenticated static key appears in
-// it (this package checks for the I2P-base64 of the key).
+// §"Notes" requires Bob to verify that the Noise-authenticated static key is the
+// "s" option of a version-matching SSU2 address in it.
 func testRouterInfoFor(t *testing.T, staticPub []byte) []byte {
 	t.Helper()
 	require.Len(t, staticPub, 32)
-	ri := make([]byte, 0, 512)
-	prefix := make([]byte, 64)
-	for i := range prefix {
-		prefix[i] = byte(i % 256)
-	}
-	ri = append(ri, prefix...)
-	ri = append(ri, []byte(i2pbase64.EncodeToString(staticPub))...)
-	for len(ri) < 480 {
-		ri = append(ri, 0x20)
-	}
-	return ri
+	return testri.New(t, &testri.Options{StaticKey: staticPub}).Bytes
 }
 
 // TestResponderSessionCreatedEchoesInitiatorDestConnID covers ssu2.md

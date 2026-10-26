@@ -257,9 +257,20 @@ func TestSSU2Config_Validate(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-	t.Run("responder without validator fails", func(t *testing.T) {
+	// ssu2.md §"Session Confirmed" -> §"Notes" makes RI validation mandatory for
+	// a responder, so NewSSU2Config now installs DefaultRouterInfoValidator.
+	t.Run("responder defaults to the spec validator", func(t *testing.T) {
 		routerHash := generateRandomHash()
 		config, _ := NewSSU2Config(routerHash, false)
+
+		require.NotNil(t, config.RouterInfoValidator)
+		assert.NoError(t, config.Validate())
+	})
+
+	t.Run("responder with validator cleared fails", func(t *testing.T) {
+		routerHash := generateRandomHash()
+		config, _ := NewSSU2Config(routerHash, false)
+		config.RouterInfoValidator = nil
 
 		err := config.Validate()
 		assert.Error(t, err)

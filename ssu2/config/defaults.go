@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/go-i2p/common/data"
-	"github.com/go-i2p/common/router_info"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
 	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
@@ -38,18 +37,29 @@ const (
 	DefaultSessionConfirmedTimeout = 15 * time.Second
 )
 
-// DefaultRouterInfoValidator validates that the Noise-authenticated static
-// key matches the "s" option in an SSU2 address within the RouterInfo.
+// DefaultRouterInfoValidator is the RouterInfo validation performed by a
+// responder on the peer RouterInfo received in Session Confirmed.
 //
-// It parses the RouterInfo binary payload, locates the SSU2 router
-// addresses, and compares the static key from the "s" option against the
-// Noise-authenticated static key using constant-time comparison.
+// ssu2.md §"Session Confirmed" → §"Notes" enumerates the checks:
 //
-// Per the SSU2 spec, the responder must verify that the static key
-// authenticated by the Noise handshake corresponds to the key published in
-// the peer's RouterInfo.
+//   - "Bob must perform the usual Router Info validation. Ensure the signature
+//     type is supported, verify the signature, verify the timestamp is within
+//     bounds, and any other checks necessary."
+//   - "Then he must search the Router Info for a NTCP or SSU2 Router Address
+//     with a matching version (v) option. The static key (s) in the Router Info
+//     must match the static key received in the first frame."
+//   - "The introduction key "i" in the RI must be extracted and valid, to be
+//     used in the data phase."
 //
-// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
+// So this validator parses the RouterInfo, verifies its signature and
+// publication timestamp, then requires an SSU/SSU2 address advertising v=2
+// whose "s" option matches the Noise-authenticated static key (constant-time
+// compared) and whose "i" option is present and valid.
+//
+// §"Session Confirmed" → §"Notes" further requires: "On any error, including
+// AEAD, RI, DH, timestamp, or key validation failure, Bob must halt further
+// message processing and close the connection without responding." Returning a
+// non-nil error is what triggers that teardown.
 func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error {
 	flog("DefaultRouterInfoValidator", logger.Fields{"router_info_len": len(routerInfo), "static_key_len": len(authenticatedStaticKey)}).Debug("Validating router info against authenticated static key")
 	if len(routerInfo) == 0 {
@@ -65,31 +75,30 @@ func DefaultRouterInfoValidator(routerInfo, authenticatedStaticKey []byte) error
 			Errorf("authenticated static key is empty")
 	}
 
-	ri, _, err := router_info.ReadRouterInfo(routerInfo)
+	ri, err := wire.ReadRouterInfo(routerInfo)
 	if err != nil {
+		return oops.Wrapf(err, "failed to parse peer RouterInfo")
+	}
+
+	// Signature type support, signature, timestamp bounds and structure.
+	if err := wire.VerifyRouterInfoSignature(ri); err != nil {
+		return oops.Wrapf(err, "peer RouterInfo failed validation")
+	}
+
+	// Version-scoped address lookup with mandatory s/i options.
+	params, err := wire.ExtractSSU2AddressParams(ri)
+	if err != nil {
+		return oops.Wrapf(err, "peer RouterInfo has no usable SSU2 address")
+	}
+
+	if subtle.ConstantTimeCompare(params.StaticKey, authenticatedStaticKey) != 1 {
 		return oops.
-			Code("ROUTER_INFO_PARSE_FAILED").
+			Code("ROUTER_INFO_KEY_MISMATCH").
 			In("ssu2").
-			Wrapf(err, "failed to parse RouterInfo")
+			Errorf("no SSU2 address in RouterInfo contains the Noise-authenticated static key")
 	}
 
-	for _, addr := range ri.RouterAddresses() {
-		if addr == nil || !addr.IsSSU2() {
-			continue
-		}
-		staticKey, err := addr.StaticKey()
-		if err != nil {
-			continue
-		}
-		if subtle.ConstantTimeCompare(staticKey[:], authenticatedStaticKey) == 1 {
-			return nil
-		}
-	}
-
-	return oops.
-		Code("ROUTER_INFO_KEY_MISMATCH").
-		In("ssu2").
-		Errorf("no SSU2 address in RouterInfo contains the Noise-authenticated static key")
+	return nil
 }
 
 // NewSSU2Config creates a new SSU2Config with sensible defaults.
@@ -135,6 +144,9 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		MaxClockSkew:             120 * time.Second,  // Per spec: ±120s skew tolerance
 		ReplayCacheTTL:           4 * time.Minute,
 		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize
-		RouterInfoValidator:      nil, // No default; callers must explicitly set via WithRouterInfoValidator
+		// ssu2.md §"Session Confirmed" -> §"Notes" makes RI validation mandatory
+		// for a responder, so the compliant validator is the default rather than
+		// an opt-in.
+		RouterInfoValidator:      DefaultRouterInfoValidator,
 	}, nil
 }

@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	i2pbase64 "github.com/go-i2p/common/base64"
+	"github.com/go-i2p/go-noise/internal/testri"
 	"github.com/go-i2p/noise"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,30 +45,18 @@ func setupHandshakePair(t *testing.T) (*HandshakeHandler, *HandshakeHandler, []b
 	return initiator, responder, initDH.Public, respDH.Public
 }
 
-// testRouterInfoFor builds a stand-in RouterInfo payload for the given
+// testRouterInfoFor builds a real signed RouterInfo advertising the given
 // authenticated static key. ssu2.md §"Session Confirmed Fragmentation" requires
 // the Session Confirmed to carry the full signed RouterInfo, and §"Session
 // Confirmed" -> §"Notes" requires Bob to verify "that Alice's static key received
 // in the first frame matches the static key in the Router Info" — which this
-// package checks by looking for the I2P-base64 of the Noise-authenticated key in
-// the RI bytes (verifyPeerRouterInfoStaticKey). A fixture that omits it fails
-// that binding check.
+// package checks by parsing the RI and comparing the "s" option of a
+// version-matching SSU2 address (verifyPeerRouterInfoStaticKey). An unsigned
+// stand-in blob fails that binding check.
 func testRouterInfoFor(t *testing.T, staticPub []byte) []byte {
 	t.Helper()
 	require.Len(t, staticPub, 32)
-	ri := make([]byte, 0, 512)
-	prefix := make([]byte, 64)
-	for i := range prefix {
-		prefix[i] = byte(i % 256)
-	}
-	ri = append(ri, prefix...)
-	ri = append(ri, []byte(i2pbase64.EncodeToString(staticPub))...)
-	// Pad to a realistic RouterInfo size so fragmentation behaviour is exercised
-	// the way production sees it.
-	for len(ri) < 480 {
-		ri = append(ri, 0x20)
-	}
-	return ri
+	return testri.New(t, &testri.Options{StaticKey: staticPub}).Bytes
 }
 
 // NewHandshakeHandler tests
@@ -858,17 +846,11 @@ func TestCreateSessionConfirmedFragments_LargePayload(t *testing.T) {
 	err = initiator.ProcessSessionCreated(created)
 	require.NoError(t, err)
 
-	// Build a large fake RouterInfo that still contains the initiator's static
-	// key in I2P-base64 form so that verifyPeerRouterInfoStaticKey passes.
-	// The responder's remoteStaticKey after the XK handshake equals initiatorPub.
-	pubB64 := i2pbase64.EncodeToString(initiatorPub)
-	prefix := make([]byte, 1457) // total ≈ 1457 + len(pubB64) ≥ 1500 bytes
-	for i := range prefix {
-		prefix[i] = byte(i % 256)
-	}
-	var largeRouterInfo []byte
-	largeRouterInfo = append(largeRouterInfo, prefix...)
-	largeRouterInfo = append(largeRouterInfo, []byte(pubB64)...)
+	// Build a RouterInfo large enough to exceed one packet. It must still be a
+	// valid signed RI advertising the initiator's static key so that
+	// verifyPeerRouterInfoStaticKey passes; the fixture adds several SSU2
+	// addresses to reach the size.
+	largeRouterInfo := testri.NewLarge(t, initiatorPub)
 
 	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, largeRouterInfo)
 	require.NoError(t, err)

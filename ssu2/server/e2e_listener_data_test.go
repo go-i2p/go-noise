@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"io"
 	"net"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	i2pcrand "github.com/go-i2p/crypto/rand"
+	"github.com/go-i2p/go-noise/internal/testri"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,12 +34,10 @@ func e2eListenerPair(t *testing.T) (initiator, responder *SSU2Conn, cleanup func
 	serverConfig.WithStaticKey(serverStaticPriv)
 	serverConfig.IntroKey = serverIntroKey
 	// A responder sends data-phase packets with k_header_1 = the receiver's
-	// (Alice's) intro key (ssu2.md §"Header Encryption KDF"). buildConnConfig
-	// copies this listener config onto every accepted responder conn, so the
-	// responder can send as well as receive only when RemoteIntroKey is set --
-	// exactly how the go-i2p router configures its listener.
-	serverConfig.RemoteIntroKey = clientIntroKey
-	serverConfig.RouterInfoValidator = permissiveValidator
+	// (Alice's) intro key (ssu2.md §"Header Encryption KDF"). The responder
+	// learns it from Alice's RouterInfo in Session Confirmed
+	// (SSU2Conn.installPeerIntroKey), so it is deliberately NOT pre-configured
+	// here: this e2e path is the regression oracle for that derivation.
 	serverConfig.WithHandshakeTimeout(5 * time.Second).WithDestroyTimeout(100 * time.Millisecond)
 
 	responderListener, err := ListenSSU2(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, serverConfig)
@@ -69,14 +67,20 @@ func e2eListenerPair(t *testing.T) (initiator, responder *SSU2Conn, cleanup func
 	var idBuf [8]byte
 	_, err = i2pcrand.Read(idBuf[:])
 	require.NoError(t, err)
-	i2pB64 := base64.NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~")
-	claimRI := append([]byte("fake-ri:"), []byte(i2pB64.EncodeToString(clientStaticPub))...)
+	// ssu2.md §"Session Confirmed" -> §"Notes": Session Confirmed must carry
+	// Alice's full signed RouterInfo, whose "i" option the responder installs
+	// as its data-phase k_header_1.
+	aliceRI := testri.New(t, &testri.Options{
+		StaticKey: clientStaticPub,
+		IntroKey:  clientIntroKey,
+		Host:      "127.0.0.1",
+	})
 	dialConfig = dialConfig.
 		WithStaticKey(clientStaticPriv).
 		WithConnectionID(binary.BigEndian.Uint64(idBuf[:]) | 1).
 		WithRemoteRouterHash(serverHash).
 		WithRemoteStaticKey(serverStaticPub).
-		WithLocalRouterInfo(claimRI).
+		WithLocalRouterInfo(aliceRI.Bytes).
 		WithDestroyTimeout(100 * time.Millisecond).
 		WithHandshakeTimeout(5 * time.Second)
 	dialConfig.IntroKey = clientIntroKey

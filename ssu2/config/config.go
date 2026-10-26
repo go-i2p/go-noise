@@ -275,12 +275,17 @@ type SSU2Config struct {
 	ReceiveWindowSize uint
 
 	// RouterInfoValidator is a callback invoked after the handshake
-	// completes on the responder side. It receives the raw RouterInfo block
-	// from SessionConfirmed and the Noise-authenticated static public key.
-	// The validator MUST verify that the RouterInfo's identity key
-	// corresponds to the static key authenticated by the Noise handshake.
-	// Required for responder configs (Initiator=false); use
-	// DefaultRouterInfoValidator or provide a custom implementation.
+	// completes on the responder side. It receives the raw (already
+	// gunzipped) RouterInfo block from SessionConfirmed and the
+	// Noise-authenticated static public key.
+	//
+	// ssu2.md §"Session Confirmed" -> §"Notes" requires the responder to
+	// validate the signature type, signature and timestamp of the RouterInfo
+	// and to confirm that the static key (s) of an address advertising a
+	// matching version (v) equals the key authenticated by the handshake.
+	// DefaultRouterInfoValidator performs all of those checks and is the
+	// configured default; a custom implementation must do the same.
+	// Required for responder configs (Initiator=false).
 	RouterInfoValidator func(routerInfo, authenticatedStaticKey []byte) error
 
 	// MessageQueueSize is the capacity of the inbound message queue for

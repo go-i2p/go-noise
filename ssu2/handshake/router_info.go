@@ -1,9 +1,8 @@
 package handshake
 
 import (
-	"bytes"
+	"crypto/subtle"
 
-	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/samber/oops"
 )
 
@@ -49,16 +48,29 @@ func extractPeerRouterInfo(payload []byte) ([]byte, error) {
 	return nil, nil
 }
 
-// verifyPeerRouterInfoStaticKey checks that the RouterInfo received in
-// SessionConfirmed advertises the same Curve25519 static key that the Noise
-// XK handshake authenticated. This binds the claimed I2P identity to the
-// Noise transcript, preventing peer impersonation.
+// verifyPeerRouterInfoStaticKey binds the claimed I2P identity to the Noise
+// transcript: the RouterInfo received in Session Confirmed must advertise, in
+// the "s" option of an address whose "v" option matches, the same Curve25519
+// static key the Noise XK handshake authenticated.
 //
-// The check uses an I2P-base64 substring scan consistent with the NTCP2
-// implementation. It is skipped when either peerRouterInfo or remoteStaticKey
-// is absent (e.g. tests that omit RouterInfo).
+// ssu2.md §"Session Confirmed" -> §"Notes": "Bob must verify that Alice's
+// static key received in the first frame matches the static key in the Router
+// Info. Bob must first search the Router Info for a NTCP or SSU2 Router Address
+// with a matching version (v) option." §"Published Addresses" additionally
+// makes "i" mandatory: "The introduction key \"i\" in the RI must be extracted
+// and valid, to be used in the data phase."
 //
-// Returns an error tagged TerminationSParamMissing on mismatch.
+// The RouterInfo is parsed and its SSU2 options extracted through the shared
+// wire helpers rather than scanned as text: a substring match on the base64 of
+// the key would accept a RouterInfo that merely *mentions* the key, and would
+// reject a valid one whose signature block hides the options inside a gzip
+// stream.
+//
+// Skipped when either value is absent (initiator side, or a handshake built
+// without a RouterInfo). Returns an error tagged TerminationSParamMissing on
+// mismatch, which §"Session Confirmed" -> §"Notes" requires Bob to treat as
+// "halt further message processing and close the connection without
+// responding".
 func verifyPeerRouterInfoStaticKey(peerRouterInfo, remoteStaticKey []byte) error {
 	if len(peerRouterInfo) == 0 {
 		return nil // RouterInfo optional; skip.
@@ -66,14 +78,30 @@ func verifyPeerRouterInfoStaticKey(peerRouterInfo, remoteStaticKey []byte) error
 	if len(remoteStaticKey) != 32 {
 		return nil // Static key not yet established; skip.
 	}
-	pubB64 := i2pbase64.EncodeToString(remoteStaticKey)
-	if bytes.Contains(peerRouterInfo, []byte(pubB64)) {
-		return nil
+
+	ri, err := ReadRouterInfo(peerRouterInfo)
+	if err != nil {
+		return oops.
+			In("handshake").
+			With("termination_reason", TerminationSParamMissing).
+			Wrapf(err, "peer RouterInfo in Session Confirmed could not be parsed")
 	}
-	return oops.
-		In("handshake").
-		With("termination_reason", TerminationSParamMissing).
-		Errorf("peer RouterInfo does not advertise the static key authenticated by the Noise handshake")
+
+	params, err := ExtractSSU2AddressParams(ri)
+	if err != nil {
+		return oops.
+			In("handshake").
+			With("termination_reason", TerminationSParamMissing).
+			Wrapf(err, "peer RouterInfo in Session Confirmed has no valid SSU2 address")
+	}
+
+	if subtle.ConstantTimeCompare(params.StaticKey, remoteStaticKey) != 1 {
+		return oops.
+			In("handshake").
+			With("termination_reason", TerminationSParamMissing).
+			Errorf("peer RouterInfo does not advertise the static key authenticated by the Noise handshake")
+	}
+	return nil
 }
 
 func copyBytes(b []byte) []byte {
