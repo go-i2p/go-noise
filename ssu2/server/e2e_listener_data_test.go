@@ -33,6 +33,12 @@ func e2eListenerPair(t *testing.T) (initiator, responder *SSU2Conn, cleanup func
 	require.NoError(t, err)
 	serverConfig.WithStaticKey(serverStaticPriv)
 	serverConfig.IntroKey = serverIntroKey
+	// A responder sends data-phase packets with k_header_1 = the receiver's
+	// (Alice's) intro key (ssu2.md §"Header Encryption KDF"). buildConnConfig
+	// copies this listener config onto every accepted responder conn, so the
+	// responder can send as well as receive only when RemoteIntroKey is set --
+	// exactly how the go-i2p router configures its listener.
+	serverConfig.RemoteIntroKey = clientIntroKey
 	serverConfig.RouterInfoValidator = permissiveValidator
 	serverConfig.WithHandshakeTimeout(5 * time.Second).WithDestroyTimeout(100 * time.Millisecond)
 
@@ -156,5 +162,32 @@ func TestE2E_ListenerDataPhase_InboundDataReachesResponder(t *testing.T) {
 		require.Equal(t, payload, got, "payload must round-trip intact")
 	case <-time.After(8 * time.Second):
 		t.Fatal("responder did not receive inbound data within 8s (listener data-phase receive regression)")
+	}
+
+	// Reverse direction: responder -> initiator over the dedicated-socket read
+	// path, proving the decrypt move into ProcessInboundPacket did not break the
+	// own-socket path (which now also decrypts there).
+	back := []byte("reply from the responder")
+	go func() {
+		_, _ = responder.Write(back)
+	}()
+	ireadCh := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, err := io.ReadAtLeast(initiator, buf, len(back))
+		if err != nil {
+			ireadCh <- nil
+			return
+		}
+		out := make([]byte, n)
+		copy(out, buf[:n])
+		ireadCh <- out
+	}()
+	select {
+	case got := <-ireadCh:
+		require.NotNil(t, got, "initiator must receive the responder's reply")
+		require.Equal(t, back, got, "reverse payload must round-trip intact")
+	case <-time.After(8 * time.Second):
+		t.Fatal("initiator did not receive the responder's reply within 8s")
 	}
 }
