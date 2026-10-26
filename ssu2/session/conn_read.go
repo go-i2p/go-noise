@@ -461,6 +461,12 @@ func (h *SSU2Conn) collectReadyDataPackets(packet *SSU2Packet) []*SSU2Packet {
 func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	h.validDataPacketsReceived.Add(1)
 
+	// ssu2.md §"Handshake Retransmission" -> §"Session Confirmed" option 2:
+	// retransmit Session Confirmed "until a data message is received". A packet
+	// that reaches this point has decrypted and passed the duplicate filter, so
+	// it is genuinely the peer's data message.
+	h.markSessionConfirmedAcked()
+
 	// Connection migration: this packet has now successfully decrypted
 	// (decryptInboundPayload) and passed the receive-window duplicate filter
 	// (collectReadyDataPackets), satisfying both spec preconditions in
@@ -525,6 +531,24 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 }
 
 func (h *SSU2Conn) processHandshakePacket(packet *SSU2Packet) {
+	// ssu2.md §"Duplicates and Error Handling": "Duplicates of the three Noise
+	// handshake messages Session Request, Session Created, and Session Confirmed
+	// must be detected before MixHash() of the header." Once this side has
+	// completed the handshake, any further handshake packet is by definition one
+	// of those duplicates (or a stray), and the Noise state can no longer accept
+	// it — so drop it here instead of queueing it.
+	//
+	// This matters now that Alice retransmits Session Confirmed (§"Handshake
+	// Retransmission" option 2): without the drop, each retransmit would occupy a
+	// recvQueue slot that nothing drains after the handshake returns.
+	if h.handshakeHandler.IsHandshakeComplete() {
+		flog("processHandshakePacket", logger.Fields{
+			"msg_type": packet.MessageType,
+			"pkt_num":  packet.PacketNumber,
+		}).Debug("dropping duplicate handshake packet after handshake completion")
+		return
+	}
+
 	// Handshake packets bypass receive window.
 	//
 	// ssu2.rst §"Packet Numbering": Session Request, Session Created, Token
@@ -568,17 +592,28 @@ func (h *SSU2Conn) processDataPacket(packet *SSU2Packet) []*SSU2Block {
 	}
 	flog("processDataPacket", logger.Fields{"num_blocks": len(blocks)}).Debug("processed blocks")
 
-	// Process ACK blocks
+	// Process ACK blocks.
 	for _, block := range blocks {
-		if block.Type == BlockTypeACK {
-			ackedNums, _ := h.ackHandler.ProcessACK(block)
-			// Remove acknowledged packets from pending queue
-			h.pendingMutex.Lock()
-			for _, num := range ackedNums {
-				delete(h.pendingPackets, num)
-			}
-			h.pendingMutex.Unlock()
+		if block.Type != BlockTypeACK {
+			continue
 		}
+		ackedNums, nackedNums, err := h.ackHandler.ProcessACKWithNacks(block)
+		if err != nil {
+			flog("processDataPacket", logger.Fields{"error": err.Error()}).
+				Debug("malformed ACK block ignored")
+			continue
+		}
+
+		// Acknowledged packets leave the outstanding set and their bytes are
+		// credited to the congestion controller (§"Congestion Control": byte
+		// count, and ACK-only packets counted for neither).
+		h.retireAckedPackets(ackedNums)
+
+		// §"Congestion Control" -> §"Packet Numbers": "When a packet is ACKed or
+		// NACKed, the transmitter must determine what I2NP messages and fragments
+		// were in that packet, to decide what to retransmit." A NACK is also the
+		// spec's loss signal, so it drives the congestion response.
+		h.notePacketLosses(nackedNums)
 	}
 	return blocks
 }

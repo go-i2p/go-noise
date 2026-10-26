@@ -85,3 +85,46 @@ func TestRoundTrip_Gaps(t *testing.T) {
 		require.Equal(t, want, got, "round trip mismatch for set %v (data %v)", set, blk.Data)
 	}
 }
+
+// TestNackEndingAtPacketZeroIsAccepted covers a NACK run that finishes the
+// bitfield exactly at packet 0 — ssu2.md §"Ack": "range :: If present, 1 byte
+// nack count followed by 1 byte ack count". A cursor of N holds N+1 numbers
+// (N…0), so a nack run of length N+1 is legal.
+//
+// Rejecting it discarded the whole ACK block, so a peer reporting "packet 0
+// missing, packet 1 received" got no retransmission and no loss signal.
+func TestNackEndingAtPacketZeroIsAccepted(t *testing.T) {
+	h := NewACKHandler()
+	// Ack Through: 1, acnt: 0, range: 1 nack / 0 acks  → NACK packet 0.
+	data := []byte{0, 0, 0, 1, 0, 1, 0}
+
+	acked, nacked, err := h.ProcessACKWithNacks(&SSU2Block{Type: BlockTypeACK, Data: data})
+	require.NoError(t, err)
+	require.Equal(t, []uint32{1}, acked)
+	require.Equal(t, []uint32{0}, nacked, "the nacked packet number must be reported")
+}
+
+// TestSpecWorkedExample_Nacks checks the nacked set of the spec's own example:
+// "We want to ACK 10 9 8 6 5 2 1 0, and NACK 7 4 3."
+func TestSpecWorkedExample_Nacks(t *testing.T) {
+	h := NewACKHandler()
+	_, nacked, err := h.ProcessACKWithNacks(&SSU2Block{
+		Type: BlockTypeACK,
+		Data: []byte{0, 0, 0, 10, 2, 1, 2, 2, 3},
+	})
+	require.NoError(t, err)
+
+	got := append([]uint32(nil), nacked...)
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	require.Equal(t, []uint32{3, 4, 7}, got)
+}
+
+// TestNackBelowZeroRejected keeps the malformed case rejected: a range may not
+// acknowledge anything once packet 0 has been passed.
+func TestNackBelowZeroRejected(t *testing.T) {
+	h := NewACKHandler()
+	// Ack Through: 1, acnt: 0, range: 2 nacks (covers 1..0? no—1 is already
+	// acked) then 1 ack: impossible bitfield.
+	_, _, err := h.ProcessACKWithNacks(&SSU2Block{Type: BlockTypeACK, Data: []byte{0, 0, 0, 1, 0, 2, 1}})
+	require.Error(t, err, "a nack run that would continue below packet 0 must be rejected")
+}

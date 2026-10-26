@@ -309,6 +309,10 @@ func (h *SSU2Conn) writeBlockWithNumber(block *SSU2Block) (uint32, error) {
 	}
 }
 
+// windowWaitInterval is how long a blocked sender sleeps before re-checking the
+// congestion window when no ACK arrives to wake it.
+const windowWaitInterval = 5 * time.Millisecond
+
 // sendLoop handles outbound packet transmission.
 func (h *SSU2Conn) sendLoop() {
 	flog("sendLoop").Debug("starting outbound packet transmission loop")
@@ -317,6 +321,22 @@ func (h *SSU2Conn) sendLoop() {
 	for {
 		select {
 		case packet := <-h.sendQueue:
+			// Congestion/pacing gate. ssu2.md §"Congestion Control" points at
+			// RFC 9002, whose §7.2 requires a sender to respect the congestion
+			// window before releasing a packet. Without this check the controller
+			// computes a cwnd that nothing obeys, and the immediate-ACK heuristic
+			// that reads AvailableWindow() can never see a full window.
+			//
+			// ACK-only packets are explicitly exempt — §"Congestion Control":
+			// "ACK-only data packets … are not congestion-controlled" — so
+			// blocking on the window can never deadlock the peer's loss recovery.
+			if err := h.waitForWindow(packet); err != nil {
+				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err.Error()}).
+					Debug("dropping packet: congestion window stayed closed")
+				h.retireDroppedPacket(packet)
+				continue
+			}
+
 			if err := h.sendPacketDirect(packet); err != nil {
 				h.writeErrors.Add(1)
 				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err}).Error("UDP write failed")
@@ -355,7 +375,13 @@ func (h *SSU2Conn) retransmitExpired() {
 	rto := h.rttEstimator.GetRTO()
 
 	h.pendingMutex.Lock()
-	defer h.pendingMutex.Unlock()
+
+	type pending struct {
+		entry *PendingPacket
+		alive bool
+	}
+	decisions := make([]pending, 0, len(h.pendingPackets))
+	requeued := make([]*SSU2Packet, 0, len(h.pendingPackets))
 
 	for pn, pp := range h.pendingPackets {
 		if now.Before(pp.NextRetry) {
@@ -363,7 +389,10 @@ func (h *SSU2Conn) retransmitExpired() {
 		}
 
 		if pp.Retries >= maxPacketRetries {
+			// The packet is abandoned: its bytes leave the in-flight total and
+			// the loss is reported (§"Congestion Control", RFC 9002 §7).
 			delete(h.pendingPackets, pn)
+			decisions = append(decisions, pending{entry: pp, alive: false})
 			continue
 		}
 
@@ -377,38 +406,192 @@ func (h *SSU2Conn) retransmitExpired() {
 		newPacket.Payload = make([]byte, len(pp.PlaintextPayload))
 		copy(newPacket.Payload, pp.PlaintextPayload)
 
-		// Remove old entry; sendPacketDirect will track the new one.
+		// Remove the old entry and hand its bytes back: sendPacketDirect
+		// re-adds them for the new packet number, so leaving the old entry
+		// counted would double the in-flight total on every retransmit.
 		delete(h.pendingPackets, pn)
+		decisions = append(decisions, pending{entry: pp, alive: true})
+		requeued = append(requeued, newPacket)
+	}
+	h.pendingMutex.Unlock()
 
+	for _, d := range decisions {
+		h.releaseInFlight(d.entry)
+		if !d.alive {
+			h.reportAbandonedLoss(d.entry)
+		}
+	}
+
+	for _, packet := range requeued {
 		// Best-effort re-enqueue; drop if sendQueue is full
 		select {
-		case h.sendQueue <- newPacket:
+		case h.sendQueue <- packet:
 		default:
 		}
 	}
+
 }
+
+// releaseInFlight removes one outstanding entry's bytes from the congestion
+// controller. ACK-only entries were never added (see trackPendingPacket).
+func (h *SSU2Conn) releaseInFlight(entry *PendingPacket) {
+	if entry == nil || entry.AckOnly || h.congestionController == nil {
+		return
+	}
+	h.congestionController.ReleaseBytes(entry.WireSize)
+	h.signalWindowOpen()
+}
+
+// reportAbandonedLoss treats a packet that ran out of retries as lost.
+func (h *SSU2Conn) reportAbandonedLoss(entry *PendingPacket) {
+	if entry == nil || h.congestionController == nil || entry.LossReported {
+		return
+	}
+	entry.LossReported = true
+	h.congestionController.OnPacketLoss()
+}
+
+// congestionBlocked reports whether the congestion window currently forbids
+// sending this packet.
+func (h *SSU2Conn) congestionBlocked(packet *SSU2Packet) bool {
+	cc := h.congestionController
+	if cc == nil || !ccEnabledForOutbound(packet) {
+		return false
+	}
+
+	// RFC 9002 §7.2, which ssu2.md §"Congestion Control" points at: "A sender
+	// can send a packet larger than the congestion window if it has no
+	// outstanding packets." Without that exemption, a window reduced to the
+	// 1280-byte minimum by a loss event could never admit a full-MTU packet
+	// again, and the sender would stall rather than probe.
+	if cc.GetBytesInFlight() == 0 {
+		return false
+	}
+	return !cc.CanSend(wirePacketSize(packet))
+}
+
+// ccEnabledForOutbound reports whether an outbound packet is subject to the
+// congestion window. ACK-only and other non-data packets are exempt
+// (ssu2.md §"Congestion Control"), so they always go out.
+func ccEnabledForOutbound(packet *SSU2Packet) bool {
+	if packet == nil || packet.MessageType != MessageTypeData {
+		return false
+	}
+	return !isCongestionExemptPayload(packet.Payload)
+}
+
+// wirePacketSize estimates the datagram size a packet will occupy on the wire:
+// header + ephemeral key (handshake only) + payload + MAC.
+func wirePacketSize(packet *SSU2Packet) int {
+	n := len(packet.Header) + len(packet.Payload) + len(packet.MAC)
+	if len(packet.EphemeralKey) > 0 {
+		n += len(packet.EphemeralKey)
+	}
+	return n
+}
+
+// waitForWindow pauses until this packet fits inside the congestion window, the
+// connection closes, or the wait exceeds the retransmission timeout.
+//
+// Holding the packet here (rather than re-queueing it) keeps outbound ordering
+// intact, which is what a congestion gate means: RFC 9002 §7.2 paces the
+// packets already in flight and sends no new ones while the window is full.
+//
+// The RTO bound prevents a permanently closed window (a peer that stopped
+// acknowledging) from wedging the send loop forever; the packet is then dropped
+// and the I2NP layer's own message retransmission recovers it.
+func (h *SSU2Conn) waitForWindow(packet *SSU2Packet) error {
+	if !h.congestionBlocked(packet) {
+		return nil
+	}
+
+	deadline := time.Now().Add(h.rttEstimator.GetRTO())
+	for h.congestionBlocked(packet) {
+		if !time.Now().Before(deadline) {
+			return oops.
+				Code("CONGESTION_WINDOW_CLOSED").
+				In("ssu2").
+				With("pkt_num", packet.PacketNumber).
+				Errorf("congestion window stayed closed for one RTO")
+		}
+		timer := time.NewTimer(windowWaitInterval)
+		select {
+		case <-h.windowOpen():
+		case <-h.closeChan:
+			timer.Stop()
+			return oops.Errorf("connection closed")
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	return nil
+}
+
+// windowOpen returns the channel signalled whenever the congestion window gains
+// room, so a waiting sender wakes on the ACK that frees it.
+func (h *SSU2Conn) windowOpen() chan struct{} {
+	h.windowMutex.Lock()
+	defer h.windowMutex.Unlock()
+	if h.windowSignal == nil {
+		h.windowSignal = make(chan struct{}, 1)
+	}
+	return h.windowSignal
+}
+
+// signalWindowOpen nudges a sender blocked in waitForWindow. Non-blocking: a
+// pending signal already schedules exactly one re-check.
+func (h *SSU2Conn) signalWindowOpen() {
+	h.windowMutex.Lock()
+	signal := h.windowSignal
+	h.windowMutex.Unlock()
+	if signal == nil {
+		return
+	}
+	select {
+	case signal <- struct{}{}:
+	default:
+	}
+}
+
+// retireDroppedPacket is called for a packet dropped while waiting for window
+// space. Nothing was added to bytes-in-flight yet (that happens on send), so
+// there is nothing to release; the hook exists so the send path's drop site and
+// its accounting stay together if that changes.
+func (h *SSU2Conn) retireDroppedPacket(packet *SSU2Packet) {}
 
 // sendPacketDirect sends a packet directly to the peer.
 // For data packets in the established state, the payload is encrypted with AEAD.
 func (h *SSU2Conn) sendPacketDirect(packet *SSU2Packet) error {
+	_, err := h.sendPacketDirectAndCapture(packet)
+	return err
+}
+
+// sendPacketDirectAndCapture sends a packet and returns the datagram bytes that
+// went on the wire, header protection included.
+//
+// The captured bytes are what a handshake retransmission must reuse: ssu2.md
+// §"Handshake Retransmission" requires the retransmitted message to keep the
+// "same source and connection IDs, ephemeral key, and packet number", so it is
+// the identical datagram that is resent, never a re-sealed one.
+func (h *SSU2Conn) sendPacketDirectAndCapture(packet *SSU2Packet) ([]byte, error) {
 	flog("sendPacketDirect", logger.Fields{"pktNum": packet.PacketNumber, "msgType": packet.MessageType}).Debug("sending packet")
 
 	h.remoteAddrLock.RLock()
 	addr := h.remoteAddr
 	h.remoteAddrLock.RUnlock()
 
-	_, plaintextPayload, err := h.sealPacket(packet, addr)
+	datagram, plaintextPayload, err := h.sealPacket(packet, addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if packet.MessageType == MessageTypeData {
 		h.validDataPacketsSent.Add(1)
 	}
 	h.updateActivity()
-	h.trackPendingPacket(packet, plaintextPayload)
+	h.trackPendingPacket(packet, plaintextPayload, len(datagram))
 
-	return nil
+	return datagram, nil
 }
 
 // sealPacket applies the full outbound protection pipeline to a packet and
@@ -568,30 +751,178 @@ func (h *SSU2Conn) applyOutboundHeaderProtection(data []byte, messageType uint8)
 // Every Data packet number is tracked, including 0: ssu2.rst §"Packet Numbering"
 // gives the responder packet 0 for its first Data packet, so 0 is a legitimate
 // data-phase number and must not be treated as "not yet in the data phase".
-func (h *SSU2Conn) trackPendingPacket(packet *SSU2Packet, plaintext []byte) {
+func (h *SSU2Conn) trackPendingPacket(packet *SSU2Packet, plaintext []byte, wireSize int) {
 	flog("trackPendingPacket", logger.Fields{"pktNum": packet.PacketNumber}).Debug("recording packet for retransmission")
 	if packet.MessageType != MessageTypeData {
 		return
 	}
-	h.pendingMutex.Lock()
-	h.pendingPackets[packet.PacketNumber] = &PendingPacket{
+
+	// ssu2.md §"Congestion Control": "ACK-only data packets should not count for
+	// bytes or packets in-flight and are not congestion-controlled." Classify
+	// from the payload blocks, which is the only place that information exists.
+	// plaintext is the pre-seal payload; it is nil on the unsealed path (no
+	// cipher installed), where packet.Payload is still the block list.
+	blocks := plaintext
+	if len(blocks) == 0 {
+		blocks = packet.Payload
+	}
+	ackOnly := isCongestionExemptPayload(blocks)
+
+	entry := &PendingPacket{
 		Packet:           packet,
 		PlaintextPayload: plaintext,
 		SentTime:         time.Now(),
 		Retries:          0,
 		NextRetry:        time.Now().Add(h.rttEstimator.GetRTO()),
+		WireSize:         wireSize,
+		AckOnly:          ackOnly,
+	}
+
+	h.pendingMutex.Lock()
+	h.pendingPackets[packet.PacketNumber] = entry
+	h.pendingMutex.Unlock()
+
+	if !ackOnly && h.congestionController != nil {
+		h.congestionController.OnPacketSent(wireSize)
+	}
+}
+
+// isCongestionExemptPayload reports whether a data payload carries only blocks
+// that ssu2.md §"Congestion Control" excludes from congestion control: "ACK-only
+// data packets should not count for bytes or packets in-flight and are not
+// congestion-controlled. … Packets containing some other non-data blocks may
+// also be excluded from congestion control if desired, implementation-dependent.
+// For example: Peer Test / Relay request/intro/response / Path
+// challenge/response".
+//
+// I2NP, fragment and Termination blocks are the data-bearing ones and make a
+// packet congestion-controlled. A payload that cannot be parsed is treated as
+// data-bearing, so accounting errs on the side of counting.
+func isCongestionExemptPayload(plaintext []byte) bool {
+	if len(plaintext) == 0 {
+		return false
+	}
+	blocks, err := DeserializeBlocks(plaintext)
+	if err != nil || len(blocks) == 0 {
+		return false
+	}
+	for _, block := range blocks {
+		if block == nil {
+			continue
+		}
+		switch block.Type {
+		case BlockTypeI2NPMessage, BlockTypeFirstFragment, BlockTypeFollowOnFragment,
+			BlockTypeTermination, BlockTypeNewToken, BlockTypeFirstPacketNumber,
+			BlockTypeNextNonce, BlockTypeRelayTagRequest, BlockTypeRelayTag:
+			return false
+		}
+	}
+	return true
+}
+
+// notePacketLosses reports the given outstanding packets as lost to the
+// congestion controller, at most once per packet.
+//
+// ssu2.md §"Congestion Control" points at RFC 9002 for the loss response; a
+// retransmitted packet that is NACKed again must not repeatedly cut the window.
+func (h *SSU2Conn) notePacketLosses(numbers []uint32) {
+	if h.congestionController == nil || len(numbers) == 0 {
+		return
+	}
+
+	h.pendingMutex.Lock()
+	fresh := 0
+	for _, num := range numbers {
+		entry, ok := h.pendingPackets[num]
+		if !ok || entry.LossReported {
+			continue
+		}
+		entry.LossReported = true
+		fresh++
 	}
 	h.pendingMutex.Unlock()
+
+	if fresh > 0 {
+		h.congestionController.OnPacketLoss()
+	}
+}
+
+// retireAckedPackets removes acknowledged packets from the outstanding set and
+// credits their bytes to the congestion controller.
+//
+// §"Congestion Control" recommends byte-count accounting, so the wire sizes are
+// summed rather than the packet count used; ACK-only packets were never added to
+// bytes in flight (see trackPendingPacket) and must not be subtracted either.
+func (h *SSU2Conn) retireAckedPackets(numbers []uint32) {
+	if len(numbers) == 0 {
+		return
+	}
+
+	h.pendingMutex.Lock()
+	ackedBytes := 0
+	for _, num := range numbers {
+		entry, ok := h.pendingPackets[num]
+		if !ok {
+			continue
+		}
+		if !entry.AckOnly {
+			ackedBytes += entry.WireSize
+		}
+		delete(h.pendingPackets, num)
+	}
+	h.pendingMutex.Unlock()
+
+	if ackedBytes > 0 && h.congestionController != nil {
+		h.congestionController.OnAck(ackedBytes)
+		// Room in the window: release a sender parked in waitForWindow.
+		h.signalWindowOpen()
+	}
 }
 
 // sendImmediateACK generates and sends an ACK packet without delay, honoring
 // the immediate-ack flag (header byte 13 bit 0) from the peer.
 func (h *SSU2Conn) sendImmediateACK() {
+	h.sendACKWithExtraBlocks(nil)
+}
+
+// sendACKWithExtraBlocks sends an ACK-only Data message with extra blocks
+// appended after the ACK, or drops the extras (and logs) if the resulting
+// payload would not fit this session's MTU.
+//
+// ssu2.md §"Tokens" describes exactly this shape for Bob's first data packet:
+// a New Token block "may be sent with the ACK 0 and Router Info after the
+// Session Confirmed is received and validated".
+func (h *SSU2Conn) sendACKWithExtraBlocks(extra []*SSU2Block) {
 	flog("sendImmediateACK").Debug("generating and sending immediate ACK")
 	ack, err := h.ackHandler.GenerateACK()
 	if err != nil || ack == nil {
 		return
 	}
+
+	blocks := make([]*SSU2Block, 0, 1+len(extra))
+	blocks = append(blocks, ack)
+	if len(extra) > 0 {
+		if fits, payload := h.serializeIfFits(append([]*SSU2Block{ack}, extra...)); fits {
+			// Serializing twice is cheap here and keeps the size check honest:
+			// the payload actually sent must be the one that was measured.
+			h.sendACKPayload(payload)
+			return
+		}
+		flog("sendACKWithExtraBlocks", logger.Fields{"extra_blocks": len(extra)}).
+			Debug("dropping extra blocks: ACK plus extras exceeds the session MTU")
+	}
+	blocks = blocks[:1]
+
+	payload, err := SerializeBlocks(blocks)
+	if err != nil {
+		flog("sendImmediateACK", logger.Fields{"error": err}).Warn("failed to serialize ACK block")
+		return
+	}
+	h.sendACKPayload(payload)
+}
+
+// sendACKPayload seals and sends one ACK Data packet with the given payload.
+func (h *SSU2Conn) sendACKPayload(payload []byte) {
 	pktNum := h.nextSendSequence()
 	hdr := make([]byte, ShortHeaderSize)
 	binary.BigEndian.PutUint64(hdr[0:8], h.remoteConnectionID.Load())
@@ -601,16 +932,24 @@ func (h *SSU2Conn) sendImmediateACK() {
 		PacketNumber: pktNum,
 		Header:       hdr,
 		MAC:          make([]byte, MACSize),
+		Payload:      payload,
 	}
-	payload, err := SerializeBlocks([]*SSU2Block{ack})
-	if err != nil {
-		flog("sendImmediateACK", logger.Fields{"error": err}).Warn("failed to serialize ACK block")
-		return
-	}
-	packet.Payload = payload
 	if err := h.sendPacketDirect(packet); err != nil {
 		flog("sendImmediateACK", logger.Fields{"error": err}).Warn("failed to send immediate ACK packet")
 	}
+}
+
+// serializeIfFits reports whether blocks fit in one data-phase packet for this
+// session's address family, along with the serialized payload when they do.
+//
+// ssu2.md §"Max I2NP Message Size" / §"MTU": the data payload budget is
+// MTU - 60 (IPv4) or MTU - 80 (IPv6).
+func (h *SSU2Conn) serializeIfFits(blocks []*SSU2Block) (bool, []byte) {
+	payload, err := SerializeBlocks(blocks)
+	if err != nil {
+		return false, nil
+	}
+	return len(payload) <= h.i2npBlockBudget(), payload
 }
 
 // handleCongestionBlock processes a received Congestion block.

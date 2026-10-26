@@ -97,7 +97,7 @@ func (h *DataHandler) handleNextNonce(data []byte) error {
 	return nil
 }
 
-// handleFirstPacketNumber processes a FirstPacketNumber block (Type 14).
+// handleFirstPacketNumber processes a FirstPacketNumber block (Type 20).
 func (h *DataHandler) handleFirstPacketNumber(data []byte) error {
 	if len(data) < 4 {
 		return oops.Errorf("FirstPacketNumber block too short: %d bytes, need 4", len(data))
@@ -115,7 +115,7 @@ func (h *DataHandler) handleFirstPacketNumber(data []byte) error {
 	return nil
 }
 
-// handleCongestion processes a Congestion block (Type 20).
+// handleCongestion processes a Congestion block (Type 21).
 func (h *DataHandler) handleCongestion(data []byte) error {
 	if len(data) < 1 {
 		return oops.Errorf("Congestion block too short: %d bytes, need 1", len(data))

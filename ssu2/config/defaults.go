@@ -13,8 +13,22 @@ import (
 
 // Default timeout values per the SSU2 specification.
 const (
-	// DefaultHandshakeTimeout is the spec-defined handshake timeout of 15
-	// seconds.
+	// DefaultHandshakeTotalTimeout is the whole-handshake budget. ssu2.md
+	// §"Handshake Retransmission" -> §"Total Timeout": "Recommended total
+	// timeout for the handshake is 20 seconds."
+	//
+	// This is deliberately NOT the same number as the per-message timeouts
+	// below: §"Session Request" and §"Token Request" each recommend "15 seconds
+	// total" and §"Session Created" recommends "12 seconds total", and those
+	// phases share one handshake. Using a single 15 s value as the total
+	// truncated the recommended window and abandoned sessions that a compliant
+	// peer (i2pd) would still be retransmitting.
+	DefaultHandshakeTotalTimeout = 20 * time.Second
+
+	// DefaultHandshakeTimeout is the per-message budget for the Session Request
+	// and Session Confirmed phases. ssu2.md §"Handshake Retransmission" ->
+	// §"Session Request": "Recommended timeout: 15 seconds total". It caps each
+	// phase; DefaultHandshakeTotalTimeout caps the handshake as a whole.
 	DefaultHandshakeTimeout = 15 * time.Second
 
 	// DefaultSessionCreatedTimeout is the total budget for Bob waiting for the
@@ -147,6 +161,15 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		// ssu2.md §"Session Confirmed" -> §"Notes" makes RI validation mandatory
 		// for a responder, so the compliant validator is the default rather than
 		// an opt-in.
-		RouterInfoValidator:      DefaultRouterInfoValidator,
+		RouterInfoValidator: DefaultRouterInfoValidator,
+		// Left zero: the total is derived (see SSU2Config.HandshakeTotalTimeout),
+		// so a caller that shortens HandshakeTimeout keeps fast-fail behavior
+		// instead of being silently extended to 20 s.
+		HandshakeTotalTimeout: 0,
+		// ssu2.md §"Session Establishment" fast path requires somewhere to keep
+		// the tokens peers send in New Token blocks, which §"Tokens" says "may be
+		// used in a subsequent connection". Default-on so a plain config gets the
+		// fast path; the listener replaces it with a socket-wide store.
+		SessionTokens: wire.NewSessionTokenStore(0),
 	}, nil
 }

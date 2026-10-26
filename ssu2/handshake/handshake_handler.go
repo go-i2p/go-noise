@@ -141,6 +141,11 @@ type HandshakeHandler struct {
 	// value required of inbound ones. Zero means MainNetworkID (2). See
 	// SetNetworkID.
 	networkID uint8
+
+	// fragMTU / fragIPv4 size the Session Confirmed fragments for this session's
+	// path. See SetFragmentMTU. Zero means the spec minimum (1280, IPv6).
+	fragMTU  int
+	fragIPv4 bool
 }
 
 // buildSSU2Prologue returns the Noise prologue for SSU2 handshakes.

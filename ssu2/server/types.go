@@ -45,6 +45,7 @@ type (
 	SSU2Block           = wire.SSU2Block
 	SSU2Packet          = wire.SSU2Packet
 	TokenCache          = wire.TokenCache
+	SessionTokenStore   = wire.SessionTokenStore
 	Token               = wire.Token
 	NewTokenBlock       = wire.NewTokenBlock
 	HeaderProtector     = wire.HeaderProtector
@@ -136,6 +137,7 @@ var (
 	NewNewTokenBlock               = wire.NewNewTokenBlock
 	ParseNewTokenBlock             = wire.ParseNewTokenBlock
 	NewTokenCacheWithMaxSize       = wire.NewTokenCacheWithMaxSize
+	NewSessionTokenStore           = wire.NewSessionTokenStore
 	SerializeBlocks                = wire.SerializeBlocks
 	DeserializeBlocks              = wire.DeserializeBlocks
 	FindBlockByType                = wire.FindBlockByType

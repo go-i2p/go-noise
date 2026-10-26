@@ -341,6 +341,38 @@ type SSU2Conn struct {
 	// replayToken is the deterministic token derived from the validated inbound
 	// SessionRequest and suitable for replay cache checks.
 	replayToken []byte
+
+	// confirmedDatagrams are the exact wire bytes of the Session Confirmed
+	// fragment(s) this initiator sent, retained for retransmission.
+	//
+	// ssu2.md §"Handshake Retransmission" -> §"Session Confirmed" recommends
+	// option 2: "send data messages immediately, but also retransmit Session
+	// Confirmed until a data message is received", and adds "Alice must retain
+	// the information required to retransmit the Session Confirmed message."
+	// The bytes — not a re-sealed packet — are what must be retained: the same
+	// section requires "same source and connection IDs, ephemeral key, and
+	// packet number", because "Packet number must not be incremented, because
+	// that would change the chained hash value which is an input for the
+	// split() function."
+	//
+	// Guarded by confirmedMutex.
+	confirmedDatagrams [][]byte
+
+	// confirmedMutex guards confirmedDatagrams.
+	confirmedMutex sync.Mutex
+
+	// confirmedAcked is closed once a data message has arrived, which is the
+	// spec's condition for stopping the Session Confirmed retransmissions.
+	// Created with the retention so an early arrival is not missed.
+	confirmedAcked chan struct{}
+
+	// confirmedAckedOnce guards the close of confirmedAcked.
+	confirmedAckedOnce sync.Once
+
+	// windowSignal wakes a sender parked in waitForWindow when the congestion
+	// window gains room. Guarded by windowMutex.
+	windowSignal chan struct{}
+	windowMutex  sync.Mutex
 }
 
 // PendingPacket tracks an outbound packet awaiting acknowledgment.
@@ -350,6 +382,24 @@ type PendingPacket struct {
 	SentTime         time.Time
 	Retries          int
 	NextRetry        time.Time
+
+	// WireSize is the datagram length that went on the wire, in bytes.
+	//
+	// ssu2.md §"Congestion Control": "It is recommended that the congestion
+	// control be based on byte count, not packet count." Bytes in flight can
+	// only be accounted if each outstanding packet carries its wire size.
+	//
+	// AckOnly marks a packet that carried nothing but non-data blocks (an ACK,
+	// DateTime, Address or Padding packet). §"Congestion Control" requires
+	// "ACK-only data packets should not count for bytes or packets in-flight and
+	// are not congestion-controlled."
+	WireSize int
+	AckOnly  bool
+
+	// LossReported marks that this packet has already been counted as lost, so
+	// repeated NACKs and RTO expiries of the same packet do not each trigger a
+	// fresh congestion event.
+	LossReported bool
 }
 
 // NewSSU2Conn creates a new SSU2 connection.

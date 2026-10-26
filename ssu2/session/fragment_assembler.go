@@ -148,10 +148,10 @@ func (h *DataHandler) handleFirstFragment(data []byte) error {
 	return nil
 }
 
-// maxFollowOnFragmentNumber is the spec ceiling on the 7-bit fragment number.
+// followOnFragmentNumberMax is the spec ceiling on the 7-bit fragment number.
 // ssu2.md §"Follow-on Fragment": "bits 7-1: fragment number 1 - 127 (0 not
 // allowed)".
-const maxFollowOnFragmentNumber = 127
+const followOnFragmentNumberMax = 127
 
 // handleFollowOnFragment processes subsequent fragments of a message.
 // SSU2 spec format: FragmentInfo(1) + MessageID(4) + Data
@@ -186,14 +186,14 @@ func (h *DataHandler) handleFollowOnFragment(data []byte) error {
 			With("message_id", messageID).
 			Errorf("follow-on fragment declares fragment number 0, which the spec does not allow")
 	}
-	if fragmentNum > maxFollowOnFragmentNumber {
+	if fragmentNum > followOnFragmentNumberMax {
 		h.incrementStat(&h.stats.MessagesDropped)
 		return oops.
 			Code("FOLLOW_ON_FRAGMENT_NUMBER_TOO_LARGE").
 			In("ssu2").
 			With("message_id", messageID).
 			With("fragment_number", fragmentNum).
-			Errorf("follow-on fragment number %d exceeds the maximum %d", fragmentNum, maxFollowOnFragmentNumber)
+			Errorf("follow-on fragment number %d exceeds the maximum %d", fragmentNum, followOnFragmentNumberMax)
 	}
 
 	h.mutex.Lock()

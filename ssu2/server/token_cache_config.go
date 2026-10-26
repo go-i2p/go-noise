@@ -22,3 +22,15 @@ func newTokenCacheFromConfig(config *SSU2Config) *TokenCache {
 	}
 	return NewTokenCacheWithMaxSize(RetryTokenTTL, maxSize)
 }
+
+// sharedSessionTokenStore returns the outbound-token store for connections on
+// this socket: the caller's if it configured one, otherwise a fresh store.
+// Sharing one store across a socket's sessions is what makes a token received
+// on an established session usable by the next Session Request to that peer,
+// regardless of which connection object happens to be dialing.
+func sharedSessionTokenStore(config *SSU2Config) *SessionTokenStore {
+	if config != nil && config.SessionTokens != nil {
+		return config.SessionTokens
+	}
+	return NewSessionTokenStore(0)
+}

@@ -70,6 +70,12 @@ type SSU2Listener struct {
 	// tokenCache validates retry tokens
 	tokenCache *TokenCache
 
+	// sessionTokens holds the New Token blocks this router received from peers,
+	// shared by every connection on this socket because they are all bound to
+	// the same local address (ssu2.md §"Tokens": "A token is bound to the
+	// combination of source IP/port and destination IP/port").
+	sessionTokens *SessionTokenStore
+
 	// tokenAdmission gates retry-token issuance against off-path
 	// spoofed-source flooding. Two layers are applied before a token
 	// cache entry is allocated:
@@ -228,6 +234,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		addr:               addr,
 		pendingByInitiator: make(map[string]*SSU2Conn),
 		tokenCache:         newTokenCacheFromConfig(config),
+		sessionTokens:      sharedSessionTokenStore(config),
 		sessionRateLimiter: newIPRateLimiter(sessionRequestsPerSecond, sessionRateLimiterMaxIPs),
 		handshakeReplay:    newHandshakeReplayCache(config),
 		firstSight:         newFirstSightTracker(config.FirstSightWindow, config.FirstSightMaxEntries),
@@ -815,6 +822,13 @@ func (l *SSU2Listener) buildConnConfig(packet *SSU2Packet, connID uint64) *SSU2C
 	connConfig.ConnectionID = connID
 	connConfig.RouterHash = routerHash
 	connConfig.Initiator = false
+
+	// Give this responder session the socket's token state. TokenIssuer lets it
+	// issue a New Token block after the Session Confirmed is validated
+	// (ssu2.md §"Tokens"), and SessionTokens shares the outbound store so every
+	// session on this socket sees the same (local, peer) token bindings.
+	connConfig.TokenIssuer = l.tokenCache
+	connConfig.SessionTokens = l.sessionTokens
 
 	if len(packet.Header) >= 24 {
 		connConfig.InitiatorConnectionID = binary.BigEndian.Uint64(packet.Header[16:24])

@@ -28,6 +28,7 @@ var (
 // Spec-defined handshake timing constants (ssu2.md §"Handshake Retransmission").
 const (
 	DefaultHandshakeTimeout      = ssu2config.DefaultHandshakeTimeout
+	DefaultHandshakeTotalTimeout = ssu2config.DefaultHandshakeTotalTimeout
 	DefaultSessionCreatedTimeout = ssu2config.DefaultSessionCreatedTimeout
 )
 
@@ -140,6 +141,8 @@ var (
 	FindBlockByType           = wire.FindBlockByType
 	ExtractConnectionID       = wire.ExtractConnectionID
 	ParseNewTokenBlock        = wire.ParseNewTokenBlock
+	NewNewTokenBlock          = wire.NewNewTokenBlock
+	NewSessionTokenStore      = wire.NewSessionTokenStore
 	NewHeaderProtectorManager = wire.NewHeaderProtectorManager
 	IsIPv4Addr                = wire.IsIPv4Addr
 )
@@ -147,13 +150,16 @@ var (
 // ─── From ssu2/handshake ──────────────────────────────────────────────────────
 
 type (
-	HandshakeHandler    = ssu2hs.HandshakeHandler
-	OptionsParams       = ssu2hs.OptionsParams
-	KeyState            = ssu2hs.KeyState
-	ManagedKey          = ssu2hs.ManagedKey
-	KeyRotationCallback = ssu2hs.KeyRotationCallback
-	KeyRotationManager  = ssu2hs.KeyRotationManager
-	KeyRotationStatus   = ssu2hs.KeyRotationStatus
+	HandshakeHandler = ssu2hs.HandshakeHandler
+	// SessionRequestCreateOption configures optional Session Request behavior
+	// such as presenting a Retry or previously-received session token.
+	SessionRequestCreateOption = ssu2hs.SessionRequestCreateOption
+	OptionsParams              = ssu2hs.OptionsParams
+	KeyState                   = ssu2hs.KeyState
+	ManagedKey                 = ssu2hs.ManagedKey
+	KeyRotationCallback        = ssu2hs.KeyRotationCallback
+	KeyRotationManager         = ssu2hs.KeyRotationManager
+	KeyRotationStatus          = ssu2hs.KeyRotationStatus
 )
 
 const (
@@ -175,12 +181,13 @@ const (
 )
 
 var (
-	NewHandshakeHandler         = ssu2hs.NewHandshakeHandler
-	NewHandshakeHandlerWithKeys = ssu2hs.NewHandshakeHandlerWithKeys
-	ParseOptionsBlock           = ssu2hs.ParseOptionsBlock
-	NewKeyRotationManager       = ssu2hs.NewKeyRotationManager
-	GenerateNewStaticKey        = ssu2hs.GenerateNewStaticKey
-	GenerateNewIntroKey         = ssu2hs.GenerateNewIntroKey
+	NewHandshakeHandler            = ssu2hs.NewHandshakeHandler
+	sessionRequestRetryTokenOption = ssu2hs.WithSessionRequestRetryToken
+	NewHandshakeHandlerWithKeys    = ssu2hs.NewHandshakeHandlerWithKeys
+	ParseOptionsBlock              = ssu2hs.ParseOptionsBlock
+	NewKeyRotationManager          = ssu2hs.NewKeyRotationManager
+	GenerateNewStaticKey           = ssu2hs.GenerateNewStaticKey
+	GenerateNewIntroKey            = ssu2hs.GenerateNewIntroKey
 )
 
 // ─── From ssu2/reliability ────────────────────────────────────────────────────

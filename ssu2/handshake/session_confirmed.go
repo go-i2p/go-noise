@@ -9,18 +9,59 @@ import (
 
 // SessionConfirmed fragmentation constants per SSU2 spec.
 const (
-	// sessionConfirmedMinMTU is the IPv6 minimum MTU used for conservative sizing.
+	// sessionConfirmedMinMTU is the IPv6 minimum MTU, used when the session has
+	// not told us its MTU. ssu2.md §"MTU": "The minimum SSU2 MTU is 1280".
 	sessionConfirmedMinMTU = 1280
 
-	// sessionConfirmedPerPacketOverhead = IP(40) + UDP(8) + SSU2 header(16).
-	sessionConfirmedPerPacketOverhead = 64
+	// Per-packet overhead, from ssu2.md §"Session Confirmed Fragmentation":
+	// "Calculate the space available in each packet, which is the MTU minus the
+	// IP header (20 or 40), minus the UDP header (8), minus the SSU2 short
+	// header (16). Total per-packet overhead is 44 (IPv4) or 64 (IPv6)."
+	sessionConfirmedOverheadIPv4 = 44
+	sessionConfirmedOverheadIPv6 = 64
 
-	// sessionConfirmedMaxPerPacket is the maximum ciphertext bytes per fragment.
-	sessionConfirmedMaxPerPacket = sessionConfirmedMinMTU - sessionConfirmedPerPacketOverhead
+	// sessionConfirmedJumboOverhead is the part of the jumbo payload that is not
+	// the encrypted payload: "Calculate the total data size (not including the
+	// header), which is the payload size + 64 bytes for the static key and two
+	// MACs."
+	sessionConfirmedJumboOverhead = 64
 
-	// sessionConfirmedMaxFragments is the maximum fragment count (4-bit field).
+	// sessionConfirmedMaxFragments is the maximum fragment count: §"Header"
+	// short header "bits 3-0: total fragments 1-15".
 	sessionConfirmedMaxFragments = 15
 )
+
+// SetFragmentMTU configures the MTU and address family the Session Confirmed
+// fragments are sized for. The caller (the session) passes the effective MTU —
+// the smaller of its own configured MTU and the MTU the peer published — and
+// whether the peer address is IPv4.
+//
+// Without this, fragmentation is always sized for the most conservative case
+// (1280-byte IPv6), which sends more fragments than a compliant peer expects
+// when the path allows a larger MTU. Zero/unset keeps the 1280 minimum.
+func (h *HandshakeHandler) SetFragmentMTU(mtu int, ipv4 bool) {
+	if mtu < sessionConfirmedMinMTU {
+		mtu = sessionConfirmedMinMTU
+	}
+	h.fragMTU = mtu
+	h.fragIPv4 = ipv4
+}
+
+// fragmentCapacity returns the maximum number of jumbo-payload bytes that fit
+// in one Session Confirmed packet for this session's MTU and address family.
+// ssu2.md §"Session Confirmed Fragmentation": per-packet overhead is 44 (IPv4)
+// or 64 (IPv6).
+func (h *HandshakeHandler) fragmentCapacity() int {
+	mtu := h.fragMTU
+	if mtu < sessionConfirmedMinMTU {
+		mtu = sessionConfirmedMinMTU
+	}
+	overhead := sessionConfirmedOverheadIPv6
+	if h.fragIPv4 {
+		overhead = sessionConfirmedOverheadIPv4
+	}
+	return mtu - overhead
+}
 
 // CreateSessionConfirmed creates a SessionConfirmed message (XK pattern
 // message 3). This is the third handshake message, sent by the initiator.
@@ -61,12 +102,13 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 	header[13] = 0x01
 
 	// Check that the encrypted payload fits in a single packet.
-	// Total data size = static key (32) + payload + 2 MACs (32) = payload + 64.
-	// Available space per packet = MTU - IP header (40 IPv6 worst case) - UDP (8) - SSU2 header (16) = MTU - 64.
-	// Use conservative default MTU of 1280 (IPv6 minimum).
-	totalDataSize := len(payload) + 64 // static key + two MACs
-	if totalDataSize > sessionConfirmedMaxPerPacket {
-		return nil, oops.Errorf("SessionConfirmed payload too large for single packet (%d bytes, max %d); use CreateSessionConfirmedFragments instead", totalDataSize, sessionConfirmedMaxPerPacket)
+	// Total data size = static key (32) + payload + 2 MACs (32) = payload + 64,
+	// per ssu2.md §"Session Confirmed Fragmentation". The capacity is the
+	// session's MTU minus its per-packet overhead (44 IPv4 / 64 IPv6).
+	maxPerPacket := h.fragmentCapacity()
+	totalDataSize := len(payload) + sessionConfirmedJumboOverhead
+	if totalDataSize > maxPerPacket {
+		return nil, oops.Errorf("SessionConfirmed payload too large for single packet (%d bytes, max %d); use CreateSessionConfirmedFragments instead", totalDataSize, maxPerPacket)
 	}
 
 	// MixHash(header) binds the header into the handshake hash.
@@ -229,7 +271,7 @@ func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packet
 		return nil, err
 	}
 
-	totalFrags, err := computeFragmentCount(len(payload) + 64)
+	totalFrags, err := computeFragmentCount(len(payload)+sessionConfirmedJumboOverhead, h.fragmentCapacity())
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +285,7 @@ func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packet
 	}
 	h.updateCipherStates(cs1, cs2)
 
-	packets := buildFragmentPackets(ciphertext, connID, packetNumber, totalFrags)
+	packets := buildFragmentPackets(ciphertext, connID, packetNumber, totalFrags, h.fragmentCapacity())
 	packets[0].Header = header
 
 	return packets, nil
@@ -317,10 +359,11 @@ func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte,
 // carry that sample.
 const minFragmentTail = 24
 
-// computeFragmentCount returns the number of fragments needed for the given ciphertext size.
-func computeFragmentCount(ciphertextSize int) (int, error) {
+// computeFragmentCount returns the number of fragments needed for the given
+// jumbo size at the given per-packet capacity.
+func computeFragmentCount(ciphertextSize, maxPerPacket int) (int, error) {
 	flog("computeFragmentCount", logger.Fields{"ciphertextSize": ciphertextSize}).Debug("Calculating fragment count")
-	totalFrags := (ciphertextSize + sessionConfirmedMaxPerPacket - 1) / sessionConfirmedMaxPerPacket
+	totalFrags := (ciphertextSize + maxPerPacket - 1) / maxPerPacket
 	if totalFrags < 1 {
 		totalFrags = 1
 	}
@@ -342,7 +385,7 @@ func computeFragmentCount(ciphertextSize int) (int, error) {
 // packet will be big enough" — is applied here: the tail is topped up to 24
 // bytes by shortening the preceding fragment.
 func fragmentSizes(ciphertextSize, maxPerPacket int) []int {
-	totalFrags, err := computeFragmentCount(ciphertextSize)
+	totalFrags, err := computeFragmentCount(ciphertextSize, maxPerPacket)
 	if err != nil || totalFrags <= 1 {
 		return []int{ciphertextSize}
 	}
@@ -380,7 +423,7 @@ func buildSessionConfirmedHeader(connID uint64, packetNumber uint32, fragNum, to
 }
 
 // buildFragmentPackets splits ciphertext into fragment packets.
-func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32, totalFrags int) []*SSU2Packet {
+func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32, totalFrags, maxPerPacket int) []*SSU2Packet {
 	flog("buildFragmentPackets", logger.Fields{"ciphertextLen": len(ciphertext), "totalFrags": totalFrags}).Debug("Splitting ciphertext into fragments")
 	// Sizes come from fragmentSizes, which shortens the second-to-last fragment
 	// when needed so the final fragment keeps the spec's 24-byte minimum. The
@@ -389,7 +432,7 @@ func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32,
 	// field of the earlier fragments is metadata that never enters the jumbo
 	// message (reassembleFragments concatenates payload fields plus the final
 	// MAC only).
-	sizes := fragmentSizes(len(ciphertext), sessionConfirmedMaxPerPacket)
+	sizes := fragmentSizes(len(ciphertext), maxPerPacket)
 	if len(sizes) != totalFrags {
 		totalFrags = len(sizes)
 	}

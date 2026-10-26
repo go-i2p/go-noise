@@ -249,7 +249,8 @@ func TestCreateSessionConfirmed_CarriesOptionsBlock(t *testing.T) {
 // 24 is the header-protection IV: §"KDF for Session Confirmed" derives it from
 // "the last 24 bytes of the packet".
 func TestFragmentSizes_LastFragmentKeeps24ByteTail(t *testing.T) {
-	const cap = sessionConfirmedMaxPerPacket
+	// The conservative default: spec-minimum MTU over IPv6.
+	const cap = sessionConfirmedMinMTU - sessionConfirmedOverheadIPv6
 
 	for n := 1; n <= 4*cap+64; n++ {
 		sizes := fragmentSizes(n, cap)
@@ -269,4 +270,37 @@ func TestFragmentSizes_LastFragmentKeeps24ByteTail(t *testing.T) {
 	assert.Equal(t, []int{1193, 24}, fragmentSizes(cap+1, cap))
 	assert.Equal(t, []int{cap, 24}, fragmentSizes(cap+24, cap))
 	assert.Equal(t, []int{cap, cap}, fragmentSizes(2*cap, cap))
+}
+
+// TestFragmentCapacity_FollowsMTUAndFamily covers ssu2.md §"Session Confirmed
+// Fragmentation": "Calculate the space available in each packet, which is the
+// MTU minus the IP header (20 or 40), minus the UDP header (8), minus the SSU2
+// short header (16). Total per-packet overhead is 44 (IPv4) or 64 (IPv6)."
+//
+// The capacity must therefore track both the session MTU and the peer's address
+// family; hard-coding the 1280/IPv6 figure made an IPv4 or large-MTU session
+// emit more fragments than a compliant peer expects.
+func TestFragmentCapacity_FollowsMTUAndFamily(t *testing.T) {
+	initiator, _, _, _ := setupHandshakePair(t)
+	handler := initiator
+
+	// Unset defaults to the spec minimum over IPv6.
+	assert.Equal(t, 1280-64, handler.fragmentCapacity(), "unset MTU must use the 1280 IPv6 minimum")
+
+	handler.SetFragmentMTU(1500, true)
+	assert.Equal(t, 1500-44, handler.fragmentCapacity(), "IPv4 overhead is 44")
+
+	handler.SetFragmentMTU(1500, false)
+	assert.Equal(t, 1500-64, handler.fragmentCapacity(), "IPv6 overhead is 64")
+
+	// A sub-minimum MTU is clamped to the floor (§"MTU": "The minimum SSU2 MTU
+	// is 1280"), never trusted as-is.
+	handler.SetFragmentMTU(576, true)
+	assert.Equal(t, 1280-44, handler.fragmentCapacity(), "MTU below the minimum must be clamped")
+
+	// A larger capacity must not ask for more fragments than the bytes require.
+	handler.SetFragmentMTU(1500, true)
+	count, err := computeFragmentCount(1500-44, handler.fragmentCapacity())
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "a full-MTU jumbo must fit one IPv4 fragment")
 }

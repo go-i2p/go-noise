@@ -14,6 +14,14 @@ import (
 	"github.com/samber/oops"
 )
 
+// DefaultSessionTokenLifetime is the lifetime given to a token issued in a New
+// Token block when the caller does not choose one.
+//
+// ssu2.md §"Tokens": "recommended values are several minutes minimum, one or
+// more hours maximum, depending on desired maximum overhead of stored tokens."
+// 30 minutes sits inside that band.
+const DefaultSessionTokenLifetime = 30 * time.Minute
+
 // RetryTokenTTL is the lifetime of a token issued in a Retry message.
 // Spec ref: ssu2.md §"Tokens" - "expires in a few seconds".
 // i2pd: SSU2_TOKEN_EXPIRATION_TIMEOUT = 9 (libi2pd/SSU2Session.h:SSU2_TOKEN_EXPIRATION_TIMEOUT).
@@ -52,6 +60,13 @@ type TokenCache struct {
 // Token represents a retry token issued to a specific address.
 type Token struct {
 	Value []byte // Token value (8 bytes)
+	// ExpiresAt, when non-zero, overrides the cache-wide ttl for this entry.
+	// Retry tokens use the cache ttl ("expires in a few seconds"); New Token
+	// block tokens carry the expiration the sender published in the block
+	// ("recommended values are several minutes minimum, one or more hours
+	// maximum"), so the two classes can share one cache without one lifetime
+	// being wrong for the other.
+	ExpiresAt time.Time
 	// Address is the peer (source) address the token was issued to.
 	Address *net.UDPAddr
 	// LocalAddress is the destination address (this router's IP/port) the token was
@@ -273,7 +288,7 @@ func (tc *TokenCache) Cleanup() int {
 	removed := 0
 
 	for addrStr, token := range tc.tokens {
-		if now.Sub(token.CreatedAt) > tc.ttl {
+		if tc.expiredAt(token, now) {
 			delete(tc.tokens, addrStr)
 			removed++
 		}
@@ -329,9 +344,89 @@ func (tc *TokenCache) lookupToken(addrStr string) (*Token, bool) {
 	return token, ok
 }
 
-// isExpired reports whether token has exceeded the cache TTL.
+// isExpired reports whether token has exceeded its lifetime: the per-token
+// ExpiresAt when the issuer set one, otherwise the cache-wide ttl.
 func (tc *TokenCache) isExpired(token *Token) bool {
-	return time.Since(token.CreatedAt) > tc.ttl
+	return tc.expiredAt(token, time.Now())
+}
+
+// expiredAt is isExpired with the clock supplied, so Cleanup's single
+// time.Now() is not re-read per entry.
+func (tc *TokenCache) expiredAt(token *Token, now time.Time) bool {
+	if !token.ExpiresAt.IsZero() {
+		return now.After(token.ExpiresAt)
+	}
+	return now.Sub(token.CreatedAt) > tc.ttl
+}
+
+// IssueSessionToken creates (or reuses) the long-lived token a peer may present
+// in a later Session Request, and returns it with the expiry it was stored with.
+//
+// ssu2.md §"Tokens": "A token sent in a New Token block in an established
+// session may be used in a subsequent connection, and it expires at the time
+// specified in that block. Expiration is specified by the sender; recommended
+// values are several minutes minimum, one or more hours maximum."
+//
+// Unlike GenerateToken, the lifetime is the caller's, not the cache's Retry
+// TTL, and the result is meant to be published in a New Token block. A shorter
+// lifetime is never silently replaced by a longer existing one: §"Tokens" also
+// says "Routers should assume that only the last token received is valid", so
+// re-issuing refreshes the entry.
+func (tc *TokenCache) IssueSessionToken(addr, localAddr *net.UDPAddr, lifetime time.Duration) ([]byte, time.Time, error) {
+	if addr == nil {
+		return nil, time.Time{}, oops.
+			Code("NIL_ADDRESS").
+			In("wire").
+			Errorf("address cannot be nil")
+	}
+	if lifetime <= 0 {
+		lifetime = DefaultSessionTokenLifetime
+	}
+
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+
+	addrStr := tokenKey(addr, localAddr)
+	expires := time.Now().Add(lifetime)
+
+	// Reuse the value already outstanding for this address when it is still
+	// valid, only extending its lifetime. Replacing the value would invalidate a
+	// Retry token the peer has not presented yet — §"Tokens" binds one token per
+	// address pair, and §"Handshake Retransmission" -> §"Retry" expects that
+	// token to keep working until it is used.
+	if existing, ok := tc.tokens[addrStr]; ok && !tc.isExpired(existing) {
+		existing.ExpiresAt = expires
+		return existing.Value, expires, nil
+	}
+
+	value, err := newTokenBytes()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if _, exists := tc.tokens[addrStr]; !exists && len(tc.tokens) >= tc.maxSize {
+		tc.evictOldestLocked()
+	}
+	tc.tokens[addrStr] = &Token{
+		Value:        value,
+		Address:      addr,
+		LocalAddress: localAddr,
+		CreatedAt:    time.Now(),
+		ExpiresAt:    expires,
+	}
+	return value, expires, nil
+}
+
+// newTokenBytes returns a fresh 8-byte random token value (§"Tokens": the token
+// is an 8-byte big-endian value on the wire).
+func newTokenBytes() ([]byte, error) {
+	value := make([]byte, TokenSize)
+	if _, err := rand.Read(value); err != nil {
+		return nil, oops.
+			Code("TOKEN_GENERATION_FAILED").
+			In("wire").
+			Wrapf(err, "failed to generate session token")
+	}
+	return value, nil
 }
 
 // AdjustCreatedAtForTest ages every cached token by the given delta so expiry

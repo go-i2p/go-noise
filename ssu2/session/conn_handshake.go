@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/binary"
+	"net"
 	"sort"
 	"time"
 
@@ -113,7 +114,7 @@ func (h *SSU2Conn) handshakeInitiator(ctx context.Context) error {
 		return err
 	}
 
-	if err := h.sendSessionConfirmed(); err != nil {
+	if err := h.sendSessionConfirmed(ctx); err != nil {
 		return err
 	}
 
@@ -180,7 +181,23 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 	h.handshakeHandler.SetExpectedPeerAddr(h.remoteAddr)
 	h.remoteAddrLock.RUnlock()
 
-	sessionRequest, err := h.handshakeHandler.CreateSessionRequest(h.config.ConnectionID, destConnID)
+	// ssu2.md §"Session Establishment" makes the token the fast path: "The
+	// standard establishment sequence, when Alice has a valid token previously
+	// received from Bob" is Session Request straight away, while "If Alice does
+	// not have a valid token, Alice should send a Token Request message instead
+	// of a Session Request, to avoid the asymmetric encryption overhead".
+	// §"Session Request" defines the field as "Token :: 0 if not previously
+	// received from Bob", so a token saved from an earlier New Token block must
+	// be presented here — otherwise the §"Tokens" recommendation that tokens be
+	// "sent at least once, during or soon after session establishment" buys
+	// nothing and every reconnection pays a Token Request / Retry round trip.
+	//
+	// Presenting a stale token is safe: §"Session Establishment" covers exactly
+	// that case ("when Alice thinks she has a valid token, but Bob rejects it
+	// (perhaps because Bob restarted)") — Bob replies with a Retry and Alice
+	// resends with the fresh token, which handleRetryResponse already does.
+	sessionRequest, err := h.handshakeHandler.CreateSessionRequest(
+		h.config.ConnectionID, destConnID, h.savedTokenOption()...)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create SessionRequest")
 	}
@@ -443,25 +460,177 @@ func (h *SSU2Conn) installBothHeaderKeys() error {
 	return nil
 }
 
-// sendSessionConfirmed creates and sends SessionConfirmed fragments.
-// sendSessionConfirmed creates and sends SessionConfirmed fragments.
-func (h *SSU2Conn) sendSessionConfirmed() error {
+// sendSessionConfirmed creates and sends SessionConfirmed fragments, then
+// arranges for their retransmission until the peer's first data message.
+func (h *SSU2Conn) sendSessionConfirmed(ctx context.Context) error {
 	flog("sendSessionConfirmed", logger.Fields{"remoteConnectionID": h.remoteConnectionID.Load()}).Debug("Creating and sending SessionConfirmed fragments")
 	// ssu2.rst §"RouterInfo" requires Alice to send her full RouterInfo in the
 	// Session Confirmed. A 32-byte RouterHash is not a RouterInfo, so there is
 	// no fallback: send the block only when the local RouterInfo is available.
 	routerInfoBytes := h.config.LocalRouterInfo
+	// ssu2.md §"Session Confirmed Fragmentation": each fragment's capacity is
+	// "the MTU minus the IP header (20 or 40), minus the UDP header (8), minus
+	// the SSU2 short header (16). Total per-packet overhead is 44 (IPv4) or 64
+	// (IPv6)". Size the fragments from this session's effective MTU (our MTU
+	// bounded by the peer's published mtu) and the peer's address family,
+	// instead of always assuming the 1280-byte IPv6 minimum.
+	h.handshakeHandler.SetFragmentMTU(h.effectiveMTU(), h.peerIsIPv4())
 	fragments, err := h.handshakeHandler.CreateSessionConfirmedFragments(h.remoteConnectionID.Load(), 0, routerInfoBytes)
 	if err != nil {
 		return oops.Wrapf(err, "failed to create SessionConfirmed")
 	}
 
+	datagrams := make([][]byte, 0, len(fragments))
 	for _, frag := range fragments {
-		if err := h.sendPacketDirect(frag); err != nil {
+		datagram, err := h.sendPacketDirectAndCapture(frag)
+		if err != nil {
 			return oops.Wrapf(err, "failed to send SessionConfirmed fragment")
 		}
+		datagrams = append(datagrams, datagram)
 	}
+
+	// ssu2.md §"Handshake Retransmission" -> §"Session Confirmed": "The
+	// recommed implementation is option 2). Alice must retain the information
+	// required to retransmit the Session Confirmed message." Retain the exact
+	// bytes and start the retransmission, which stops as soon as a data message
+	// arrives from the peer.
+	// §"Total Timeout" caps the handshake as a whole, so the retransmissions
+	// must not outlive the deadline this handshake is running under.
+	var deadline time.Time
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	h.retainSessionConfirmed(datagrams, deadline)
 	return nil
+}
+
+// retainSessionConfirmed stores the Session Confirmed datagrams for
+// retransmission and starts the retransmission loop (spec option 2).
+func (h *SSU2Conn) retainSessionConfirmed(datagrams [][]byte, deadline time.Time) {
+	if !h.storeSessionConfirmed(datagrams) {
+		return
+	}
+	h.wg.Add(1)
+	go h.retransmitSessionConfirmedLoop(deadline)
+}
+
+// storeSessionConfirmed records the datagrams for retransmission and returns
+// whether a retransmission loop should be started (false when a data message
+// has already arrived, which is the spec's stop condition).
+func (h *SSU2Conn) storeSessionConfirmed(datagrams [][]byte) bool {
+	h.confirmedMutex.Lock()
+	h.confirmedDatagrams = datagrams
+	if h.confirmedAcked == nil {
+		h.confirmedAcked = make(chan struct{})
+	}
+	acked := h.confirmedAcked
+	h.confirmedMutex.Unlock()
+
+	select {
+	case <-acked:
+		return false
+	default:
+		return true
+	}
+}
+
+// retransmitSessionConfirmedLoop implements ssu2.md §"Handshake Retransmission"
+// -> §"Session Confirmed" option 2: "send data messages immediately, but also
+// retransmit Session Confirmed until a data message is received".
+//
+// Retransmission intervals are the section's "1.25, 2.5, and 5 seconds", and
+// each retransmit is the identical datagram — §"Session Confirmed" requires the
+// "same source and connection IDs, ephemeral key, and packet number", and
+// forbids incrementing the packet number because "that would change the chained
+// hash value which is an input for the split() function".
+//
+// §"Session Confirmed" also states "Alice should also retransmit all Data
+// messages after the Session Confirmed message is retransmitted" — the
+// data-phase retransmitLoop already covers those, and each SC retransmit
+// refreshes nothing in its schedule, so the two mechanisms stay independent.
+//
+// The loop ends when a data message arrives (the spec's stop condition), the
+// handshake total elapses, or the connection closes.
+func (h *SSU2Conn) retransmitSessionConfirmedLoop(deadline time.Time) {
+	defer h.wg.Done()
+
+	// Already acked before the loop even started (a fast peer, or a
+	// single-fragment SC that needed no retransmit): nothing to do.
+	h.confirmedMutex.Lock()
+	acked := h.confirmedAcked
+	h.confirmedMutex.Unlock()
+	if acked == nil {
+		return
+	}
+
+	// A zero deadline means the caller set no handshake deadline; fall back to
+	// the spec's recommended total so retransmission cannot run on forever.
+	if deadline.IsZero() {
+		deadline = time.Now().Add(h.handshakeTotalBudget())
+	}
+
+	for _, wait := range retransmitSchedule(MessageTypeSessionConfirmed) {
+		timer := time.NewTimer(wait)
+		select {
+		case <-acked:
+			timer.Stop()
+			return
+		case <-h.closeChan:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+
+		if !time.Now().After(deadline) {
+			if !h.retransmitSessionConfirmed() {
+				return
+			}
+		}
+	}
+}
+
+// retransmitSessionConfirmed writes the retained Session Confirmed datagrams
+// again, byte for byte. Returns false when there is nothing to resend.
+func (h *SSU2Conn) retransmitSessionConfirmed() bool {
+	h.confirmedMutex.Lock()
+	datagrams := h.confirmedDatagrams
+	h.confirmedMutex.Unlock()
+
+	if len(datagrams) == 0 {
+		return false
+	}
+
+	h.remoteAddrLock.RLock()
+	addr := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+	if addr == nil {
+		return false
+	}
+
+	for _, datagram := range datagrams {
+		if _, err := h.underlying.WriteTo(datagram, addr); err != nil {
+			flog("retransmitSessionConfirmed", logger.Fields{"error": err.Error()}).
+				Debug("Session Confirmed retransmit failed")
+			return false
+		}
+	}
+	flog("retransmitSessionConfirmed").Debug("retransmitted Session Confirmed")
+	return true
+}
+
+// markSessionConfirmedAcked stops the Session Confirmed retransmissions. Called
+// when the first data message arrives from the peer — the spec's stop condition
+// for option 2 (§"Handshake Retransmission" -> §"Session Confirmed").
+func (h *SSU2Conn) markSessionConfirmedAcked() {
+	h.confirmedMutex.Lock()
+	acked := h.confirmedAcked
+	h.confirmedDatagrams = nil
+	h.confirmedMutex.Unlock()
+
+	if acked == nil {
+		return
+	}
+	h.confirmedAckedOnce.Do(func() { close(acked) })
 }
 
 // handshakeResponder performs the responder side of XK handshake.
@@ -815,7 +984,8 @@ func (h *SSU2Conn) finalizeHandshake() error {
 	return nil
 }
 
-// sendSessionConfirmedACK emits Bob's packet-0 ACK-only Data message.
+// sendSessionConfirmedACK emits Bob's packet-0 ACK Data message, together with
+// the New Token block when this router issues tokens.
 func (h *SSU2Conn) sendSessionConfirmedACK() {
 	flog("sendSessionConfirmedACK").Debug("sending Session Confirmed ACK (packet 0)")
 
@@ -824,9 +994,99 @@ func (h *SSU2Conn) sendSessionConfirmedACK() {
 	// "Ack-through = 0, acnt = 0" example in ssu2.rst §"Ack".
 	h.ackHandler.RecordReceived(0)
 
-	// sendImmediateACK allocates the next send sequence, which is 0 for the
-	// responder at this point, and AEAD-seals + header-protects the packet.
-	h.sendImmediateACK()
+	// ssu2.md §"Tokens": "New Token blocks … would typically be sent at least
+	// once, during or soon after session establishment. Due to validation checks
+	// of the RouterInfo in the Session Confirmed message, Bob should not send a
+	// New Token block in the Session Created message, it may be sent with the
+	// ACK 0 and Router Info after the Session Confirmed is received and
+	// validated." installCipherStates() — which validates the RouterInfo and
+	// extracts the introduction key — has already run at this point, so this is
+	// exactly the "after … received and validated" moment, and the ACK-0 packet
+	// is the one the spec names.
+	//
+	// Without it, Alice can never present a token in a later Session Request
+	// (§"Session Request": "Token :: 0 if not previously received from Bob") and
+	// every reconnection pays a Token Request / Retry round trip.
+	blocks := h.newTokenBlockForPeer()
+
+	// sendACKWithExtraBlocks allocates the next send sequence, which is 0 for
+	// the responder at this point, and AEAD-seals + header-protects the packet.
+	h.sendACKWithExtraBlocks(blocks)
+}
+
+// savedTokenOption returns the Session Request create option carrying a token
+// previously received from this peer, or nil when none is stored.
+func (h *SSU2Conn) savedTokenOption() []SessionRequestCreateOption {
+	store := h.config.SessionTokens
+	if store == nil {
+		return nil
+	}
+
+	h.remoteAddrLock.RLock()
+	dest := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+
+	local := h.localUDPAddr()
+	token, ok := store.Get(local, dest)
+	if !ok {
+		return nil
+	}
+	// The option itself is only applied inside CreateSessionRequest, so the
+	// on-wire constraints (8 bytes, nonzero per §"Session Request") are checked
+	// here: a stored token that cannot be presented must not stall the
+	// handshake, it is dropped and the connection proceeds token-less.
+	if len(token) != wire.TokenSize || isAllZeroBytes(token) {
+		flog("savedTokenOption", logger.Fields{"token_len": len(token)}).
+			Debug("discarding a stored session token that cannot be presented")
+		store.Delete(local, dest)
+		return nil
+	}
+	return []SessionRequestCreateOption{sessionRequestRetryTokenOption(token)}
+}
+
+// localUDPAddr returns the underlying socket's local UDP endpoint, which a
+// token is bound to: ssu2.md §"Tokens" — "A token is bound to the combination of
+// source IP/port and destination IP/port."
+func (h *SSU2Conn) localUDPAddr() *net.UDPAddr {
+	if addr, ok := h.underlying.LocalAddr().(*net.UDPAddr); ok {
+		return addr
+	}
+	return nil
+}
+
+// newTokenBlockForPeer issues (or reuses) this session's token and encodes it as
+// a New Token block, or returns nil when this config cannot issue tokens.
+func (h *SSU2Conn) newTokenBlockForPeer() []*SSU2Block {
+	if h.config.TokenIssuer == nil {
+		return nil
+	}
+
+	lifetime := h.config.SessionTokenLifetime
+	if lifetime <= 0 {
+		lifetime = wire.DefaultSessionTokenLifetime
+	}
+
+	h.remoteAddrLock.RLock()
+	remote := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+	if remote == nil {
+		return nil
+	}
+
+	token, expires, err := h.config.TokenIssuer.IssueSessionToken(remote, h.localUDPAddr(), lifetime)
+	if err != nil {
+		flog("newTokenBlockForPeer", logger.Fields{"error": err.Error()}).
+			Debug("unable to issue a session token")
+		return nil
+	}
+
+	block, err := NewNewTokenBlock(expires, token)
+	if err != nil {
+		flog("newTokenBlockForPeer", logger.Fields{"error": err.Error()}).
+			Warn("issued token could not be encoded as a New Token block")
+		return nil
+	}
+	return []*SSU2Block{block}
 }
 
 // deriveDataPhaseKeys installs KDF-derived header protection keys and returns
@@ -1087,11 +1347,13 @@ func (h *SSU2Conn) receiveHandshakeWithRetransmit(ctx context.Context, lastSent 
 	// handshakeResponder) has wrapped ctx with context.WithTimeout, the deadline
 	// is already set and we inherit it here.  Fall back to a per-call deadline
 	// only when no context deadline is present (e.g., standalone callers).
-	var deadline time.Time
-	if d, ok := ctx.Deadline(); ok {
+	// The phase gets its own spec budget (totalTimeout), but never beyond the
+	// deadline of the handshake as a whole: §"Total Timeout" caps everything,
+	// while §"Session Created" ("Recommended timeout: 12 seconds total") and the
+	// other per-message sections cap each phase inside it.
+	deadline := time.Now().Add(totalTimeout)
+	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
-	} else {
-		deadline = time.Now().Add(totalTimeout)
 	}
 
 	for attempt := 0; attempt <= len(intervals); attempt++ {
@@ -1208,21 +1470,45 @@ func (h *SSU2Conn) installHeaderKey(keyGetter func() []byte, keyType string) err
 	}
 }
 
-// ensureHandshakeDeadline wraps the context with a handshake deadline if needed.
-// If config.HandshakeTimeout is set, uses it; otherwise checks for existing deadline
-// on ctx; if neither, applies defaultHandshakeTimeout. Returns (ctx, cancel) where
-// cancel may be nil if no new deadline was added.
+// ensureHandshakeDeadline wraps the context with the whole-handshake deadline.
+//
+// ssu2.md §"Handshake Retransmission" -> §"Total Timeout": "Recommended total
+// timeout for the handshake is 20 seconds." That is config.HandshakeTotalTimeout,
+// which is deliberately separate from config.HandshakeTimeout — the per-message
+// budget of §"Session Request" ("Recommended timeout: 15 seconds total"). The
+// phases are sequential (Token Request, then Session Request, then Session
+// Created each carry their own budget), so applying the per-message value here
+// truncated the handshake to less than the recommended total and abandoned
+// sessions a compliant peer was still retransmitting.
+//
+// A deadline already on the caller's context is honoured when it is sooner than
+// the configured total, so a caller that shortens the window still wins.
+// Returns (ctx, cancel); cancel is nil when no new deadline was added.
 func (h *SSU2Conn) ensureHandshakeDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
-	timeout := h.config.HandshakeTimeout
-	if timeout <= 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			timeout = defaultHandshakeTimeout
+	total := h.handshakeTotalBudget()
+	if d, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(d); remaining <= total {
+			return ctx, nil
 		}
 	}
-	if timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
+	return context.WithTimeout(ctx, total)
+}
+
+// handshakeTotalBudget resolves the whole-handshake deadline.
+//
+// An explicitly configured HandshakeTotalTimeout wins. Otherwise the value is
+// derived: a caller that set HandshakeTimeout below its 15 s default asked for
+// faster failure, so that shorter window becomes the total and the handshake
+// does not silently take longer than requested; with plain defaults the spec's
+// recommended 20 s total applies.
+func (h *SSU2Conn) handshakeTotalBudget() time.Duration {
+	if total := h.config.HandshakeTotalTimeout; total > 0 {
+		return total
 	}
-	return ctx, nil
+	if per := h.config.HandshakeTimeout; per > 0 && per < DefaultHandshakeTimeout {
+		return per
+	}
+	return DefaultHandshakeTotalTimeout
 }
 
 // validateBlockTimestampSkew checks a DateTime block's timestamp against the

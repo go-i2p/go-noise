@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	"github.com/go-i2p/go-noise/ssu2/wire"
 )
 
 // SSU2Config contains configuration for creating SSU2 connections and
@@ -287,6 +288,53 @@ type SSU2Config struct {
 	// configured default; a custom implementation must do the same.
 	// Required for responder configs (Initiator=false).
 	RouterInfoValidator func(routerInfo, authenticatedStaticKey []byte) error
+
+	// SessionTokens stores the tokens this router has *received* from peers in
+	// New Token blocks, so a later Session Request can present one instead of
+	// doing a Token Request / Retry round trip.
+	//
+	// ssu2.md §"Session Request": "Token :: 0 if not previously received from
+	// Bob", and §"Tokens": "A token sent in a New Token block in an established
+	// session may be used in a subsequent connection". Without a store, an
+	// initiator can never satisfy the §"Session Establishment" fast path ("when
+	// Alice has a valid token previously received from Bob") and every
+	// reconnection pays the Token Request/Retry cost.
+	//
+	// nil disables both saving and presenting. The listener shares one store
+	// across the connections it creates.
+	// Default: nil.
+	SessionTokens *wire.SessionTokenStore
+
+	// TokenIssuer is the cache this router issues tokens from, so a responder
+	// can answer a peer's New Token request for a *subsequent* connection
+	// (ssu2.md §"Tokens": "They would typically be sent at least once, during or
+	// soon after session establishment"). It is the listener's own retry-token
+	// cache; issuing a session-lifetime entry there is what makes the token
+	// valid when the peer presents it in a later Session Request.
+	//
+	// nil means this config cannot issue New Token blocks (e.g. a dedicated
+	// outbound-only connection). Set by the listener on every conn config.
+	// Default: nil.
+	TokenIssuer *wire.TokenCache
+
+	// SessionTokenLifetime is how long a token issued in a New Token block
+	// stays valid. ssu2.md §"Tokens": "recommended values are several minutes
+	// minimum, one or more hours maximum". Zero selects
+	// wire.DefaultSessionTokenLifetime.
+	// Default: 0 (30 minutes).
+	SessionTokenLifetime time.Duration
+
+	// HandshakeTotalTimeout is the budget for the handshake as a whole, shared
+	// across every phase (Token Request, Session Request, Session Created,
+	// Session Confirmed).
+	//
+	// ssu2.md §"Handshake Retransmission" -> §"Total Timeout": "Recommended
+	// total timeout for the handshake is 20 seconds." It is distinct from
+	// HandshakeTimeout, which §"Session Request" sets at "15 seconds total" for
+	// that single phase: the phases are sequential, so one 15 s value cannot
+	// serve as both. Zero falls back to DefaultHandshakeTotalTimeout.
+	// Default: 20 seconds.
+	HandshakeTotalTimeout time.Duration
 
 	// MessageQueueSize is the capacity of the inbound message queue for
 	// complete reassembled I2NP messages. When the queue is full and a new

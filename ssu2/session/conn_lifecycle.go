@@ -222,14 +222,14 @@ func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
 	}
 	packet.Payload = payload
 
-	_, plaintextPayload, err := h.sealPacket(packet, addr)
+	datagram, plaintextPayload, err := h.sealPacket(packet, addr)
 	if err != nil {
 		return err
 	}
 
 	h.validDataPacketsSent.Add(1)
 	h.updateActivity()
-	h.trackPendingPacket(packet, plaintextPayload)
+	h.trackPendingPacket(packet, plaintextPayload, len(datagram))
 	return nil
 }
 

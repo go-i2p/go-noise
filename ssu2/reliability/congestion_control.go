@@ -238,6 +238,25 @@ func (cc *CongestionController) OnPacketSent(packetSize int) {
 	cc.bytesInFlight += packetSize
 }
 
+// ReleaseBytes subtracts n from bytes in flight without crediting delivery.
+//
+// Used when outstanding bytes are abandoned rather than acknowledged — a packet
+// that ran out of retries. Feeding those bytes to OnAck would grow the window
+// and inflate the bandwidth estimate as if the peer had received them, which is
+// the opposite of what happened.
+func (cc *CongestionController) ReleaseBytes(n int) {
+	if n <= 0 {
+		return
+	}
+
+	cc.mutex.Lock()
+	defer cc.mutex.Unlock()
+	cc.bytesInFlight -= n
+	if cc.bytesInFlight < 0 {
+		cc.bytesInFlight = 0
+	}
+}
+
 // OnAck processes an acknowledgment for the specified number of bytes.
 // This implements CWND growth based on the current state and updates the
 // Westwood+ bandwidth estimate from ACK inter-arrival times.

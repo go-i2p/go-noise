@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -341,5 +342,92 @@ func TestSealPacket_IPv4DatagramBudget(t *testing.T) {
 	}
 	if _, _, err := conn.sealPacket(newDataPacket(t, MaxPacketSizeIPv6), v6); err != nil {
 		t.Errorf("1452-byte packet to an IPv6 peer must be sent: %v", err)
+	}
+}
+
+// TestSendSessionConfirmedACK_CarriesNewTokenBlock covers ssu2.md §"Tokens":
+// "New Token blocks … would typically be sent at least once, during or soon
+// after session establishment. Due to validation checks of the RouterInfo in
+// the Session Confirmed message, Bob should not send a New Token block in the
+// Session Created message, it may be sent with the ACK 0 and Router Info after
+// the Session Confirmed is received and validated."
+//
+// Without a token, Alice can never satisfy §"Session Establishment"'s fast path
+// ("when Alice has a valid token previously received from Bob") and every
+// reconnection pays a Token Request / Retry round trip.
+func TestSendSessionConfirmedACK_CarriesNewTokenBlock(t *testing.T) {
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9012})
+	config := createTestConfig(t)
+	config.TokenIssuer = wire.NewTokenCacheWithMaxSize(wire.RetryTokenTTL, 16)
+
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9011},
+		config,
+		false,
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+
+	conn.sendSessionConfirmedACK()
+
+	pkt := requireWritten(t, underlying)
+	blocks, err := DeserializeBlocks(payloadOf(t, pkt.data))
+	require.NoError(t, err)
+
+	require.NotNil(t, findBlock(t, blocks, BlockTypeACK), "ACK must still be present")
+	token := findBlock(t, blocks, BlockTypeNewToken)
+	require.NotNil(t, token, "Bob's first data packet must carry a New Token block")
+
+	parsed, err := ParseNewTokenBlock(token)
+	require.NoError(t, err)
+	require.Len(t, parsed.Token, 8, "§\"New Token\": token :: 8 bytes")
+
+	// expires :: unsigned big-endian seconds, and must be in the future and
+	// inside the configured lifetime (§"Tokens": "several minutes minimum").
+	assert.Greater(t, int64(parsed.Expiration), time.Now().Unix()-1)
+	assert.LessOrEqual(t, int64(parsed.Expiration), time.Now().Add(wire.DefaultSessionTokenLifetime+time.Minute).Unix())
+
+	// §"Tokens": "Routers should assume that only the last token received is
+	// valid" — the same peer on the same local address gets one entry.
+	assert.Equal(t, 1, config.TokenIssuer.Size())
+
+	// The issued token must be one this listener would actually accept in a
+	// later Session Request — otherwise the New Token block is decoration and
+	// Alice still pays the Token Request / Retry round trip.
+	local, ok := underlying.LocalAddr().(*net.UDPAddr)
+	require.True(t, ok)
+	require.True(t, config.TokenIssuer.ConsumeToken(parsed.Token, conn.GetRemoteAddr(), local),
+		"the New Token block must carry a token the issuer will honor")
+}
+
+// TestSendSessionConfirmedACK_NoIssuerSendsNoToken proves the New Token block is
+// simply omitted when the session cannot issue tokens, rather than emitting an
+// empty or malformed block.
+func TestSendSessionConfirmedACK_NoIssuerSendsNoToken(t *testing.T) {
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9014})
+	config := createTestConfig(t)
+	config.TokenIssuer = nil
+
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9013},
+		config,
+		false,
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+
+	conn.sendSessionConfirmedACK()
+
+	pkt := requireWritten(t, underlying)
+	blocks, err := DeserializeBlocks(payloadOf(t, pkt.data))
+	require.NoError(t, err)
+	require.NotNil(t, findBlock(t, blocks, BlockTypeACK))
+	for _, b := range blocks {
+		assert.NotEqual(t, BlockTypeNewToken, b.Type,
+			"no issuer configured must mean no New Token block, not a bogus one")
 	}
 }

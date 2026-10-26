@@ -64,6 +64,14 @@ func (l *SSU2Listener) DialSSU2ViaListener(ctx context.Context, remoteAddr *net.
 	// Create outbound connection using the listener's underlying socket.
 	// readsOwnSocket=false: the listener owns the read loop; the conn must
 	// not spawn a second goroutine reading the same fd.
+	// Share the socket-wide outbound token store so a token received on any
+	// session to this peer is available to the next Session Request
+	// (ssu2.md §"Tokens": "A token sent in a New Token block in an established
+	// session may be used in a subsequent connection").
+	if config.SessionTokens == nil || config.SessionTokens == l.sessionTokens {
+		config.SessionTokens = l.sessionTokens
+	}
+
 	conn, err := NewSSU2Conn(
 		l.underlying,
 		remoteAddr,

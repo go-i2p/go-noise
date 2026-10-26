@@ -31,7 +31,9 @@ type (
 // TokenCache types
 type (
 	TokenCache = wire.TokenCache
-	Token      = wire.Token
+	// SessionTokenStore holds tokens received from peers in New Token blocks.
+	SessionTokenStore = wire.SessionTokenStore
+	Token             = wire.Token
 )
 
 // ─── Block type constants ─────────────────────────────────────────────────────
@@ -214,5 +216,6 @@ var (
 
 	// TokenCache constructors
 	NewTokenCache            = wire.NewTokenCache
+	NewSessionTokenStore     = wire.NewSessionTokenStore
 	NewTokenCacheWithMaxSize = wire.NewTokenCacheWithMaxSize
 )

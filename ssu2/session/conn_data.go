@@ -3,6 +3,7 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"time"
 
 	"github.com/go-i2p/common/data"
 	i2phkdf "github.com/go-i2p/crypto/hkdf"
@@ -125,7 +126,44 @@ func (h *SSU2Conn) wireDataCallbacks() {
 	}
 
 	h.wrapTerminationCallback(&cbs)
+	h.wrapNewTokenCallback(&cbs)
 	h.dataHandler.SetCallbacks(cbs)
+}
+
+// wrapNewTokenCallback stores a New Token block's token so a later Session
+// Request to that peer can present it.
+//
+// ssu2.md §"Tokens": "A token sent in a New Token block in an established
+// session may be used in a subsequent connection, and it expires at the time
+// specified in that block." §"Session Request" then reads "Token :: 0 if not
+// previously received from Bob" — a token that is received but never saved can
+// never be used, which leaves every reconnection on the Token Request / Retry
+// path.
+//
+// The block is 4 bytes of unsigned big-endian expiry followed by the 8-byte
+// token (§"New Token"). §"Tokens" also says "Routers should assume that only the
+// last token received is valid", which SessionTokenStore.Save implements by
+// replacing the entry for the same destination.
+//
+// Any callback the caller already installed still runs.
+func (h *SSU2Conn) wrapNewTokenCallback(cbs *DataHandlerCallbacks) {
+	existing := cbs.OnNewToken
+	cbs.OnNewToken = func(data []byte) {
+		if h.config.SessionTokens != nil && len(data) >= 12 {
+			expires := time.Unix(int64(binary.BigEndian.Uint32(data[0:4])), 0)
+			token := data[4:12]
+			h.remoteAddrLock.RLock()
+			dest := h.remoteAddr
+			h.remoteAddrLock.RUnlock()
+			if err := h.config.SessionTokens.Save(h.localUDPAddr(), dest, token, expires); err != nil {
+				flog("wrapNewTokenCallback", logger.Fields{"error": err.Error()}).
+					Debug("received a New Token block we could not store")
+			}
+		}
+		if existing != nil {
+			existing(data)
+		}
+	}
 }
 
 // warnMissingSignatureVerifiers logs warnings for unset signature verifiers.

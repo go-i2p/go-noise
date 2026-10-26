@@ -6,6 +6,7 @@ import (
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/go-i2p/go-noise/internal/baseconfig"
+	"github.com/go-i2p/go-noise/ssu2/wire"
 )
 
 // WithPattern sets the Noise protocol pattern. For SSU2, this should
@@ -84,6 +85,33 @@ func (sc *SSU2Config) WithRemoteStaticKey(key []byte) *SSU2Config {
 // WithHandshakeTimeout sets the handshake timeout.
 func (sc *SSU2Config) WithHandshakeTimeout(timeout time.Duration) *SSU2Config {
 	baseconfig.SetHandshakeTimeout(&sc.BaseHandshakeConfig, timeout)
+	return sc
+}
+
+// WithHandshakeTotalTimeout sets the whole-handshake budget.
+//
+// ssu2.md §"Handshake Retransmission" -> §"Total Timeout" recommends 20 seconds
+// for the handshake overall, while the per-message sections recommend their
+// own totals (15 s for Session Request, 12 s for Session Created). Use this to
+// change the former and WithHandshakeTimeout to change the latter.
+func (sc *SSU2Config) WithHandshakeTotalTimeout(timeout time.Duration) *SSU2Config {
+	sc.HandshakeTotalTimeout = timeout
+	return sc
+}
+
+// WithSessionTokenLifetime sets how long a token this router issues in a New
+// Token block stays valid. ssu2.md §"Tokens": "recommended values are several
+// minutes minimum, one or more hours maximum". Values below the several-minutes
+// floor are rejected by Validate.
+func (sc *SSU2Config) WithSessionTokenLifetime(lifetime time.Duration) *SSU2Config {
+	sc.SessionTokenLifetime = lifetime
+	return sc
+}
+
+// WithSessionTokenStore sets the store for tokens received from peers, which a
+// later Session Request presents. Pass nil to disable saving and presenting.
+func (sc *SSU2Config) WithSessionTokenStore(store *wire.SessionTokenStore) *SSU2Config {
+	sc.SessionTokens = store
 	return sc
 }
 

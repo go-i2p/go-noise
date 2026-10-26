@@ -370,17 +370,31 @@ func buildACKRanges(sorted []uint32, start, maxBytes int) []byte {
 // ProcessACK handles an incoming ACK block, removing acknowledged packets
 // from the pending queue. Returns the list of acked packet numbers.
 func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
+	acked, _, err := h.ProcessACKWithNacks(ackBlock)
+	return acked, err
+}
+
+// ProcessACKWithNacks is ProcessACK with the negatively acknowledged packet
+// numbers as a second return value.
+//
+// ssu2.md §"Congestion Control" -> §"Packet Numbers": "ACKs and NACKs contain
+// packet numbers. Transmitters must maintain a data structure with a mapping of
+// packet numbers to their contents. When a packet is ACKed or NACKed, the
+// transmitter must determine what I2NP messages and fragments were in that
+// packet, to decide what to retransmit." A loss response therefore needs the
+// NACK set, which ProcessACK discards.
+func (h *ACKHandler) ProcessACKWithNacks(ackBlock *SSU2Block) (acked []uint32, nacked []uint32, err error) {
 	flog("ProcessACK").Debug("Processing ACK block")
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if ackBlock.Type != BlockTypeACK {
-		return nil, oops.Errorf("expected ACK block type %d, got %d",
+		return nil, nil, oops.Errorf("expected ACK block type %d, got %d",
 			BlockTypeACK, ackBlock.Type)
 	}
 
 	data := ackBlock.Data
 	if len(data) < 5 {
-		return nil, oops.Errorf("ACK block too short: %d bytes, minimum 5", len(data))
+		return nil, nil, oops.Errorf("ACK block too short: %d bytes, minimum 5", len(data))
 	}
 
 	// Parse header
@@ -388,10 +402,11 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 	acnt := int(data[4])
 
 	var ackedPackets []uint32
+	var nackedPackets []uint32
 
 	// Initial consecutive run: throughPN down through throughPN-acnt
 	if uint32(acnt) > throughPN {
-		return nil, oops.Errorf("ACK acnt (%d) exceeds throughPN (%d)", acnt, throughPN)
+		return nil, nil, oops.Errorf("ACK acnt (%d) exceeds throughPN (%d)", acnt, throughPN)
 	}
 	for i := 0; i <= acnt; i++ {
 		pn := throughPN - uint32(i)
@@ -403,7 +418,7 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 	// Use int64 to detect underflow from malformed ACK ranges.
 	base := throughPN - uint32(acnt)
 	if base == 0 {
-		return ackedPackets, nil
+		return ackedPackets, nackedPackets, nil
 	}
 	cursor := int64(base - 1)
 
@@ -413,7 +428,7 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 	for offset+1 < len(data) {
 		rangeCount++
 		if rangeCount > MaxNACKRangesPerACK {
-			return nil, oops.
+			return nil, nil, oops.
 				Code("ACK_TOO_MANY_RANGES").
 				In("ssu2.reliability").
 				Errorf("ACK block contains too many NACK/ACK ranges: %d (max %d)",
@@ -425,21 +440,36 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 		offset += 2
 
 		if nacks == 0 && acks == 0 {
-			return nil, oops.Errorf("ACK range with both nack and ack counts zero (forbidden by ssu2.rst)")
+			return nil, nil, oops.Errorf("ACK range with both nack and ack counts zero (forbidden by ssu2.rst)")
 		}
 
-		// Skip the gap (nacked packets) — check for underflow
-		if nacks > cursor {
-			return nil, oops.Errorf("ACK nack range (%d) exceeds cursor (%d)", nacks, cursor)
+		// Skip the gap (nacked packets) — check for underflow. The gap is
+		// recorded as well as skipped: those packet numbers are what the peer
+		// told us it did not get.
+		//
+		// A cursor of N means N+1 numbers are still available at or below it
+		// (N, N-1, … 0), which is why the bound is cursor+1 rather than cursor:
+		// a run that ends exactly at packet 0 is legal, e.g. the ssu2.md example
+		// "ack 2 1 0" reached by a range that finishes the bitfield.
+		if nacks > cursor+1 {
+			return nil, nil, oops.Errorf("ACK nack range (%d) exceeds cursor (%d)", nacks, cursor)
+		}
+		for i := int64(0); i < nacks; i++ {
+			nackedPackets = append(nackedPackets, uint32(cursor-i))
 		}
 		cursor -= nacks
 		if cursor < 0 {
-			return nil, oops.Errorf("ACK cursor underflow after nacks: cursor=%d", cursor)
+			// The bitfield ran down to packet 0. Nothing is left below it, so a
+			// nonzero ack run here is malformed.
+			if acks > 0 {
+				return nil, nil, oops.Errorf("ACK ack range (%d) below packet 0", acks)
+			}
+			break
 		}
 
 		// Collect the ack run — check for underflow
 		if acks > cursor+1 {
-			return nil, oops.Errorf("ACK ack range (%d) exceeds remaining cursor (%d)", acks, cursor)
+			return nil, nil, oops.Errorf("ACK ack range (%d) exceeds remaining cursor (%d)", acks, cursor)
 		}
 		for i := int64(0); i < acks; i++ {
 			ackedPackets = append(ackedPackets, uint32(cursor))
@@ -454,7 +484,7 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 		}
 	}
 
-	return ackedPackets, nil
+	return ackedPackets, nackedPackets, nil
 }
 
 // AddPending marks a packet as sent and awaiting acknowledgment. If the
