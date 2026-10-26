@@ -507,8 +507,9 @@ func (sm *SessionManager) applyNSRKeysToSessionWhileLocked(session *Session, nsr
 // by trying the exact counter first, avoiding the window scan. A nil hint
 // falls back to the full window scan for robustness.
 //
-// Spec ref: ecies.rst §"Existing Session" — "Maintain handling of out-of-order
-// messages", window ≤128.
+// Spec basis: ecies.md §"Message Numbers" requires out-of-order handling via the
+// tag ratchet; the size of this counter window is an implementation choice (see
+// recvWindowSize in helpers.go), not a spec constant.
 func (sm *SessionManager) decryptExistingSession(
 	session *Session,
 	msg []byte,

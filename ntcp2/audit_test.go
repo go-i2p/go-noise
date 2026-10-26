@@ -311,8 +311,12 @@ func TestReplayDetection_RejectsDuplicateEphemeralKey(t *testing.T) {
 // rejects message 1 with padLen > MaxNTCP2HandshakePadding before allocating.
 // This test uses a mock scenario to validate the constant is enforced.
 func TestPaddingValidation_RejectsExcessivePadLen(t *testing.T) {
-	// Verify the constant exists and has a reasonable value
-	assert.Equal(t, 1024, MaxNTCP2HandshakePadding, "MaxNTCP2HandshakePadding should be 1024")
+	// ntcp2.md §"1) SessionRequest" -> §"Notes" (line 429): "As of API 0.9.69
+	// (release 2.12.0), Java I2P implements the same max padding for non-PQ
+	// connections as for MLKEM-512. The maximum padding is 880 bytes." Message 2
+	// has its own ceiling of 848 (§"2) SessionCreated", line 640), asserted in
+	// TestMaxMsg2CleartextPaddingMatchesSpec.
+	assert.Equal(t, 880, MaxNTCP2HandshakePadding, "MaxNTCP2HandshakePadding should be the spec's 880 for message 1")
 
 	// Create test config pair
 	p := newTestXKConfigPair(t)
@@ -662,4 +666,16 @@ func TestNTCP2HandshakePadding_Message2_Randomized(t *testing.T) {
 	assert.GreaterOrEqual(t, len(lengths), 10,
 		"should see at least 10 distinct padding lengths in %d trials (saw %d)",
 		numTrials, len(lengths))
+}
+
+// TestMaxMsg2CleartextPaddingMatchesSpec pins the message-2 ceiling to
+// ntcp2.md §"2) SessionCreated" -> §"Notes" (line 640): "Alice may reject
+// connections with excessive padding … The maximum padding is 848 bytes."
+// The two handshake messages have different limits, so they must not be
+// collapsed into one constant.
+func TestMaxMsg2CleartextPaddingMatchesSpec(t *testing.T) {
+	assert.Equal(t, 848, maxMsg2CleartextPaddingBytes,
+		"message 2 cleartext padding cap must be the spec's 848")
+	assert.Greater(t, MaxNTCP2HandshakePadding, maxMsg2CleartextPaddingBytes,
+		"message 1 allows more padding than message 2 per ntcp2.md lines 429/640")
 }

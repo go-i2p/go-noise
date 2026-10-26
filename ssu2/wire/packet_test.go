@@ -2,8 +2,12 @@ package wire
 
 import (
 	"bytes"
+	"net"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // buildValidHeader returns a headerSize-byte header with protocol version
@@ -17,7 +21,7 @@ func buildValidHeader(headerSize int, msgType uint8) []byte {
 	h[12] = msgType
 	if headerSize == LongHeaderSize {
 		h[13] = SSU2ProtocolVersion
-		h[14] = SSU2NetworkID
+		h[14] = MainNetworkID
 	}
 	return h
 }
@@ -51,7 +55,6 @@ func TestSSU2Packet_SerializeDeserializeRoundTrip(t *testing.T) {
 		{"Retry (long header)", MessageTypeRetry, []byte("retry-payload-data")},
 		{"TokenRequest (long header)", MessageTypeTokenRequest, []byte("token-request-payload")},
 		{"HolePunch (long header)", MessageTypeHolePunch, []byte("hole-punch-payload-data")},
-		{"empty payload (long header, satisfies MinPacketSize without payload)", MessageTypeRetry, nil},
 	}
 
 	for _, tt := range tests {
@@ -118,7 +121,7 @@ func TestSSU2Packet_Deserialize_InvalidProtocolVersion(t *testing.T) {
 	data := make([]byte, MinPacketSize+LongHeaderSize+EphemeralKeySize)
 	data[12] = MessageTypeSessionRequest
 	data[13] = SSU2ProtocolVersion + 1 // wrong version
-	data[14] = SSU2NetworkID
+	data[14] = MainNetworkID
 
 	p := &SSU2Packet{}
 	err := p.Deserialize(data)
@@ -127,16 +130,26 @@ func TestSSU2Packet_Deserialize_InvalidProtocolVersion(t *testing.T) {
 	}
 }
 
-func TestSSU2Packet_Deserialize_WrongNetworkID(t *testing.T) {
-	data := make([]byte, MinPacketSize+LongHeaderSize+EphemeralKeySize)
+// TestSSU2Packet_Deserialize_RecordsNetworkID asserts the wire layer records
+// header byte 14 instead of enforcing it. The correct network ID is deployment
+// policy (ssu2.md §"Header": "id :: 1 byte, the network ID (currently 2, except
+// for test networks)"; §"Header Binding": "the netid is != the expected value
+// (generally 2, except in test networks), the receiver should drop the
+// message"), so the comparison belongs to the config-aware session/listener
+// layers, which own SSU2Config.NetworkID.
+func TestSSU2Packet_Deserialize_RecordsNetworkID(t *testing.T) {
+	// header(32) + ephemeral key(32) + payload(32) + MAC(16) = 112 bytes.
+	data := make([]byte, LongHeaderSize+EphemeralKeySize+32+MACSize)
 	data[12] = MessageTypeSessionRequest
 	data[13] = SSU2ProtocolVersion
-	data[14] = SSU2NetworkID + 1 // wrong network
+	data[14] = MainNetworkID + 1 // a test network
 
 	p := &SSU2Packet{}
-	err := p.Deserialize(data)
-	if err == nil {
-		t.Fatal("expected error for wrong network ID")
+	if err := p.Deserialize(data); err != nil {
+		t.Fatalf("Deserialize() must not reject another network's ID at the wire layer: %v", err)
+	}
+	if p.NetworkID != MainNetworkID+1 {
+		t.Errorf("NetworkID = %d, want %d", p.NetworkID, MainNetworkID+1)
 	}
 }
 
@@ -150,7 +163,7 @@ func TestSSU2Packet_Deserialize_TruncatedEphemeralKey(t *testing.T) {
 	data := make([]byte, MinPacketSize)
 	data[12] = MessageTypeSessionRequest
 	data[13] = SSU2ProtocolVersion
-	data[14] = SSU2NetworkID
+	data[14] = MainNetworkID
 
 	p := &SSU2Packet{}
 	if err := p.Deserialize(data); err == nil {
@@ -165,7 +178,7 @@ func TestSSU2Packet_Deserialize_UnknownMessageType(t *testing.T) {
 	data := make([]byte, MinPacketSize+LongHeaderSize)
 	data[12] = 255 // not any known MessageType* constant
 	data[13] = SSU2ProtocolVersion
-	data[14] = SSU2NetworkID
+	data[14] = MainNetworkID
 
 	p := &SSU2Packet{}
 	_ = p.Deserialize(data) // must not panic; error or success both acceptable
@@ -302,7 +315,7 @@ func FuzzSSU2Packet_Deserialize(f *testing.F) {
 	longValidNoEphemeral := make([]byte, MinPacketSize+LongHeaderSize-ShortHeaderSize)
 	longValidNoEphemeral[12] = MessageTypeRetry
 	longValidNoEphemeral[13] = SSU2ProtocolVersion
-	longValidNoEphemeral[14] = SSU2NetworkID
+	longValidNoEphemeral[14] = MainNetworkID
 	f.Add(longValidNoEphemeral)
 
 	if sessionReq := newRoundTripPacket(MessageTypeSessionRequest, []byte("payload")); sessionReq != nil {
@@ -315,14 +328,14 @@ func FuzzSSU2Packet_Deserialize(f *testing.F) {
 	truncated := make([]byte, MinPacketSize)
 	truncated[12] = MessageTypeSessionRequest
 	truncated[13] = SSU2ProtocolVersion
-	truncated[14] = SSU2NetworkID
+	truncated[14] = MainNetworkID
 	f.Add(truncated)
 
 	// Wrong protocol version / network ID.
 	wrongVersion := make([]byte, MinPacketSize+LongHeaderSize)
 	wrongVersion[12] = MessageTypeSessionRequest
 	wrongVersion[13] = 0xFF
-	wrongVersion[14] = SSU2NetworkID
+	wrongVersion[14] = MainNetworkID
 	f.Add(wrongVersion)
 
 	// Maximum-size boundary.
@@ -334,4 +347,111 @@ func FuzzSSU2Packet_Deserialize(f *testing.F) {
 		p := &SSU2Packet{}
 		_ = p.Deserialize(data) // errors are fine; panics are not
 	})
+}
+
+// TestSSU2Packet_Serialize_IPv4AllowedUpTo1472 covers ssu2.md §"Max I2NP Message
+// Size": "IPv4: No IP fragmentation is assumed. IP + datagram header is 28 bytes.
+// Max message size is MTU - 28 … IPv6: … Max message size is MTU - 48." With a
+// 1500-byte MTU that is 1472 bytes on IPv4 but only 1452 on IPv6, so a
+// 1453-1472 byte datagram is legal over IPv4 and must not be refused.
+func TestSSU2Packet_Serialize_IPv4AllowedUpTo1472(t *testing.T) {
+	for _, total := range []int{MaxPacketSizeIPv6, MaxPacketSizeIPv6 + 1, MaxPacketSizeIPv4} {
+		p := &SSU2Packet{
+			MessageType: MessageTypeData,
+			Header:      buildValidHeader(ShortHeaderSize, MessageTypeData),
+			Payload:     make([]byte, total-ShortHeaderSize-MACSize),
+			MAC:         make([]byte, MACSize),
+			IsIPv4:      true,
+		}
+		if _, err := p.Serialize(); err != nil {
+			t.Errorf("IPv4 %d-byte packet must serialize (limit %d): %v", total, MaxPacketSizeIPv4, err)
+		}
+
+		// The same size over IPv6 is over the IPv6 budget and must be refused.
+		p.IsIPv4 = false
+		if total > MaxPacketSizeIPv6 {
+			if _, err := p.Serialize(); err == nil {
+				t.Errorf("IPv6 %d-byte packet must be refused (limit %d)", total, MaxPacketSizeIPv6)
+			}
+		}
+	}
+}
+
+// TestSSU2Packet_Deserialize_HandshakeMinimumSize covers ssu2.md
+// §"SessionRequest (Type 0)" / §"SessionCreated (Type 1)": "Size: 80 + payload
+// size. Minimum Size: 88". Reference: Java SSU2Util.MIN_HANDSHAKE_DATA_LEN = 88,
+// enforced by SSU2Header.trialDecryptHandshakeHeader.
+func TestSSU2Packet_Deserialize_HandshakeMinimumSize(t *testing.T) {
+	for _, msgType := range []uint8{MessageTypeSessionRequest, MessageTypeSessionCreated} {
+		// 87 bytes: header(32) + key(32) + payload(7) + MAC(16) -> below 88.
+		short := make([]byte, 87)
+		short[12] = msgType
+		short[13] = SSU2ProtocolVersion
+		short[14] = MainNetworkID
+		p := &SSU2Packet{}
+		if err := p.Deserialize(short); err == nil {
+			t.Errorf("message type %d: 87-byte packet must be rejected (spec minimum 88)", msgType)
+		}
+
+		// 88 bytes exactly: header(32) + key(32) + payload(8) + MAC(16).
+		ok := make([]byte, 88)
+		ok[12] = msgType
+		ok[13] = SSU2ProtocolVersion
+		ok[14] = MainNetworkID
+		p = &SSU2Packet{}
+		if err := p.Deserialize(ok); err != nil {
+			t.Errorf("message type %d: 88-byte packet must be accepted: %v", msgType, err)
+		}
+	}
+}
+
+// TestSSU2Packet_Deserialize_IntroKeyMinimumSize covers the intro-key family
+// (Retry, Token Request, Peer Test, Hole Punch): header(32) + minimum 8-byte
+// payload + MAC(16) = 56, the floor Java enforces in
+// SSU2Header.trialDecryptIntroKeyHeader ("packet must be 56 bytes min") because
+// header protection reads its IV from the packet's last 24 bytes.
+func TestSSU2Packet_Deserialize_IntroKeyMinimumSize(t *testing.T) {
+	short := make([]byte, 55)
+	short[12] = MessageTypeRetry
+	short[13] = SSU2ProtocolVersion
+	short[14] = MainNetworkID
+	p := &SSU2Packet{}
+	if err := p.Deserialize(short); err == nil {
+		t.Error("55-byte Retry must be rejected (minimum 56)")
+	}
+
+	ok := make([]byte, 56)
+	ok[12] = MessageTypeRetry
+	ok[13] = SSU2ProtocolVersion
+	ok[14] = MainNetworkID
+	p = &SSU2Packet{}
+	if err := p.Deserialize(ok); err != nil {
+		t.Errorf("56-byte Retry must be accepted: %v", err)
+	}
+}
+
+func TestIsIPv4Addr(t *testing.T) {
+	if !IsIPv4Addr(udpAddrOf(t, "192.0.2.1", 1)) {
+		t.Error("192.0.2.1 must be IPv4")
+	}
+	if IsIPv4Addr(udpAddrOf(t, "2001:db8::1", 1)) {
+		t.Error("2001:db8::1 must not be IPv4")
+	}
+	if !IsIPv4Addr(udpAddrOf(t, "::ffff:192.0.2.1", 1)) {
+		t.Error("IPv4-mapped address must count as IPv4")
+	}
+	if IsIPv4Addr(nil) {
+		t.Error("nil address must fall back to the conservative IPv6 budget")
+	}
+}
+
+func udpAddrOf(t *testing.T, ip string, port int) *net.UDPAddr {
+	t.Helper()
+	host := ip
+	if bytes.ContainsRune([]byte(ip), ':') {
+		host = "[" + ip + "]" // IPv6 literals must be bracketed before the port
+	}
+	a, err := net.ResolveUDPAddr("udp", host+":"+strconv.Itoa(port))
+	require.NoError(t, err)
+	return a
 }

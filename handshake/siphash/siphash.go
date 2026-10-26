@@ -1,23 +1,29 @@
-// Package siphash implements the SipHash-2-4 length obfuscation modifier
-// shared by the NTCP2 and SSU2 transports.
+// Package siphash implements the SipHash-2-4 frame-length obfuscation modifier
+// used by the NTCP2 transport.
 //
 // # What it does
 //
-// In the data phase, both NTCP2 and SSU2 hide the true length of each
-// message by XORing its 2-byte length field with a mask. The masks come from
-// a chain of SipHash-2-4 values: each mask is derived from the previous one,
-// so an observer cannot predict the next mask without the key. Both
-// transports use the identical algorithm, with per-direction keys derived
-// from their respective key derivation functions (KDFs).
+// In the NTCP2 data phase, the true length of each frame is hidden by XORing its
+// 2-byte length field with a mask. The masks come from a chain of SipHash-2-4
+// values: each mask is derived from the previous one, so an observer cannot
+// predict the next mask without the key. Per-direction keys come from the NTCP2
+// data-phase KDF (see ntcp2.md §"KDF for data phase" and §"SipHash length
+// obfuscation").
+//
+// SSU2 does NOT use this mechanism. SSU2 is UDP, where the datagram length is
+// already carried by the IP/UDP layers, and ssu2.md §"Header" defines the two
+// short-header bytes at offsets 14-15 as "moreflags :: 2 bytes, unused, set to 0
+// for future compatibility" — not a scrambled length. Nothing under ssu2/
+// imports this package; the SSU2 data-phase header is authenticated as
+// associated data instead.
 //
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
-// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 //
 // # Where it lives
 //
-// The canonical implementation is in this package. Both the ntcp2 and ssu2
-// packages re-export the type and constructors as package-level aliases, so
-// callers only ever import one concrete type.
+// The canonical implementation is in this package. The ntcp2 package re-exports
+// the type and constructors as package-level aliases, so callers only ever
+// import one concrete type.
 package siphash
 
 import (
@@ -30,8 +36,8 @@ import (
 	"github.com/samber/oops"
 )
 
-// LengthFieldSize is the size in bytes of the length field that both NTCP2
-// and SSU2 obfuscate (2 bytes).
+// LengthFieldSize is the size in bytes of the NTCP2 frame-length field that
+// gets obfuscated (2 bytes).
 const LengthFieldSize = 2
 
 // IVSize is the size in bytes of a SipHash IV (uint64 = 8 bytes).
@@ -47,8 +53,7 @@ var (
 // NextMask computes the next SipHash-2-4 mask value. It updates the IV in
 // place and returns the low 16 bits of the hash as the mask.
 //
-// This is the shared core of the SipHash length obfuscation chain used by
-// both NTCP2 and SSU2:
+// This is the core of the NTCP2 SipHash length obfuscation chain:
 //
 //	IV[n] = SipHash-2-4(k1, k2, IV[n-1])
 //	mask  = uint16(IV[n] & 0xFFFF)
@@ -63,11 +68,7 @@ var (
 //	 integer, use the least significant two bytes as the Mask. Convert the
 //	 long integer to the next IV as little endian."
 //
-// SSU2 reuses the identical NTCP2 SipHash length-obfuscation construction, so
-// the same endianness rules apply there too.
-//
 // See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
-// See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	var input [8]byte
 	binary.LittleEndian.PutUint64(input[:], *iv)
@@ -76,9 +77,9 @@ func NextMask(keys [2]uint64, iv *uint64) uint16 {
 	return uint16(hash & 0xFFFF)
 }
 
-// LengthModifier implements SipHash-2-4 length obfuscation for data-phase
-// packet and frame lengths. Both NTCP2 and SSU2 use this identical algorithm
-// with per-direction keys derived from their respective KDFs.
+// LengthModifier implements SipHash-2-4 length obfuscation for NTCP2
+// data-phase frame lengths, with per-direction keys derived from the NTCP2
+// data-phase KDF. SSU2 has no length obfuscation (see the package doc).
 //
 // After Close() (or ZeroKeys()) is called, ModifyOutbound and ModifyInbound
 // return an error instead of silently computing a deterministic all-zero-key
@@ -112,7 +113,7 @@ func NewLengthModifier(name string, sipKeys [2]uint64, initialIV uint64) *Length
 
 // NewLengthModifierDirectional creates a SipHash length modifier with
 // separate keys and starting IVs for each direction, as required by the NTCP2
-// and SSU2 specifications.
+// specification.
 func NewLengthModifierDirectional(name string, outKeys, inKeys [2]uint64, outIV, inIV uint64) *LengthModifier {
 	flog("NewLengthModifierDirectional", logger.Fields{"name": name}).Debug("Creating directional SipHash length modifier")
 	return &LengthModifier{

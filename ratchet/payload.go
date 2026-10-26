@@ -293,6 +293,21 @@ func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
 		RequestReverse: b.Data[0]&NextKeyFlagRequestReverse != 0,
 		KeyID:          binary.BigEndian.Uint16(b.Data[1:3]),
 	}
+	// ecies.md §"KEY AND TAG SET IDS": "Key and tag set IDs start at 0 and
+	// increment sequentially. The maximum tag set ID is 65535. The maximum key ID
+	// is 32767." Enforced here, at the wire boundary, because the tag-set
+	// arithmetic downstream is 16-bit: §"4a) DH Ratchet" derives the inbound tag
+	// set as 2*keyID (or 2*keyID+1) and the outbound one as
+	// "1 + sender key id + receiver key id". An out-of-range key ID would wrap
+	// those computations and silently install a tag set under the wrong ID,
+	// desynchronising both peers' tag indexes.
+	if info.KeyID > MaxKeyID {
+		return NextKeyInfo{}, oops.
+			Code("NEXTKEY_ID_OUT_OF_RANGE").
+			With("key_id", info.KeyID).
+			With("max_key_id", MaxKeyID).
+			Errorf("NextKey block key ID %d exceeds the spec maximum %d", info.KeyID, MaxKeyID)
+	}
 	if info.KeyPresent {
 		if len(b.Data) < 35 {
 			return NextKeyInfo{}, oops.Errorf("NextKey block has key-present flag but only %d bytes", len(b.Data))

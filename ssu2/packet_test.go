@@ -278,7 +278,7 @@ func TestSSU2Packet_Deserialize_Valid(t *testing.T) {
 				data := make([]byte, 0, 128)
 				hdr := make([]byte, LongHeaderSize)
 				hdr[13] = SSU2ProtocolVersion
-				hdr[14] = SSU2NetworkID
+				hdr[14] = MainNetworkID
 				data = append(data, hdr...)                            // Header
 				data = append(data, make([]byte, EphemeralKeySize)...) // Ephemeral key
 				data = append(data, []byte("test payload content")...) // Payload
@@ -369,7 +369,7 @@ func TestSSU2Packet_Deserialize_Invalid(t *testing.T) {
 			data: func() []byte {
 				d := make([]byte, LongHeaderSize+MACSize)
 				d[13] = SSU2ProtocolVersion
-				d[14] = SSU2NetworkID
+				d[14] = MainNetworkID
 				return d
 			}(),
 			wantErrMsg: "packet too short",
@@ -418,7 +418,7 @@ func TestSSU2Packet_RoundTrip(t *testing.T) {
 			// Long headers must contain valid protocol version/netID.
 			if original.GetHeaderSize() == LongHeaderSize {
 				original.Header[13] = SSU2ProtocolVersion
-				original.Header[14] = SSU2NetworkID
+				original.Header[14] = MainNetworkID
 			}
 			if original.HasEphemeralKey() {
 				original.EphemeralKey = make([]byte, EphemeralKeySize)
@@ -784,16 +784,28 @@ func TestSSU2Packet_LargePayload(t *testing.T) {
 
 // TestSSU2Packet_ZeroFields tests behavior with zero/nil fields
 func TestSSU2Packet_ZeroFields(t *testing.T) {
-	t.Run("Nil payload is allowed", func(t *testing.T) {
-		// Uses a long-header message type (Retry) with no ephemeral key, so
-		// header(32) + MAC(16) = 48 bytes already satisfies MinPacketSize(40)
-		// with a nil payload. A short-header type (e.g. Data) with a nil
-		// payload would total only 32 bytes, which validate() correctly
-		// rejects as below MinPacketSize -- use "Minimal payload" below to
-		// cover that boundary instead.
+	t.Run("Nil payload is rejected for handshake types", func(t *testing.T) {
+		// ssu2.md §"Retry" / §"TokenRequest" / §"SessionRequest" each state "The
+		// minimum payload size is 8 bytes", so a long-header message with a nil
+		// payload is not a valid SSU2 message: header(32) + MAC(16) = 48 bytes
+		// is below the 56-byte floor for the intro-key family. Sending it would
+		// leave the receiver without the 24-byte tail that header protection
+		// derives its ChaCha20 IV from.
 		pkt := NewSSU2Packet(MessageTypeRetry, 0)
 		pkt.Header = make([]byte, LongHeaderSize)
-		pkt.Payload = nil // Explicitly nil
+		pkt.Payload = nil
+		pkt.MAC = make([]byte, MACSize)
+
+		_, err := pkt.Serialize()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "packet too small")
+	})
+
+	t.Run("Minimum-size intro-key message is allowed", func(t *testing.T) {
+		// header(32) + payload(8) + MAC(16) = 56 = MinIntroKeyMessageSize.
+		pkt := NewSSU2Packet(MessageTypeRetry, 0)
+		pkt.Header = make([]byte, LongHeaderSize)
+		pkt.Payload = []byte("12345678")
 		pkt.MAC = make([]byte, MACSize)
 
 		data, err := pkt.Serialize()

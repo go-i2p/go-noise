@@ -25,6 +25,12 @@ var (
 	GenerateConnectionID = ssu2config.GenerateConnectionID
 )
 
+// Spec-defined handshake timing constants (ssu2.md §"Handshake Retransmission").
+const (
+	DefaultHandshakeTimeout      = ssu2config.DefaultHandshakeTimeout
+	DefaultSessionCreatedTimeout = ssu2config.DefaultSessionCreatedTimeout
+)
+
 // ─── From ssu2/wire ───────────────────────────────────────────────────────────
 
 type (
@@ -116,6 +122,7 @@ const (
 	LongHeaderSize    = wire.LongHeaderSize
 	MACSize           = wire.MACSize
 	MaxPacketSizeIPv4 = wire.MaxPacketSizeIPv4
+	MaxPacketSizeIPv6 = wire.MaxPacketSizeIPv6
 	HeaderKeySize     = wire.HeaderKeySize
 	// MinPayloadSize is the ssu2.rst minimum plaintext payload size.
 	MinPayloadSize = wire.MinPayloadSize

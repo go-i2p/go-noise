@@ -71,7 +71,7 @@ func TestProcessTokenRequest_ClockSkewZeroTokenRetry(t *testing.T) {
 	wire, _, err := BuildIntroKeyMessage(introKey, tokenRequestSpec(time.Now().Add(-10*time.Minute)))
 	require.NoError(t, err)
 
-	packet, ok := listener.parseInboundPacket(wire)
+	packet, ok := listener.parseInboundPacket(wire, testPeerAddr())
 	require.True(t, ok, "listener must decode the inbound TokenRequest")
 
 	_ = listener.processTokenRequest(packet, clientAddr)
@@ -85,7 +85,7 @@ func TestProcessTokenRequest_ClockSkewZeroTokenRetry(t *testing.T) {
 	n, _, err := clientPC.ReadFromUDP(buf)
 	require.NoError(t, err, "expected a Retry datagram in response to the skewed request")
 
-	retry, ok := listener.parseInboundPacket(buf[:n])
+	retry, ok := listener.parseInboundPacket(buf[:n], testPeerAddr())
 	require.True(t, ok, "the response must be a decodable intro-key message")
 	assert.Equal(t, uint8(MessageTypeRetry), retry.MessageType)
 	assert.True(t, isAllZero(retry.Header[24:32]),
@@ -100,7 +100,7 @@ func TestProcessTokenRequest_FreshTimestampProceeds(t *testing.T) {
 	wire, _, err := BuildIntroKeyMessage(introKey, tokenRequestSpec(time.Now()))
 	require.NoError(t, err)
 
-	packet, ok := listener.parseInboundPacket(wire)
+	packet, ok := listener.parseInboundPacket(wire, testPeerAddr())
 	require.True(t, ok)
 
 	require.NoError(t, listener.processTokenRequest(packet, clientAddr))
@@ -122,7 +122,7 @@ func TestProcessTokenRequest_MissingDateTimeDropsSilently(t *testing.T) {
 	wire, _, err := BuildIntroKeyMessage(introKey, spec)
 	require.NoError(t, err)
 
-	packet, ok := listener.parseInboundPacket(wire)
+	packet, ok := listener.parseInboundPacket(wire, testPeerAddr())
 	require.True(t, ok)
 
 	require.Error(t, listener.processTokenRequest(packet, clientAddr))

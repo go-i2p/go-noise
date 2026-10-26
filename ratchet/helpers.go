@@ -62,7 +62,18 @@ const (
 	MaxMessageNumber = ratchet.MaxMessagesPerTagset
 
 	// recvWindowSize is the number of ES message counters we pre-derive keys for
-	// and accept out-of-order. Fixed at 128 per I2P spec ecies.rst §Existing Session.
+	// and accept out-of-order.
+	//
+	// This is an implementation choice, not a spec number. ecies.md §"Message
+	// Numbers" requires out-of-order handling through the *tag* ratchet ("The
+	// Double Ratchet handles lost or out-of-order messages by including in each
+	// message header a tag. The receiver looks up the index of the tag, this is
+	// the message number N") and bounds the tag window with tsmin/tsmax (see
+	// tagWindowMin/tagWindowMax and §"Parameters": "Tagset look ahead of tag N:
+	// min(tsmax, tsmin + N/4)"). It never states a maximum number of message
+	// counters to retain per tag set, so 128 is our own cap on per-message-key
+	// state; it must stay well clear of tagWindowMax (160) so the two windows
+	// cannot both grow unbounded.
 	recvWindowSize = 128
 
 	// maxPaddingSize is the maximum padding block size in bytes.

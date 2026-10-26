@@ -109,20 +109,25 @@ const (
 	HeaderTypePeerTest         = wire.HeaderTypePeerTest
 	HeaderTypeHolePunch        = wire.HeaderTypeHolePunch
 
-	ShortHeaderSize     = wire.ShortHeaderSize
-	LongHeaderSize      = wire.LongHeaderSize
-	HeaderKeySize       = wire.HeaderKeySize
-	EphemeralKeySize    = wire.EphemeralKeySize
-	MACSize             = wire.MACSize
-	MaxPacketNumber     = wire.MaxPacketNumber
-	MinPacketSize       = wire.MinPacketSize
-	MaxPacketSizeIPv4   = wire.MaxPacketSizeIPv4
-	MaxPacketSizeIPv6   = wire.MaxPacketSizeIPv6
-	SSU2ProtocolVersion = wire.SSU2ProtocolVersion
-	MainNetworkID       = wire.MainNetworkID
-	TokenSize           = wire.TokenSize
-	MaxTokenCacheSize   = wire.MaxTokenCacheSize
-	RetryTokenTTL       = wire.RetryTokenTTL
+	ShortHeaderSize  = wire.ShortHeaderSize
+	LongHeaderSize   = wire.LongHeaderSize
+	HeaderKeySize    = wire.HeaderKeySize
+	EphemeralKeySize = wire.EphemeralKeySize
+	MACSize          = wire.MACSize
+	MaxPacketNumber  = wire.MaxPacketNumber
+	MinPacketSize    = wire.MinPacketSize
+	MinPayloadSize   = wire.MinPayloadSize
+	// Per-message-type datagram floors from ssu2.md §"SessionRequest (Type 0)" /
+	// §"SessionCreated (Type 1)" ("Minimum Size: 88") and the intro-key family.
+	MinHandshakePacketSize = wire.MinHandshakePacketSize
+	MinIntroKeyMessageSize = wire.MinIntroKeyMessageSize
+	MaxPacketSizeIPv4      = wire.MaxPacketSizeIPv4
+	MaxPacketSizeIPv6      = wire.MaxPacketSizeIPv6
+	SSU2ProtocolVersion    = wire.SSU2ProtocolVersion
+	MainNetworkID          = wire.MainNetworkID
+	TokenSize              = wire.TokenSize
+	MaxTokenCacheSize      = wire.MaxTokenCacheSize
+	RetryTokenTTL          = wire.RetryTokenTTL
 )
 
 var (

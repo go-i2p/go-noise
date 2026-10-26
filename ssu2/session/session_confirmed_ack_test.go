@@ -198,3 +198,148 @@ func findBlock(t *testing.T, blocks []*SSU2Block, blockType uint8) *SSU2Block {
 	t.Fatalf("no block of type %d found in %d blocks", blockType, len(blocks))
 	return nil
 }
+
+// TestReserveInitiatorDataSequence_FirstDataPacketIsPN1 covers
+// ssu2.md §"Packet Numbering": "For Alice, outbound packet numbering starts at 0
+// with Session Confirmed", with the worked example pairing "SessionConfirmed (0)"
+// and "Data (1)", and §"Packet Number": "Each packet number may only be used
+// once."
+//
+// Session Confirmed is sent with packet number 0
+// (SSU2Conn.sendSessionConfirmed -> CreateSessionConfirmedFragments(..., 0, ...)),
+// so the data-phase counter must skip 0. Without the reservation, Alice's first
+// Data packet reuses number 0 and a conformant peer drops it as a duplicate —
+// Java marks 0 received for inbound sessions (PeerState2.java:146) and starts its
+// own counter at 1 for outbound ones (PeerState2.java:150).
+func TestReserveInitiatorDataSequence_FirstDataPacketIsPN1(t *testing.T) {
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9020})
+	config := createTestConfig(t)
+	config.ConnectionID = 0x1122334455667788
+
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9021},
+		config,
+		true, // initiator ("Alice")
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+
+	// Before the reservation the counter is at its zero value, i.e. the number
+	// Session Confirmed already used.
+	conn.sendSeqMutex.Lock()
+	require.Equal(t, uint32(0), conn.sendSequence)
+	conn.sendSeqMutex.Unlock()
+
+	conn.reserveInitiatorDataSequence()
+
+	// After it, the first data-phase packet number is 1, matching the spec
+	// example's "Data (1)".
+	conn.sendSeqMutex.Lock()
+	assert.Equal(t, uint32(1), conn.sendSequence)
+	conn.sendSeqMutex.Unlock()
+
+	// Reserving twice must not advance past 1: the reservation is a floor, not an
+	// increment, so a retransmitted Session Confirmed cannot shift numbering.
+	conn.reserveInitiatorDataSequence()
+	conn.sendSeqMutex.Lock()
+	assert.Equal(t, uint32(1), conn.sendSequence)
+	conn.sendSeqMutex.Unlock()
+}
+
+// TestMarkPeerConfirmedPacketSeen_ResponderRejectsPeerPN0 covers the responder
+// half of ssu2.md §"Packet Numbering": Alice's Session Confirmed is her packet 0,
+// so Bob's inbound filter must treat number 0 as consumed and not deliver a peer
+// data-phase packet 0 (or a retransmitted Session Confirmed routed to the data
+// path) as fresh data.
+func TestMarkPeerConfirmedPacketSeen_ResponderRejectsPeerPN0(t *testing.T) {
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9030})
+	config := createTestConfig(t)
+	config.ConnectionID = 0x1122334455667788
+
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9031},
+		config,
+		false, // responder ("Bob")
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+
+	confirmed := []*SSU2Packet{{PacketNumber: 0, MessageType: MessageTypeSessionConfirmed}}
+	conn.markPeerConfirmedPacketSeen(confirmed)
+
+	// A peer data packet numbered 0 is now a duplicate and must be filtered.
+	dup := &SSU2Packet{
+		Header:       make([]byte, ShortHeaderSize),
+		Payload:      []byte("stale"),
+		MAC:          make([]byte, MACSize),
+		MessageType:  MessageTypeData,
+		PacketNumber: 0,
+	}
+	ready := conn.collectReadyDataPackets(dup)
+	assert.Empty(t, ready, "peer packet number 0 must be filtered after Session Confirmed used it")
+
+	// Number 1 is still eligible.
+	fresh := &SSU2Packet{
+		Header:       make([]byte, ShortHeaderSize),
+		Payload:      []byte("data"),
+		MAC:          make([]byte, MACSize),
+		MessageType:  MessageTypeData,
+		PacketNumber: 1,
+	}
+	ready = conn.collectReadyDataPackets(fresh)
+	assert.Len(t, ready, 1, "peer packet number 1 must still be accepted")
+}
+
+// TestSealPacket_IPv4DatagramBudget covers ssu2.md §"Max I2NP Message Size":
+// "IPv4: … Max message size is MTU - 28 … IPv6: … Max message size is MTU - 48."
+// With a 1500-byte MTU the datagram ceiling is 1472 over IPv4 but only 1452 over
+// IPv6, so the same 1460-byte packet is legal to one peer and illegal to the
+// other. sealPacket must stamp the destination family before serializing.
+func TestSealPacket_IPv4DatagramBudget(t *testing.T) {
+	newDataPacket := func(t *testing.T, total int) *SSU2Packet {
+		t.Helper()
+		require.Greater(t, total, ShortHeaderSize+MACSize)
+		return &SSU2Packet{
+			MessageType:  MessageTypeData,
+			PacketNumber: 1,
+			Header:       make([]byte, ShortHeaderSize),
+			Payload:      make([]byte, total-ShortHeaderSize-MACSize),
+			MAC:          make([]byte, MACSize),
+		}
+	}
+
+	underlying := newMockPacketConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9040})
+	config := createTestConfig(t)
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9041},
+		config,
+		true,
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+
+	v4 := &net.UDPAddr{IP: net.IPv4(198, 51, 100, 7), Port: 9042}
+	v6 := &net.UDPAddr{IP: net.ParseIP("2001:db8::1"), Port: 9043}
+
+	// 1460 bytes: over the IPv6 budget, within the IPv4 budget.
+	if _, _, err := conn.sealPacket(newDataPacket(t, 1460), v4); err != nil {
+		t.Errorf("1460-byte packet to an IPv4 peer must be sent (limit %d): %v", MaxPacketSizeIPv4, err)
+	}
+	if _, _, err := conn.sealPacket(newDataPacket(t, 1460), v6); err == nil {
+		t.Errorf("1460-byte packet to an IPv6 peer must be refused (limit %d)", MaxPacketSizeIPv6)
+	}
+
+	// 1452 bytes is legal to both.
+	if _, _, err := conn.sealPacket(newDataPacket(t, MaxPacketSizeIPv6), v4); err != nil {
+		t.Errorf("1452-byte packet to an IPv4 peer must be sent: %v", err)
+	}
+	if _, _, err := conn.sealPacket(newDataPacket(t, MaxPacketSizeIPv6), v6); err != nil {
+		t.Errorf("1452-byte packet to an IPv6 peer must be sent: %v", err)
+	}
+}

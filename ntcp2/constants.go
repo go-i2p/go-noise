@@ -98,11 +98,20 @@ const (
 	// DefaultMaxPaddingSize is the default maximum padding size, in bytes.
 	DefaultMaxPaddingSize = 64
 
-	// MaxNTCP2HandshakePadding is the maximum cleartext padding accepted
-	// during the handshake, in bytes. The spec allows far less in
-	// practice; this generous cap keeps a malicious peer from forcing a
-	// huge memory allocation.
-	MaxNTCP2HandshakePadding = 1024
+	// MaxNTCP2HandshakePadding is the maximum cleartext padding accepted in
+	// message 1, in bytes.
+	//
+	// ntcp2.md §"1) SessionCreated" -> §"Notes": "Padding should be limited to a
+	// reasonable amount. Bob may reject connections with excessive padding", and
+	// the same section fixes the number: "Through API 0.9.68 (release 2.11.0),
+	// Java I2P implemented a maximum of 256 bytes padding … As of API 0.9.69
+	// (release 2.12.0), Java I2P implements the same max padding for non-PQ
+	// connections as for MLKEM-512. The maximum padding is 880 bytes."
+	//
+	// Message 2 has its own, smaller ceiling (848, ntcp2.md:640 — see
+	// maxMsg2CleartextPaddingBytes in handshake.go), because the spec states the
+	// two limits separately.
+	MaxNTCP2HandshakePadding = 880
 
 	// MaxNTCP2Message3Part2Len is the maximum size of message 3, part 2
 	// (the sender's RouterInfo block plus any padding), in bytes. A

@@ -30,12 +30,15 @@ const (
 	// noiseProtocolName is the Noise protocol identifier for I2P ECIES-X25519-AEAD-Ratchet.
 	noiseProtocolName = "Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256"
 
-	// noiseIKOverhead is the fixed overhead added by the Noise IK handshake:
-	// 32 (Elligator2 ephemeral key) + 16 (static key AEAD tag) + 16 (payload AEAD tag).
-	noiseIKOverhead = 32 + 16 + 16
-
-	// noiseIKMinMessageSize is the minimum New Session message size:
-	// 32 (ephemeral) + 48 (encrypted static) + 16 (minimum payload AEAD = empty plaintext + tag).
+	// noiseIKMinMessageSize is the minimum New Session message size, i.e. the
+	// fixed overhead on top of the payload: 32-byte Elligator2 ephemeral key +
+	// 48-byte static-key section (32 ciphertext + 16 MAC) + 16-byte payload MAC.
+	//
+	// ecies.md §"1b) New session format (with binding)": "Length is 96 + payload
+	// length", with the field table giving Public Key 32, Static Key encrypted
+	// data 32, MAC for the static key section 16, and MAC for the payload section
+	// 16. §"1c"/§"1g" repeat "Length is 96 + payload length" for the unbound and
+	// reply formats.
 	noiseIKMinMessageSize = 32 + 48 + 16
 
 	// noiseEncryptedStaticSize is the size of the encrypted static key section:

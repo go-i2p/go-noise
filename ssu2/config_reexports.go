@@ -20,4 +20,7 @@ var (
 
 // ─── Constants re-exports ─────────────────────────────────────────────────────
 
-const DefaultHandshakeTimeout = config.DefaultHandshakeTimeout
+const (
+	DefaultHandshakeTimeout      = config.DefaultHandshakeTimeout
+	DefaultSessionCreatedTimeout = config.DefaultSessionCreatedTimeout
+)

@@ -41,6 +41,9 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 	if !h.initiator {
 		return oops.Errorf("responder cannot process SessionCreated")
 	}
+	if packet == nil {
+		return oops.Errorf("SessionCreated packet is nil")
+	}
 
 	if packet.MessageType != MessageTypeSessionCreated {
 		return oops.Errorf("expected SessionCreated (type 1), got type %d", packet.MessageType)
@@ -114,7 +117,6 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 	if err := h.validateNetworkID(packet); err != nil {
 		return err
 	}
-
 
 	// MixHash(header) per ssu2.rst "KDF for Session Created and Session Confirmed part 1" — binds the header into
 	// the handshake hash before processing the Noise message.

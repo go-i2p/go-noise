@@ -17,6 +17,25 @@ const (
 	// DefaultHandshakeTimeout is the spec-defined handshake timeout of 15
 	// seconds.
 	DefaultHandshakeTimeout = 15 * time.Second
+
+	// DefaultSessionCreatedTimeout is the total budget for Bob waiting for the
+	// Session Confirmed. ssu2.md §"Handshake Retransmission" -> §"Session
+	// Created": "Recommended retransmission intervals: 1, 2, and 4 seconds (1,
+	// 3, and 7 seconds after first sent). Recommended timeout: 12 seconds
+	// total".
+	DefaultSessionCreatedTimeout = 12 * time.Second
+
+	// DefaultSessionRequestTimeout is the total budget for Alice waiting for the
+	// Session Created / Retry. ssu2.md §"Handshake Retransmission" -> §"Session
+	// Request": "Recommended retransmission intervals: 1.25, 2.5, and 5 seconds
+	// … Recommended timeout: 15 seconds total".
+	DefaultSessionRequestTimeout = 15 * time.Second
+
+	// DefaultSessionConfirmedTimeout is the total budget for Alice's Session
+	// Confirmed retransmissions before the session is abandoned. ssu2.md
+	// §"Handshake Retransmission" -> §"Session Confirmed" gives the same
+	// "1.25, 2.5, and 5 seconds" interval recommendation as Session Request.
+	DefaultSessionConfirmedTimeout = 15 * time.Second
 )
 
 // DefaultRouterInfoValidator validates that the Noise-authenticated static
@@ -111,9 +130,9 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		FirstSightWindow:         30 * time.Second,
 		FirstSightMaxEntries:     50000,
 		MaxSessions:              65536,
-		DestroyTimeout:           11 * time.Second,  // ssu2.rst "Session Termination" leaves the closing period TBD; 11s matches i2pd
+		DestroyTimeout:           11 * time.Second,   // ssu2.rst "Session Termination" leaves the closing period TBD; 11s matches i2pd
 		NetworkID:                wire.MainNetworkID, // ssu2.md §"Header": 2 = main network
-		MaxClockSkew:             120 * time.Second, // Per spec: ±120s skew tolerance
+		MaxClockSkew:             120 * time.Second,  // Per spec: ±120s skew tolerance
 		ReplayCacheTTL:           4 * time.Minute,
 		ReceiveWindowSize:        256, // Configurable via WithReceiveWindowSize
 		RouterInfoValidator:      nil, // No default; callers must explicitly set via WithRouterInfoValidator

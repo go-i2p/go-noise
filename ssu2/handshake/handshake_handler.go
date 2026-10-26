@@ -587,18 +587,20 @@ func (h *HandshakeHandler) createHandshakeBlocks(messageType uint8) []*SSU2Block
 		blocks = append(blocks, EncodeAddressBlock(h.peerAddress, h.peerPort))
 	}
 
-	// Options block (Type 1) - SHOULD be included per SSU2 spec
-	// Communicates version and padding negotiation parameters.
-	// If localOptions has been set, encode those values; otherwise send zeroes.
-	if h.localOptions != nil {
-		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, h.localOptions.Serialize()))
-	} else {
-		// Default 12-byte Options block per ssu2.rst "Options" (Block Specifications).
-		optData := make([]byte, 12)
-		blocks = append(blocks, NewSSU2Block(BlockTypeOptions, optData))
-	}
+	// Options block (Type 1) - SHOULD be included per SSU2 spec.
+	blocks = append(blocks, h.optionsBlockOrEmpty())
 
 	return blocks
+}
+
+// optionsBlockOrEmpty builds the Options block (type 1) carrying this handler's
+// local padding parameters, or the spec's 12-byte all-zero default when none
+// were configured (ssu2.md §"Options" in Block Specifications).
+func (h *HandshakeHandler) optionsBlockOrEmpty() *SSU2Block {
+	if h.localOptions != nil {
+		return NewSSU2Block(BlockTypeOptions, h.localOptions.Serialize())
+	}
+	return NewSSU2Block(BlockTypeOptions, make([]byte, 12))
 }
 
 // validateHandshakeBlocks validates that required blocks are present.

@@ -44,7 +44,7 @@ func TestParseInboundPacket_TokenRequestLongHeaderRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(wire), 64, "test must exercise a >64-byte long-header packet")
 
-	packet, ok := l.parseInboundPacket(wire)
+	packet, ok := l.parseInboundPacket(wire, testPeerAddr())
 	require.True(t, ok, "listener must decode an inbound TokenRequest")
 	require.Equal(t, uint8(MessageTypeTokenRequest), packet.MessageType)
 
@@ -74,7 +74,7 @@ func TestParseInboundPacket_PeerTestLongHeaderRoundTrips(t *testing.T) {
 	wire, _, err := BuildIntroKeyMessage(introKey, spec)
 	require.NoError(t, err)
 
-	packet, ok := l.parseInboundPacket(wire)
+	packet, ok := l.parseInboundPacket(wire, testPeerAddr())
 	require.True(t, ok, "listener must decode an inbound PeerTest message")
 	require.Equal(t, uint8(MessageTypePeerTest), packet.MessageType)
 

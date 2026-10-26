@@ -170,6 +170,16 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Record the endpoint this Session Request is going to, so
+	// ProcessSessionCreated can require the reply to come from exactly there.
+	// ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message if
+	// the source IP and port do not match the destination IP and port of the
+	// Session Request."
+	h.remoteAddrLock.RLock()
+	h.handshakeHandler.SetExpectedPeerAddr(h.remoteAddr)
+	h.remoteAddrLock.RUnlock()
+
 	sessionRequest, err := h.handshakeHandler.CreateSessionRequest(h.config.ConnectionID, destConnID)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create SessionRequest")
@@ -286,7 +296,7 @@ func (h *SSU2Conn) notifyRecvDataKey() {
 // flow if the responder requires a token.
 func (h *SSU2Conn) awaitSessionCreated(ctx context.Context, sessionRequest *SSU2Packet) (*SSU2Packet, error) {
 	flog("awaitSessionCreated", logger.Fields{"timeout": h.config.HandshakeTimeout}).Debug("Waiting for SessionCreated response")
-	response, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout,
+	response, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.handshakeWaitBudget(MessageTypeSessionRequest),
 		MessageTypeSessionCreated, MessageTypeRetry)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to receive SessionCreated")
@@ -345,7 +355,7 @@ func (h *SSU2Conn) handleRetryResponse(ctx context.Context, response *SSU2Packet
 		return nil, oops.Wrapf(err, "failed to send SessionRequest with token")
 	}
 
-	created, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.config.HandshakeTimeout,
+	created, err := h.receiveHandshakeWithRetransmit(ctx, sessionRequest, h.handshakeWaitBudget(MessageTypeSessionRequest),
 		MessageTypeSessionCreated)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to receive SessionCreated after Retry")
@@ -585,7 +595,7 @@ func (h *SSU2Conn) createAndSendSessionCreated(initiatorConnID uint64) (*SSU2Pac
 // including multi-fragment reassembly.
 func (h *SSU2Conn) receiveAndProcessSessionConfirmed(ctx context.Context, sessionCreated *SSU2Packet) error {
 	flog("receiveAndProcessSessionConfirmed").Debug("Waiting for SessionConfirmed")
-	sessionConfirmed, err := h.receiveHandshakeWithRetransmit(ctx, sessionCreated, h.config.HandshakeTimeout,
+	sessionConfirmed, err := h.receiveHandshakeWithRetransmit(ctx, sessionCreated, h.handshakeWaitBudget(MessageTypeSessionCreated),
 		MessageTypeSessionConfirmed)
 	if err != nil {
 		return oops.Wrapf(err, "failed to receive SessionConfirmed")
@@ -943,6 +953,27 @@ func (h *SSU2Conn) receivePacketWithTimeout(ctx context.Context, timeout time.Du
 //   - Session Request: 1.25s, 2.5s, 5s
 //   - Session Created: 1s, 2s, 4s
 //
+// handshakeWaitBudget returns the total time to wait for the reply to the given
+// handshake message, applying the per-message totals the spec recommends in
+// §"Handshake Retransmission" (Session Created: 12 s; Session Request / Session
+// Confirmed: 15 s) rather than one blanket HandshakeTimeout for all three.
+//
+// The configured HandshakeTimeout still caps the budget, so a caller that
+// deliberately shortens it gets the shorter value, never a longer one.
+func (h *SSU2Conn) handshakeWaitBudget(msgType uint8) time.Duration {
+	var budget time.Duration
+	switch msgType {
+	case MessageTypeSessionCreated:
+		budget = DefaultSessionCreatedTimeout
+	default:
+		budget = DefaultHandshakeTimeout
+	}
+	if configured := h.config.HandshakeTimeout; configured > 0 && configured < budget {
+		return configured
+	}
+	return budget
+}
+
 // retransmitSchedule returns the spec-recommended exponential backoff intervals
 // for the given handshake message type.
 func retransmitSchedule(msgType uint8) []time.Duration {

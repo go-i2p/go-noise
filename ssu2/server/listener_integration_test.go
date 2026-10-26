@@ -544,6 +544,10 @@ func TestListenerIntegration_SessionRequestProcessing(t *testing.T) {
 	sessionRequest.Header[0] = 0x01
 	sessionRequest.Header[1] = 0x02
 	sessionRequest.EphemeralKey = make([]byte, 32) // Ephemeral key for handshake
+	// ssu2.md §"SessionRequest (Type 0)" -> §"Payload": "The minimum payload
+	// size is 8 bytes", and the section's own "Minimum Size: 88" is
+	// header(32) + key(32) + payload(8) + MAC(16).
+	sessionRequest.Payload = make([]byte, MinPayloadSize)
 	sessionRequest.MAC = make([]byte, MACSize)
 
 	data, err := sessionRequest.Serialize()

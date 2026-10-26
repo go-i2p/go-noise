@@ -44,32 +44,11 @@ func (h *HandshakeHandler) CreateSessionConfirmed(connID uint64, packetNumber ui
 		return nil, oops.Errorf("handshake not ready for SessionConfirmed: expected message index 2, got %d", h.handshakeState.MessageIndex())
 	}
 
-	// SessionConfirmed must contain initiator's RouterInfo per SSU2 spec.
-	// The block requires the mandatory flag+frag prefix (see
-	// wire.EncodeRouterInfoBlock); flood is not requested and the RI is sent
-	// uncompressed, matching the NTCP2 handshake RI handling.
-	var blocks []*SSU2Block
-	if len(routerInfo) > 0 {
-		riBlock, err := EncodeRouterInfoBlock(routerInfo, false, false)
-		if err != nil {
-			return nil, oops.Wrapf(err, "failed to encode RouterInfo block")
-		}
-		blocks = append(blocks, riBlock)
-	}
-
-	// Serialize blocks (may be empty)
-	payload, err := SerializeBlocks(blocks)
+	// SessionConfirmed must carry the initiator's full signed RouterInfo; see
+	// serializeConfirmedPayload for the spec basis.
+	payload, err := h.serializeConfirmedPayload(routerInfo)
 	if err != nil {
-		return nil, oops.Wrapf(err, "failed to serialize SessionConfirmed blocks")
-	}
-
-	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "The minimum payload
-	// size is 8 bytes." A nil-RouterInfo convenience call serializes to zero
-	// bytes, so pad up to the floor with a Padding block (ignored by
-	// extractPeerRouterInfo).
-	payload, err = PadPayloadToMin(payload)
-	if err != nil {
-		return nil, oops.Wrapf(err, "failed to pad SessionConfirmed payload")
+		return nil, err
 	}
 
 	// Build the 16-byte short header before encrypting so it can be
@@ -141,6 +120,9 @@ func (h *HandshakeHandler) ProcessSessionConfirmed(packet *SSU2Packet) error {
 	if h.initiator {
 		return oops.Errorf("initiator cannot process SessionConfirmed")
 	}
+	if packet == nil {
+		return oops.Errorf("SessionConfirmed packet is nil")
+	}
 
 	if packet.MessageType != MessageTypeSessionConfirmed {
 		return oops.Errorf("expected SessionConfirmed (type 2), got type %d", packet.MessageType)
@@ -192,6 +174,24 @@ func (h *HandshakeHandler) finalizeSessionConfirmed(noiseMessage []byte) error {
 
 	if ps := h.handshakeState.PeerStatic(); len(ps) > 0 {
 		h.remoteStaticKey = copyBytes(ps)
+	}
+
+	// Validate the block set before consuming any of it.
+	//
+	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload" enumerates exactly what
+	// the frame may carry and fixes the first block: "RouterInfo block (must be
+	// the first block) / Options block (optional) / New Token block (optional) /
+	// Relay Request block (optional) / Peer Test block (optional) / First Packet
+	// Number block (optional) / I2NP, First Fragment, or Follow-on Fragment
+	// blocks (optional, but probably no room) / Padding block (optional)". The
+	// §Notes list adds the sender-side rule for the equivalent NTCP2 frame,
+	// "This frame must never contain any other block type."
+	//
+	// Without this check a peer could smuggle a Termination, Address, ACK or
+	// Relay Tag block into the handshake, which the data-phase handler would act
+	// on once the session opened.
+	if err := validateSessionConfirmedBlocks(payload); err != nil {
+		return err
 	}
 
 	if err := h.extractPeerRouterInfo(payload); err != nil {
@@ -250,28 +250,72 @@ func (h *HandshakeHandler) CreateSessionConfirmedFragments(connID uint64, packet
 }
 
 // serializeConfirmedPayload serializes the RouterInfo block for SessionConfirmed.
+// serializeConfirmedPayload builds the Session Confirmed payload: the mandatory
+// RouterInfo block, followed by the Options block the spec asks for.
+//
+// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "RouterInfo block (must be
+// the first block) / Options block (optional) / …", and §"Notes": "Options
+// should be included, to specify padding parameters." §"Session Confirmed
+// Fragmentation" adds: "The Session Confirmed message must contain the full
+// signed Router Info from Alice so that Bob may perform several required checks"
+// — the static key "s", the introduction key "i", and the RI signature.
+// Reference: Java InboundEstablishState2.java:977 throws "No RI in Session
+// Confirmed".
+//
+// A missing RouterInfo fails closed rather than emitting a message that no
+// conformant responder can validate: a bare RouterHash carries neither an "s"
+// nor an "i" parameter.
 func (h *HandshakeHandler) serializeConfirmedPayload(routerInfo []byte) ([]byte, error) {
-	flog("serializeConfirmedPayload", logger.Fields{"routerInfoLen": len(routerInfo)}).Debug("Serializing RouterInfo block")
-	var blocks []*SSU2Block
-	if len(routerInfo) > 0 {
-		riBlock, err := EncodeRouterInfoBlock(routerInfo, false, false)
-		if err != nil {
-			return nil, oops.Wrapf(err, "failed to encode RouterInfo block")
-		}
-		blocks = append(blocks, riBlock)
+	flog("serializeConfirmedPayload", logger.Fields{"routerInfoLen": len(routerInfo)}).Debug("Serializing SessionConfirmed payload")
+	if len(routerInfo) == 0 {
+		return nil, oops.
+			Code("MISSING_LOCAL_ROUTER_INFO").
+			In("ssu2").
+			Errorf("Session Confirmed must carry the full signed local RouterInfo (ssu2.md Session Confirmed Fragmentation); set SSU2Config.LocalRouterInfo via WithLocalRouterInfo")
 	}
+
+	// The block requires the mandatory flag+frag prefix (see
+	// EncodeRouterInfoBlock); flood is not requested and the RI is sent
+	// uncompressed, matching the NTCP2 handshake RI handling.
+	riBlock, err := EncodeRouterInfoBlock(routerInfo, false, false)
+	if err != nil {
+		return nil, oops.Wrapf(err, "failed to encode RouterInfo block")
+	}
+	blocks := []*SSU2Block{riBlock}
+
+	// Options block: the same negotiated padding parameters this handler sends in
+	// Session Created, so the responder can apply them at the start of the data
+	// phase (ssu2.md §"Session Confirmed" -> §"Notes").
+	blocks = append(blocks, h.optionsBlockOrEmpty())
+
 	payload, err := SerializeBlocks(blocks)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to serialize SessionConfirmed blocks")
 	}
 	// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload": "The minimum payload
-	// size is 8 bytes." Pad a nil-RouterInfo serialization up to the floor.
+	// size is 8 bytes." The RI block clears the floor on its own; the pad is a
+	// no-op for every realistic RouterInfo.
 	payload, err = PadPayloadToMin(payload)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to pad SessionConfirmed payload")
 	}
 	return payload, nil
 }
+
+// minFragmentTail is the smallest legal amount of data in the LAST fragment of a
+// fragmented Session Confirmed.
+//
+// ssu2.md §"Session Confirmed Fragmentation": "Calculate the size of the data in
+// the last packet. It must be greater than or equal to 24 bytes, so that header
+// encryption will work. If it is too small, either add a padding block, OR
+// increase the size of the padding block if already present, OR reduce the size
+// of one of the other packets so that the last packet will be big enough."
+//
+// 24 is the header-protection IV: §"KDF for Session Confirmed" takes the IV from
+// "the last 24 bytes of the packet", and every packet ends with the 16-byte
+// AEAD tag, so the tail fragment needs 24 bytes total (8 payload + 16 tag) to
+// carry that sample.
+const minFragmentTail = 24
 
 // computeFragmentCount returns the number of fragments needed for the given ciphertext size.
 func computeFragmentCount(ciphertextSize int) (int, error) {
@@ -284,6 +328,44 @@ func computeFragmentCount(ciphertextSize int) (int, error) {
 		return 0, oops.Errorf("SessionConfirmed requires %d fragments, max %d", totalFrags, sessionConfirmedMaxFragments)
 	}
 	return totalFrags, nil
+}
+
+// fragmentSizes returns the per-fragment byte sizes for a ciphertext of the given
+// length, honouring both the per-packet capacity and the spec's 24-byte minimum
+// tail.
+//
+// A naive split leaves the last fragment with ciphertextSize mod maxPerPacket
+// bytes, which for remainders of 1..23 produces a fragment that a conformant
+// receiver cannot header-decrypt (and that this package's own validate() rejects
+// as below MinPacketSize, aborting the whole Session Confirmed send). The spec's
+// third remedy — "reduce the size of one of the other packets so that the last
+// packet will be big enough" — is applied here: the tail is topped up to 24
+// bytes by shortening the preceding fragment.
+func fragmentSizes(ciphertextSize, maxPerPacket int) []int {
+	totalFrags, err := computeFragmentCount(ciphertextSize)
+	if err != nil || totalFrags <= 1 {
+		return []int{ciphertextSize}
+	}
+
+	// Greedy fill: every fragment takes as much as the capacity allows.
+	sizes := make([]int, totalFrags)
+	remaining := ciphertextSize
+	for i := range sizes {
+		n := remaining
+		if n > maxPerPacket {
+			n = maxPerPacket
+		}
+		sizes[i] = n
+		remaining -= n
+	}
+
+	// Rebalance the tail if greedy left it under the floor.
+	if tail := sizes[totalFrags-1]; tail < minFragmentTail {
+		need := minFragmentTail - tail
+		sizes[totalFrags-2] -= need
+		sizes[totalFrags-1] += need
+	}
+	return sizes
 }
 
 // buildSessionConfirmedHeader builds a 16-byte SessionConfirmed short header.
@@ -300,10 +382,21 @@ func buildSessionConfirmedHeader(connID uint64, packetNumber uint32, fragNum, to
 // buildFragmentPackets splits ciphertext into fragment packets.
 func buildFragmentPackets(ciphertext []byte, connID uint64, packetNumber uint32, totalFrags int) []*SSU2Packet {
 	flog("buildFragmentPackets", logger.Fields{"ciphertextLen": len(ciphertext), "totalFrags": totalFrags}).Debug("Splitting ciphertext into fragments")
+	// Sizes come from fragmentSizes, which shortens the second-to-last fragment
+	// when needed so the final fragment keeps the spec's 24-byte minimum. The
+	// per-fragment byte count is the ciphertext slice it carries, MAC included:
+	// only the last fragment's MAC is real ciphertext, and the synthetic MAC
+	// field of the earlier fragments is metadata that never enters the jumbo
+	// message (reassembleFragments concatenates payload fields plus the final
+	// MAC only).
+	sizes := fragmentSizes(len(ciphertext), sessionConfirmedMaxPerPacket)
+	if len(sizes) != totalFrags {
+		totalFrags = len(sizes)
+	}
 	packets := make([]*SSU2Packet, 0, totalFrags)
 	offset := 0
 	for i := 0; i < totalFrags; i++ {
-		end := offset + sessionConfirmedMaxPerPacket
+		end := offset + sizes[i]
 		if end > len(ciphertext) {
 			end = len(ciphertext)
 		}
@@ -374,6 +467,11 @@ func (h *HandshakeHandler) validateFragmentOrdering(packets []*SSU2Packet) error
 	if len(packets) == 0 {
 		return oops.Errorf("no fragments to validate")
 	}
+	for i, pkt := range packets {
+		if pkt == nil {
+			return oops.Errorf("fragment %d is nil", i)
+		}
+	}
 	if len(packets[0].Header) < 14 {
 		return oops.Errorf("fragment 0: header too short (%d bytes, need at least 14)", len(packets[0].Header))
 	}
@@ -417,4 +515,81 @@ func reassembleFragments(packets []*SSU2Packet) []byte {
 		}
 	}
 	return noiseMessage
+}
+
+// validateSessionConfirmedBlocks enforces the Session Confirmed payload block
+// set and ordering.
+//
+// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload":
+//
+//	RouterInfo block (must be the first block)
+//	Options block (optional)
+//	New Token block (optional)
+//	Relay Request block (optional)
+//	Peer Test block (optional)
+//	First Packet Number block (optional)
+//	I2NP, First Fragment, or Follow-on Fragment blocks (optional, but probably no room)
+//	Padding block (optional)
+//
+// Any other block type is illegal in this frame ("This frame must never contain
+// any other block type"), and the data-phase ordering rules apply on top:
+// Padding must be last, and Termination — which is not in the list at all — must
+// never appear (Java throws "Termination block in Session Confirmed",
+// InboundEstablishState2.java:972).
+func validateSessionConfirmedBlocks(payload []byte) error {
+	blocks, err := DeserializeBlocks(payload)
+	if err != nil {
+		return oops.Wrapf(err, "SessionConfirmed payload is not a valid block sequence")
+	}
+	if len(blocks) == 0 {
+		return oops.Errorf("SessionConfirmed payload contains no blocks; RouterInfo is required and must be first")
+	}
+
+	if blocks[0].Type != BlockTypeRouterInfo {
+		return oops.
+			Code("SESSION_CONFIRMED_FIRST_BLOCK").
+			In("ssu2").
+			With("first_block_type", blocks[0].Type).
+			Errorf("SessionConfirmed first block is type %d, but the RouterInfo block (type %d) must be first (ssu2.md §\"SessionConfirmed\" -> §\"Payload\")",
+				blocks[0].Type, BlockTypeRouterInfo)
+	}
+
+	for i, block := range blocks {
+		if !isSessionConfirmedBlockType(block.Type) {
+			return oops.
+				Code("SESSION_CONFIRMED_ILLEGAL_BLOCK").
+				In("ssu2").
+				With("block_type", block.Type).
+				With("index", i).
+				Errorf("SessionConfirmed contains block type %d, which is not one of the payload types the spec allows (ssu2.md §\"SessionConfirmed\" -> §\"Payload\")",
+					block.Type)
+		}
+		if block.Type == BlockTypePadding && i != len(blocks)-1 {
+			return oops.
+				Code("SESSION_CONFIRMED_PADDING_NOT_LAST").
+				In("ssu2").
+				Errorf("SessionConfirmed Padding block at index %d of %d must be the last block", i, len(blocks))
+		}
+	}
+	return nil
+}
+
+// isSessionConfirmedBlockType reports whether t is one of the eight block types
+// ssu2.md §"SessionConfirmed (Type 2)" -> §"Payload" permits.
+func isSessionConfirmedBlockType(t uint8) bool {
+	switch t {
+	case BlockTypeRouterInfo,
+		BlockTypeOptions,
+		BlockTypeNewToken,
+		BlockTypeRelayRequest,
+		BlockTypePeerTest,
+		BlockTypeFirstPacketNumber,
+		BlockTypeI2NPMessage,
+		BlockTypeFirstFragment,
+		BlockTypeFollowOnFragment,
+		BlockTypePadding:
+		return true
+	default:
+		return false
+	}
 }

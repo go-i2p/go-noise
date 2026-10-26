@@ -121,6 +121,21 @@ func (l *SSU2Listener) packetWorker() {
 	}
 }
 
+// matchesNetworkID reports whether a parsed packet's network ID is acceptable
+// for this listener.
+//
+// Long-header messages record the netid they carried (wire.Deserialize), and
+// must equal our configured value; short-header messages have no netid field
+// and are left to their session keys and AEAD for authentication. Returns true
+// when the packet carries no netid at all, so a session created before this
+// field was populated is not spuriously dropped.
+func (l *SSU2Listener) matchesNetworkID(packet *SSU2Packet) bool {
+	if packet.NetworkID == 0 {
+		return true
+	}
+	return packet.NetworkID == l.networkID()
+}
+
 // handleIncomingPacket processes a received packet and routes it appropriately.
 // This is called in a goroutine for each received packet.
 //
@@ -139,6 +154,26 @@ func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr
 	flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
 	packet, ok := l.parseInboundPacket(data, remoteAddr)
 	if !ok {
+		return
+	}
+
+	// ssu2.md §"Header Binding": "If it is a long header, the receiver must
+	// validate the version and netid fields. If the version is != 2, or the
+	// netid is != the expected value (generally 2, except in test networks), the
+	// receiver should drop the message." §"SessionRequest" -> §"Notes" adds the
+	// purpose: "The network ID field is used to quickly identify cross-network
+	// connections. If this field does not match Bob's network ID, Bob should
+	// disconnect and block future connections."
+	//
+	// The version half is enforced in wire.Deserialize (a format fact); the
+	// network ID is deployment policy, so it is compared here against this
+	// listener's configured value. Short-header messages carry no netid field.
+	if !l.matchesNetworkID(packet) {
+		flog("handleIncomingPacket", logger.Fields{
+			"remote_addr": remoteAddr.String(),
+			"got_netid":   packet.NetworkID,
+			"our_netid":   l.networkID(),
+		}).Debug("dropping packet from a different I2P network")
 		return
 	}
 

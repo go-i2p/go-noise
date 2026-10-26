@@ -201,6 +201,9 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 	if h.initiator {
 		return nil, oops.Errorf("initiator cannot process SessionRequest")
 	}
+	if packet == nil {
+		return nil, oops.Errorf("SessionRequest packet is nil")
+	}
 
 	if packet.MessageType != MessageTypeSessionRequest {
 		return nil, oops.Errorf("expected SessionRequest (type 0), got type %d", packet.MessageType)
@@ -208,6 +211,16 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 
 	if len(packet.EphemeralKey) != 32 {
 		return nil, oops.Errorf("SessionRequest missing ephemeral key")
+	}
+
+	// Network ID must match ours, per ssu2.md §"Header Binding": "If the version
+	// is != 2, or the netid is != the expected value (generally 2, except in test
+	// networks), the receiver should drop the message", and §"Session Request" ->
+	// §"Notes": "If this field does not match Bob's network ID, Bob should
+	// disconnect and block future connections." Checked before MixHash(header),
+	// per §"Duplicates and Error Handling".
+	if err := h.validateNetworkID(packet); err != nil {
+		return nil, err
 	}
 
 	// Reject a SessionRequest whose two connection IDs are identical, BEFORE any

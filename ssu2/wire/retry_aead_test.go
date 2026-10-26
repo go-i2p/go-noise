@@ -19,7 +19,7 @@ func testRetryHeader() []byte {
 	header := make([]byte, LongHeaderSize)
 	header[12] = MessageTypeRetry
 	header[13] = SSU2ProtocolVersion
-	header[14] = SSU2NetworkID
+	header[14] = MainNetworkID
 	return header
 }
 

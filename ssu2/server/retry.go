@@ -178,6 +178,18 @@ func (l *SSU2Listener) buildRetryPayload(remoteAddr *net.UDPAddr, terminationRea
 // source, src = state.getRcvConnID() = SR dest) and i2pd both echo Alice's two
 // IDs back swapped; a conformant initiator verifies the source half equals its own
 // Session Request destination, so it must not be an unrelated stable value.
+// networkID returns this listener's configured I2P network ID for header byte
+// 14. Unset (zero) selects the main-network value 2, so a config that never
+// sets NetworkID stays compliant. ssu2.md §"Header"; proposal 147 assigns other
+// IDs to test networks so cross-network traffic fails fast.
+func (l *SSU2Listener) networkID() uint8 {
+	cfg := l.config.Load()
+	if cfg == nil || cfg.NetworkID == 0 {
+		return MainNetworkID
+	}
+	return cfg.NetworkID
+}
+
 func (l *SSU2Listener) buildRetryHeader(originalHeader, token []byte, packetNumber uint32) ([]byte, error) {
 	header := make([]byte, LongHeaderSize)
 

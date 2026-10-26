@@ -24,15 +24,6 @@ const (
 	// prevent resource exhaustion from malicious peers sending excessive ranges.
 	MaxNACKRangesPerACK = 200
 
-	// Data-phase block types that are NOT ack-eliciting, per ssu2.md
-	// §"Generating ACKs". Values match ssu2/wire.BlockType* and are repeated here
-	// to keep this package free of a wire dependency.
-	blockTypeDateTime    uint8 = 0
-	blockTypeACK         uint8 = 4
-	blockTypeAddress     uint8 = 13
-	blockTypeTermination uint8 = 6
-	blockTypePadding     uint8 = 254
-
 	// defaultACKThreshold is the number of ack-eliciting packets that triggers an
 	// ACK. ssu2.md §"ACK Frequency": "A receiver should send an ACK block after
 	// receiving at least two ack-eliciting packets."

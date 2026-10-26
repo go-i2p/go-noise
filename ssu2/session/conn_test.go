@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/mod"
 	"github.com/go-i2p/noise"
@@ -929,7 +930,7 @@ func TestBuildI2NPFragmentBlocks_FragmentCountLimit(t *testing.T) {
 // only decrypt correctly with nonce N.
 func TestDataPhaseNonce_PacketNumberAsNonce(t *testing.T) {
 	// Complete a full handshake to obtain real cipher states.
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	reqPkt, err := initiator.CreateSessionRequest(11111, 22222)
 	require.NoError(t, err)
@@ -939,7 +940,7 @@ func TestDataPhaseNonce_PacketNumberAsNonce(t *testing.T) {
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(crePkt)
 	require.NoError(t, err)
-	confPkt, err := initiator.CreateSessionConfirmed(55555, 0, nil)
+	confPkt, err := initiator.CreateSessionConfirmed(55555, 0, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	err = responder.ProcessSessionConfirmed(confPkt)
 	require.NoError(t, err)
@@ -1672,4 +1673,25 @@ func TestI2NPBlockBudget_PerFamily(t *testing.T) {
 			assert.Equal(t, tc.want, conn.i2npBlockBudget())
 		})
 	}
+}
+
+// testRouterInfoFor builds a stand-in RouterInfo carrying the given static
+// public key. ssu2.md §"Session Confirmed Fragmentation" requires the Session
+// Confirmed to carry Alice's full signed RouterInfo, and §"Session Confirmed" ->
+// §"Notes" requires Bob to verify the Noise-authenticated static key appears in
+// it (this package checks for the I2P-base64 of the key).
+func testRouterInfoFor(t *testing.T, staticPub []byte) []byte {
+	t.Helper()
+	require.Len(t, staticPub, 32)
+	ri := make([]byte, 0, 512)
+	prefix := make([]byte, 64)
+	for i := range prefix {
+		prefix[i] = byte(i % 256)
+	}
+	ri = append(ri, prefix...)
+	ri = append(ri, []byte(i2pbase64.EncodeToString(staticPub))...)
+	for len(ri) < 480 {
+		ri = append(ri, 0x20)
+	}
+	return ri
 }

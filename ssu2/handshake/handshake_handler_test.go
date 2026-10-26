@@ -45,6 +45,32 @@ func setupHandshakePair(t *testing.T) (*HandshakeHandler, *HandshakeHandler, []b
 	return initiator, responder, initDH.Public, respDH.Public
 }
 
+// testRouterInfoFor builds a stand-in RouterInfo payload for the given
+// authenticated static key. ssu2.md §"Session Confirmed Fragmentation" requires
+// the Session Confirmed to carry the full signed RouterInfo, and §"Session
+// Confirmed" -> §"Notes" requires Bob to verify "that Alice's static key received
+// in the first frame matches the static key in the Router Info" — which this
+// package checks by looking for the I2P-base64 of the Noise-authenticated key in
+// the RI bytes (verifyPeerRouterInfoStaticKey). A fixture that omits it fails
+// that binding check.
+func testRouterInfoFor(t *testing.T, staticPub []byte) []byte {
+	t.Helper()
+	require.Len(t, staticPub, 32)
+	ri := make([]byte, 0, 512)
+	prefix := make([]byte, 64)
+	for i := range prefix {
+		prefix[i] = byte(i % 256)
+	}
+	ri = append(ri, prefix...)
+	ri = append(ri, []byte(i2pbase64.EncodeToString(staticPub))...)
+	// Pad to a realistic RouterInfo size so fragmentation behaviour is exercised
+	// the way production sees it.
+	for len(ri) < 480 {
+		ri = append(ri, 0x20)
+	}
+	return ri
+}
+
 // NewHandshakeHandler tests
 
 func TestNewHandshakeHandler_ValidInitiator(t *testing.T) {
@@ -159,7 +185,7 @@ func TestHandshakeHandler_CreateSessionRequest(t *testing.T) {
 	assert.Equal(t, sourceConnID, decodedSourceConnID)
 	assert.Equal(t, MessageTypeSessionRequest, packet.Header[12])
 	assert.Equal(t, SSU2ProtocolVersion, packet.Header[13])
-	assert.Equal(t, SSU2NetworkID, packet.Header[14])
+	assert.Equal(t, MainNetworkID, packet.Header[14])
 }
 
 func TestHandshakeHandler_CreateSessionRequest_ResponderError(t *testing.T) {
@@ -355,7 +381,7 @@ func TestHandshakeHandler_ProcessSessionCreated_ResponderError(t *testing.T) {
 // SessionConfirmed tests
 
 func TestHandshakeHandler_CreateSessionConfirmed(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete handshake up to SessionConfirmed
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
@@ -371,7 +397,7 @@ func TestHandshakeHandler_CreateSessionConfirmed(t *testing.T) {
 	require.NoError(t, err)
 
 	// Now initiator can create SessionConfirmed
-	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, nil)
+	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	require.NotNil(t, confirmedPacket)
 
@@ -403,7 +429,7 @@ func TestHandshakeHandler_CreateSessionConfirmed_NotComplete(t *testing.T) {
 }
 
 func TestHandshakeHandler_ProcessSessionConfirmed(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete full handshake flow
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
@@ -418,7 +444,7 @@ func TestHandshakeHandler_ProcessSessionConfirmed(t *testing.T) {
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
 
-	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, nil)
+	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 
 	// Responder processes SessionConfirmed
@@ -461,7 +487,7 @@ func TestHandshakeHandler_ProcessSessionConfirmed_InitiatorError(t *testing.T) {
 // Full handshake flow tests
 
 func TestHandshakeHandler_FullHandshakeFlow(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Neither should be complete initially
 	assert.False(t, initiator.IsHandshakeComplete())
@@ -486,7 +512,7 @@ func TestHandshakeHandler_FullHandshakeFlow(t *testing.T) {
 	assert.False(t, responder.IsHandshakeComplete())
 
 	// Step 3: SessionConfirmed
-	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, nil)
+	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 
 	err = responder.ProcessSessionConfirmed(confirmedPacket)
@@ -521,7 +547,7 @@ func TestHandshakeHandler_GetCipherStates_NotComplete(t *testing.T) {
 }
 
 func TestHandshakeHandler_GetCipherStates_AfterComplete(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete full 3-message XK handshake
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
@@ -532,7 +558,7 @@ func TestHandshakeHandler_GetCipherStates_AfterComplete(t *testing.T) {
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
-	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, nil)
+	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	err = responder.ProcessSessionConfirmed(confirmedPacket)
 	require.NoError(t, err)
@@ -682,7 +708,7 @@ func TestBuildSSU2Prologue_ReturnsNil(t *testing.T) {
 // C-3 regression tests: header key derivation
 
 func TestDeriveHeaderKeys_AfterHandshake(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete the 3-message XK handshake
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
@@ -693,7 +719,7 @@ func TestDeriveHeaderKeys_AfterHandshake(t *testing.T) {
 	require.NoError(t, err)
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
-	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, nil)
+	confirmedPacket, err := initiator.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	err = responder.ProcessSessionConfirmed(confirmedPacket)
 	require.NoError(t, err)
@@ -732,17 +758,31 @@ func TestDeriveHeaderKeys_Deterministic(t *testing.T) {
 	require.NoError(t, err)
 
 	doHandshake := func() ([]byte, []byte) {
-		init, _ := NewHandshakeHandlerWithKeys(true, dh1, dh2.Public, nil)
-		resp, _ := NewHandshakeHandlerWithKeys(false, dh2, nil, nil)
+		init, err := NewHandshakeHandlerWithKeys(true, dh1, dh2.Public, nil)
+		require.NoError(t, err)
+		resp, err := NewHandshakeHandlerWithKeys(false, dh2, nil, nil)
+		require.NoError(t, err)
+		// Mirrors the production responder, which records the initiator's
+		// endpoint before building SessionCreated (the Address block is
+		// mandatory in message 2).
+		resp.SetPeerAddress(net.ParseIP("203.0.113.10"), 51500)
 
-		req, _ := init.CreateSessionRequest(11111, 22222)
-		_, _ = resp.ProcessSessionRequest(req)
-		created, _ := resp.CreateSessionCreated(22222, 11111)
-		_ = init.ProcessSessionCreated(created)
-		confirmed, _ := init.CreateSessionConfirmed(55555, 1, nil)
-		_ = resp.ProcessSessionConfirmed(confirmed)
+		req, err := init.CreateSessionRequest(11111, 22222)
+		require.NoError(t, err)
+		_, err = resp.ProcessSessionRequest(req)
+		require.NoError(t, err)
+		created, err := resp.CreateSessionCreated(22222, 11111)
+		require.NoError(t, err)
+		require.NoError(t, init.ProcessSessionCreated(created))
 
-		k1, k2, _ := init.DeriveHeaderKeys()
+		// ssu2.md §"Session Confirmed Fragmentation": the Session Confirmed
+		// "must contain the full signed Router Info from Alice".
+		confirmed, err := init.CreateSessionConfirmed(55555, 1, testRouterInfoFor(t, dh1.Public))
+		require.NoError(t, err)
+		require.NoError(t, resp.ProcessSessionConfirmed(confirmed))
+
+		k1, k2, err := init.DeriveHeaderKeys()
+		require.NoError(t, err)
 		return k1, k2
 	}
 
@@ -758,7 +798,7 @@ func TestDeriveHeaderKeys_Deterministic(t *testing.T) {
 // SessionConfirmed fragmentation tests
 
 func TestCreateSessionConfirmedFragments_SinglePacket(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete handshake up to message 2
 	req, err := initiator.CreateSessionRequest(11111, 22222)
@@ -771,7 +811,7 @@ func TestCreateSessionConfirmedFragments_SinglePacket(t *testing.T) {
 	require.NoError(t, err)
 
 	// Small payload should produce a single fragment
-	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 1, nil)
+	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	require.Len(t, fragments, 1)
 
@@ -784,7 +824,7 @@ func TestCreateSessionConfirmedFragments_SinglePacket(t *testing.T) {
 }
 
 func TestCreateSessionConfirmedFragments_RoundTrip(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	req, err := initiator.CreateSessionRequest(11111, 22222)
 	require.NoError(t, err)
@@ -796,7 +836,7 @@ func TestCreateSessionConfirmedFragments_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use nil RouterInfo for single-fragment round-trip
-	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 1, nil)
+	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 1, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 
 	err = responder.ProcessSessionConfirmedFragments(fragments)
@@ -1085,7 +1125,7 @@ func TestExtractPeerOptions_Handshake(t *testing.T) {
 // Session Confirmed fragments have PacketNumber == 0, as required by the
 // SSU2 spec: "Packet Number :: 0 always, for all fragments, even if retransmitted."
 func TestSessionConfirmedFragments_PacketNumberAlwaysZero(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	// Complete handshake up to SessionConfirmed
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
@@ -1101,7 +1141,7 @@ func TestSessionConfirmedFragments_PacketNumberAlwaysZero(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create Session Confirmed fragments with packetNumber = 0 per spec.
-	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, nil)
+	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 	require.NotEmpty(t, fragments, "should produce at least one fragment")
 
@@ -1125,7 +1165,7 @@ func TestSessionConfirmedFragments_PacketNumberAlwaysZero(t *testing.T) {
 // retransmitting a Session Confirmed packet keeps its PacketNumber unchanged,
 // as required by the SSU2 spec for handshake retransmission.
 func TestSessionConfirmedRetransmit_PreservesPacketNumber(t *testing.T) {
-	initiator, responder, _, _ := setupHandshakePair(t)
+	initiator, responder, initiatorPub, _ := setupHandshakePair(t)
 
 	requestPacket, err := initiator.CreateSessionRequest(11111, 22222)
 	require.NoError(t, err)
@@ -1136,7 +1176,7 @@ func TestSessionConfirmedRetransmit_PreservesPacketNumber(t *testing.T) {
 	err = initiator.ProcessSessionCreated(createdPacket)
 	require.NoError(t, err)
 
-	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, nil)
+	fragments, err := initiator.CreateSessionConfirmedFragments(55555, 0, testRouterInfoFor(t, initiatorPub))
 	require.NoError(t, err)
 
 	// Simulate retransmit: the same SSU2Packet object is re-sent.

@@ -251,8 +251,9 @@ func TestSSU2Listener_HandleIncomingPacket(t *testing.T) {
 		packet := &SSU2Packet{
 			MessageType: MessageTypeTokenRequest,
 			Header:      make([]byte, 32), // Long header
-			Payload:     make([]byte, 0),
-			MAC:         make([]byte, 16),
+			// ssu2.md §"TokenRequest" -> §"Payload": minimum 8 bytes.
+			Payload: make([]byte, MinPayloadSize),
+			MAC:     make([]byte, 16),
 		}
 		data, err := packet.Serialize()
 		require.NoError(t, err)
@@ -294,7 +295,7 @@ func TestSSU2Listener_HandleIncomingPacket(t *testing.T) {
 		require.NoError(t, err)
 
 		// Plaintext path must succeed (sanity baseline).
-		gotPlain, ok := listener.parseInboundPacket(plain)
+		gotPlain, ok := listener.parseInboundPacket(plain, testPeerAddr())
 		require.True(t, ok)
 		require.Equal(t, MessageTypeTokenRequest, gotPlain.MessageType)
 
@@ -312,7 +313,7 @@ func TestSSU2Listener_HandleIncomingPacket(t *testing.T) {
 		require.Error(t, (&SSU2Packet{}).Deserialize(obfuscated))
 
 		// Fallback path must recover the original packet.
-		gotDecrypted, ok := listener.parseInboundPacket(obfuscated)
+		gotDecrypted, ok := listener.parseInboundPacket(obfuscated, testPeerAddr())
 		require.True(t, ok, "expected header-protection fallback to succeed")
 		require.Equal(t, MessageTypeTokenRequest, gotDecrypted.MessageType)
 	})

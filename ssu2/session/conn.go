@@ -427,6 +427,7 @@ func buildHandshakeHandler(initiator bool, staticKey, remoteStaticKey []byte, co
 		handler.ReconfigureReplayCache(config.ReplayCacheTTL)
 	}
 	handler.SetMaxClockSkew(config.MaxClockSkew)
+	handler.SetNetworkID(config.NetworkID)
 	handler.SetLocalOptions(&OptionsParams{
 		TMinRatio: 0,
 		TMaxRatio: config.PaddingRatio,
