@@ -13,7 +13,7 @@
         <a href="../index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 588 commits
+        📝 633 commits
          • 📜 License
       </div>
     </div>
@@ -23,8 +23,6 @@
       
       
         <div class="nav-section-title">Documentation:</div>
-        
-          <li><a href="../docs/ratchet/ratchet.html" >ECIES-X25519-AEAD-Ratchet</a></li>
         
           <li><a href="../docs/RELEASE_NOTES.html" >RELEASE NOTES</a></li>
         
@@ -86,40 +84,63 @@
 <pre><code class="language-go">import &quot;github.com/go-i2p/go-noise/handshake&quot;
 </code></pre>
 
-<p>Package handshake provides a generic modifier framework for transforming handshake data during Noise protocol exchanges. Modifiers can add padding, XOR obfuscation, or protocol-specific transformations (e.g., NTCP2 AES obfuscation) to handshake messages while preserving Noise protocol security.</p>
+<p>Package handshake provides a generic, protocol-agnostic framework for transforming the data that flows through a Noise connection.</p>
 
-<p>The central abstraction is <a href="#HandshakeModifier">HandshakeModifier</a>, an interface that transforms data on both the outbound (encrypt) and inbound (decrypt) paths. Modifiers are phase-aware via <a href="#HandshakePhase">HandshakePhase</a>, allowing different behavior during initial, exchange, and final handshake stages.</p>
+<h3 id="what-is-a-handshake-modifier">What is a handshake modifier?</h3>
 
-<p>Multiple modifiers can be composed into a <a href="#ModifierChain">ModifierChain</a>, which applies them in order for outbound data and in reverse order for inbound data (ensuring correct undo semantics). ModifierChain itself implements HandshakeModifier, so chains can be nested.</p>
+<p>A handshake modifier is a single, composable step that transforms handshake messages. Each modifier does one job — for example, adding padding or scrambling bytes with XOR — and hands the result on. Modifiers can be chained together to build more complex transformations while keeping the underlying Noise protocol secure.</p>
 
-<p>Built-in modifiers:</p>
-
-<ul>
-<li><a href="#PaddingModifier">PaddingModifier</a>: Adds cryptographically random padding with a 4-byte length prefix. Padding size is uniformly random within [min, max].</li>
-<li><a href="#XORModifier">XORModifier</a>: Applies repeating-key XOR to data. Self-inverting, so the same modifier works for both outbound and inbound.</li>
-</ul>
-
-<p>Protocol-specific modifiers (in the ntcp2 package) implement the same interface for I2P NTCP2 transport obfuscation:</p>
+<p>Every modifier works in two directions:</p>
 
 <ul>
-<li>ntcp2.AESObfuscationModifier: AES-256-CBC obfuscation of handshake bytes.</li>
-<li>ntcp2.SipHashLengthModifier: SipHash-based length obfuscation.</li>
-<li>ntcp2.NTCP2PaddingModifier: I2P-spec-compliant AEAD padding.</li>
+<li>Outbound: data being sent. The modifier transforms it before it leaves.</li>
+<li>Inbound: data being received. The modifier undoes the transformation.</li>
 </ul>
 
-<p>Usage:</p>
+<p>Modifiers are also phase-aware. A Noise connection moves through distinct phases — the handshake messages, then the data phase — and a modifier can behave differently in each one.</p>
 
-<pre><code>xor := handshake.NewXORModifier(&quot;xor&quot;, key)
-pad, _ := handshake.NewPaddingModifier(&quot;pad&quot;, 16, 64)
-chain := handshake.NewModifierChain(&quot;my-chain&quot;, xor, pad)
+<h3 id="how-the-i2p-protocols-use-this">How the I2P protocols use this</h3>
 
-outbound, _ := chain.ModifyOutbound(handshake.PhaseInitial, plaintext)
-recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
+<p>This package is protocol-agnostic: it does not know about NTCP2 or SSU2. Those transports build on top of it.</p>
+
+<ul>
+<li>NTCP2 (Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256) uses AES obfuscation, SipHash-2-4 length obfuscation, and padding.</li>
+<li>SSU2 (Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256) uses ChaCha20 header obfuscation and padding.</li>
+</ul>
+
+<p>See [I2P Spec: NTCP2](<a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst" target="_blank">https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst</a>) for details. See [I2P Spec: SSU2](<a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst" target="_blank">https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst</a>) for details. See [Noise Protocol Framework](<a href="https://noiseprotocol.org/noise.html" target="_blank">https://noiseprotocol.org/noise.html</a>) for details.</p>
+
+<h3 id="the-building-blocks">The building blocks</h3>
+
+<ul>
+<li><a href="#HandshakeModifier">HandshakeModifier</a>: the interface every modifier implements.</li>
+<li><a href="#HandshakePhase">HandshakePhase</a>: the phase of the connection a message is in.</li>
+<li><a href="#ModifierChain">ModifierChain</a>: applies several modifiers in order (and in reverse on the way back in).</li>
+<li><a href="#PaddingEngine">PaddingEngine</a>: shared padding math and I2P block wire format used by the NTCP2 and SSU2 padding modifiers.</li>
+</ul>
+
+<p>The [siphash] subpackage provides the SipHash-2-4 length obfuscation modifier shared by NTCP2 and SSU2.</p>
+
+<p>The protocol-specific modifiers themselves live in the transport packages, because each one implements a wire format defined by that transport&rsquo;s spec: ntcp2.NewAESObfuscationModifier, ntcp2.NewNTCP2PaddingModifier and ssu2/wire.NewSSU2PaddingModifier / ssu2/wire.NewChaChaObfuscationModifier.</p>
+
+<p>This package deliberately ships no padding or XOR modifier of its own. The two it once exported were removed as non-compliant with the spec: ntcp2.md §&rdquo;Additions to the Framework&rdquo; enumerates exactly five NTCP2 extensions and none is a whole-message XOR with a repeating key, and no I2P spec defines the &ldquo;[4-byte big-endian length][data][padding]&rdquo; frame layout the generic padding modifier produced.</p>
+
+<h3 id="example">Example</h3>
+
+<pre><code>pad, _ := ntcp2.NewNTCP2PaddingModifier(&quot;pad&quot;, 16, 64, true)
+aes, _ := ntcp2.NewAESObfuscationModifier(&quot;aes&quot;, routerHash, iv)
+chain := handshake.NewModifierChain(&quot;my-chain&quot;, aes, pad)
+
+outbound, _ := chain.ModifyOutbound(handshake.PhaseData, plaintext)
+recovered, _ := chain.ModifyInbound(handshake.PhaseData, outbound)
 </code></pre>
 
 <h2 id="index">Index</h2>
 
 <ul>
+<li><a href="#constants">Constants</a></li>
+<li><a href="#ValidatePaddingParams">func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRatio float64) error</a></li>
+<li><a href="#ValidatePaddingRange">func ValidatePaddingRange(subsystem string, minPadding, maxPadding int) error</a></li>
 <li><a href="#HandshakeModifier">type HandshakeModifier</a></li>
 <li><a href="#HandshakePhase">type HandshakePhase</a>
 
@@ -138,48 +159,95 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <li><a href="#ModifierChain.ModifyOutbound">func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)</a></li>
 <li><a href="#ModifierChain.Name">func (mc *ModifierChain) Name() string</a></li>
 </ul></li>
-<li><a href="#PaddingModifier">type PaddingModifier</a>
+<li><a href="#ModifierCloner">type ModifierCloner</a></li>
+<li><a href="#PaddingEngine">type PaddingEngine</a>
 
 <ul>
-<li><a href="#NewPaddingModifier">func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifier, error)</a></li>
-<li><a href="#PaddingModifier.Close">func (pm *PaddingModifier) Close() error</a></li>
-<li><a href="#PaddingModifier.ModifyInbound">func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)</a></li>
-<li><a href="#PaddingModifier.ModifyOutbound">func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)</a></li>
-<li><a href="#PaddingModifier.Name">func (pm *PaddingModifier) Name() string</a></li>
+<li><a href="#NewPaddingEngine">func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error)</a></li>
+<li><a href="#PaddingEngine.AddAEADPadding">func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, error)</a></li>
+<li><a href="#PaddingEngine.AddCleartextPadding">func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]byte, error)</a></li>
+<li><a href="#PaddingEngine.CalculatePaddingSize">func (pe *PaddingEngine) CalculatePaddingSize(dataLen int) int</a></li>
+<li><a href="#PaddingEngine.EstimatePaddingSize">func (pe *PaddingEngine) EstimatePaddingSize(dataLen int) int</a></li>
+<li><a href="#PaddingEngine.RemoveTrailingAEADPadding">func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding int) ([]byte, error)</a></li>
+<li><a href="#PaddingEngine.ShouldSkipPadding">func (pe *PaddingEngine) ShouldSkipPadding() bool</a></li>
+<li><a href="#PaddingEngine.UpdateParams">func (pe *PaddingEngine) UpdateParams(minPad, maxPad int, ratio float64) error</a></li>
 </ul></li>
-<li><a href="#XORModifier">type XORModifier</a>
-
-<ul>
-<li><a href="#NewXORModifier">func NewXORModifier(name string, xorKey []byte) *XORModifier</a></li>
-<li><a href="#XORModifier.Close">func (xm *XORModifier) Close() error</a></li>
-<li><a href="#XORModifier.ModifyInbound">func (xm *XORModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)</a></li>
-<li><a href="#XORModifier.ModifyOutbound">func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)</a></li>
-<li><a href="#XORModifier.Name">func (xm *XORModifier) Name() string</a></li>
-</ul></li>
+<li><a href="#PaddingEngineConfig">type PaddingEngineConfig</a></li>
 </ul>
+
+<h2 id="constants">Constants</h2>
+
+<p><a name="I2PPaddingBlockType"></a>Shared I2P padding constants used by both the NTCP2 and SSU2 transports.</p>
+
+<p>See [I2P Spec: NTCP2](<a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst" target="_blank">https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst</a>) for details. See [I2P Spec: SSU2](<a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst" target="_blank">https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst</a>) for details.</p>
+
+<pre><code class="language-go">const (
+    // I2PPaddingBlockType is the I2P block type identifier for padding
+    // (type 254).
+    I2PPaddingBlockType byte = 254
+
+    // I2PBlockHeaderSize is the size of an I2P block header:
+    // [type:1][size:2].
+    I2PBlockHeaderSize = 3
+
+    // I2PMaxBlockDataSize is the maximum data size for a single I2P block
+    // (65516 bytes).
+    I2PMaxBlockDataSize = 65516
+
+    // I2PMaxPaddingRatio is the maximum padding ratio allowed by the I2P
+    // spec (4.4 fixed-point format).
+    I2PMaxPaddingRatio = 15.9375
+)
+</code></pre>
+
+<p><a name="ValidatePaddingParams"></a></p>
+
+<h2 id="func-validatepaddingparams">func ValidatePaddingParams</h2>
+
+<pre><code class="language-go">func ValidatePaddingParams(domain string, minPadding, maxPadding int, paddingRatio float64) error
+</code></pre>
+
+<p>ValidatePaddingParams checks that a set of I2P padding parameters is valid: the minimum is not negative, the maximum is at least the minimum, the maximum does not exceed <a href="#I2PPaddingBlockType">I2PMaxBlockDataSize</a>, and the ratio is between 0.0 and <a href="#I2PPaddingBlockType">I2PMaxPaddingRatio</a>. It returns an error describing the first problem found.</p>
+
+<p><a name="ValidatePaddingRange"></a></p>
+
+<h2 id="func-validatepaddingrange">func ValidatePaddingRange</h2>
+
+<pre><code class="language-go">func ValidatePaddingRange(subsystem string, minPadding, maxPadding int) error
+</code></pre>
+
+<p>ValidatePaddingRange checks that min and max padding sizes form a valid range. It returns an error scoped to the given subsystem name.</p>
+
+<p>It delegates to <a href="#ValidatePaddingParams">ValidatePaddingParams</a> (with paddingRatio=0.0, since callers of this function validate the padding ratio separately, if at all) so that the config-time min/max check can never diverge from the stricter bound enforced later when a padding engine is constructed (NewPaddingEngine/NewNTCP2PaddingModifier/NewSSU2PaddingModifier). This keeps a MaxPaddingSize above the I2P spec limit (<a href="#I2PPaddingBlockType">I2PMaxBlockDataSize</a>) from passing config validation and only failing later at connection-establishment time with a different, confusing error code.</p>
 
 <p><a name="HandshakeModifier"></a></p>
 
 <h2 id="type-handshakemodifier">type HandshakeModifier</h2>
 
-<p>HandshakeModifier transforms data during any phase of a Noise connection, providing obfuscation and padding capabilities. Modifiers can be chained to create complex transformations while maintaining Noise protocol security.</p>
+<p>HandshakeModifier is the interface every handshake modifier implements. A modifier transforms data on its way out (outbound) and undoes that transformation on its way in (inbound).</p>
 
-<p>Implementations must be safe for concurrent calls to ModifyOutbound and ModifyInbound from separate goroutines (e.g. read and write pumps on the same connection). Stateless implementations are safe by construction; stateful ones must protect mutable fields with a mutex.</p>
+<p>Each method takes the current <a href="#HandshakePhase">HandshakePhase</a> so the modifier can decide whether to act. For example, the built-in modifiers only transform data during the handshake phases and pass data-phase messages through unchanged.</p>
+
+<p>Implementations must be safe for concurrent calls to ModifyOutbound and ModifyInbound from separate goroutines (for example, the read and write pumps of the same connection). A modifier with no mutable state is safe by construction; a stateful one must protect its mutable fields with a mutex.</p>
 
 <pre><code class="language-go">type HandshakeModifier interface {
-    // ModifyOutbound modifies data being sent during any phase of the connection.
+    // ModifyOutbound transforms data being sent during any phase of the
+    // connection. It returns the transformed data, or an error.
     ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
 
-    // ModifyInbound modifies data being received during any phase of the connection.
+    // ModifyInbound undoes the outbound transformation on data being received
+    // during any phase of the connection. It returns the recovered data, or an
+    // error.
     ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
 
-    // Name returns the modifier name for logging and debugging.
+    // Name returns a short name for the modifier, used in logs and error
+    // messages.
     Name() string
 
-    // Close releases any resources held by the modifier and zeroes sensitive key
-    // material. It must be called when the connection is torn down.
-    // Implementations that hold no key material should return nil.
-    // ModifierChain.Close() propagates Close() to all chained members.
+    // Close releases any resources the modifier holds and zeroes sensitive key
+    // material. Call it when the connection is torn down. A modifier that holds
+    // no key material should return nil. [ModifierChain.Close] calls Close on
+    // every modifier in the chain.
     Close() error
 }
 </code></pre>
@@ -188,7 +256,11 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 
 <h2 id="type-handshakephase">type HandshakePhase</h2>
 
-<p>HandshakePhase represents the phase of the handshake process</p>
+<p>HandshakePhase names the phase of a Noise connection that a message is in. The first three phases are the Noise handshake messages; the last is the data phase that follows once the handshake is done.</p>
+
+<p>See [Noise Protocol Framework](<a href="https://noiseprotocol.org/noise.html" target="_blank">https://noiseprotocol.org/noise.html</a>) for details.</p>
+
+<p>The numeric values of these constants are part of a stability contract. Downstream packages rely on the ordering PhaseInitial &lt; PhaseExchange &lt; PhaseFinal &lt; PhaseData. In particular, guards of the form &ldquo;phase &gt;= PhaseFinal&rdquo; (ssu2/wire) are used to match both PhaseFinal and PhaseData, while &ldquo;phase &gt; PhaseFinal&rdquo; (ntcp2) matches only PhaseData. New phase constants MUST NOT be inserted between PhaseFinal and PhaseData; add them after PhaseData or before PhaseInitial instead.</p>
 
 <pre><code class="language-go">type HandshakePhase int
 </code></pre>
@@ -196,17 +268,24 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <p><a name="PhaseInitial"></a></p>
 
 <pre><code class="language-go">const (
-    // PhaseInitial represents the initial phase of the handshake
+    // PhaseInitial is the first handshake message (message 1, sent by the
+    // initiator to the responder).
     PhaseInitial HandshakePhase = iota
-    // PhaseExchange represents the message exchange phase
+    // PhaseExchange is the second handshake message (message 2, sent by the
+    // responder to the initiator).
     PhaseExchange
-    // PhaseFinal represents the final phase of the handshake
+    // PhaseFinal is the third handshake message (message 3, sent by the
+    // initiator to the responder, when the Noise pattern requires it).
     PhaseFinal
-    // PhaseData represents the post-handshake data transport phase.
-    // This distinguishes ongoing data exchange from the final handshake message,
-    // enabling protocol-specific modifiers to handle them differently (e.g., SSU2).
-    // Note: PhaseData &gt; PhaseFinal, so existing &quot;phase &gt;= PhaseFinal&quot; checks
-    // in NTCP2 modifiers will correctly match both PhaseFinal and PhaseData.
+    // PhaseData is the post-handshake data transport phase. It keeps ongoing
+    // data exchange distinct from the final handshake message, so
+    // protocol-specific modifiers can treat them differently (for example,
+    // SSU2).
+    //
+    // Stability: PhaseData MUST stay strictly greater than PhaseFinal. The
+    // ssu2 package uses &quot;phase &gt;= PhaseFinal&quot; guards (and ntcp2 uses &quot;phase &gt;
+    // PhaseFinal&quot;) that depend on this ordering. Inserting a new constant
+    // between PhaseFinal and PhaseData will silently break those modifiers.
     PhaseData
 )
 </code></pre>
@@ -218,15 +297,24 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <pre><code class="language-go">func (p HandshakePhase) String() string
 </code></pre>
 
-<p>String returns the string representation of the handshake phase</p>
+<p>String returns the phase as a short lowercase word, such as &ldquo;initial&rdquo; or &ldquo;data&rdquo;. Unknown phases return &ldquo;unknown&rdquo;.</p>
 
 <p><a name="ModifierChain"></a></p>
 
 <h2 id="type-modifierchain">type ModifierChain</h2>
 
-<p>ModifierChain represents a chain of HandshakeModifier instances that are applied in sequence. The chain ensures that modifiers are applied in the correct order and provides error handling for the entire chain. Moved from: handshake/chain.go</p>
+<p>ModifierChain applies several [HandshakeModifier]s in sequence.</p>
 
-<p>Thread-safety: ModifierChain is safe for concurrent use after construction. The internal modifiers slice is immutable (copied at construction time and never written afterwards). PaddingModifier uses crypto/rand (goroutine-safe); XORModifier is read-only after construction. Callers do not need additional synchronisation for concurrent ModifyOutbound/ModifyInbound calls, but must not call Close() concurrently with other methods (Close() is not re-entrant).</p>
+<p>On the way out, modifiers run in the order they were added (first to last). On the way in, they run in reverse order (last to first). This keeps the transformations balanced: if modifier A wraps modifier B&rsquo;s output, inbound unwraps B first, then A.</p>
+
+<p>Example:</p>
+
+<pre><code>chain := NewModifierChain(&quot;chain&quot;, xor, padding)
+// Outbound: data -&gt; xor -&gt; padding
+// Inbound:  data -&gt; padding -&gt; xor
+</code></pre>
+
+<p>Thread-safety: a chain is safe for concurrent use after it is built. The list of modifiers is copied at construction time and never changed, so concurrent ModifyOutbound/ModifyInbound calls need no extra synchronisation. Do not call Close() at the same time as other methods (Close is not re-entrant).</p>
 
 <pre><code class="language-go">type ModifierChain struct {
     // contains filtered or unexported fields
@@ -249,7 +337,7 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <pre><code class="language-go">func (mc *ModifierChain) Close() error
 </code></pre>
 
-<p>Close calls Close() on every modifier in the chain, collecting all errors. All members are closed regardless of intermediate errors; the first non-nil error is returned. Callers should not call Close() concurrently with ModifyOutbound or ModifyInbound.</p>
+<p>Close calls Close() on every modifier in the chain, collecting all errors. All members are closed regardless of intermediate errors; the aggregated error (via errors.Join) is returned so callers can inspect all failures. Callers should not call Close() concurrently with ModifyOutbound or ModifyInbound.</p>
 
 <p><a name="ModifierChain.Count"></a></p>
 
@@ -285,7 +373,7 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <pre><code class="language-go">func (mc *ModifierChain) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
 </code></pre>
 
-<p>ModifyInbound applies all modifiers in the chain to inbound data. Modifiers are applied in reverse order to undo the transformations applied during outbound processing.</p>
+<p>ModifyInbound runs every modifier in the chain over inbound data, in reverse order, to undo the transformations applied during outbound processing. It returns the recovered data, or an error naming the modifier that failed.</p>
 
 <p><a name="ModifierChain.ModifyOutbound"></a></p>
 
@@ -294,7 +382,7 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 <pre><code class="language-go">func (mc *ModifierChain) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
 </code></pre>
 
-<p>ModifyOutbound applies all modifiers in the chain to outbound data. Modifiers are applied in the order they were added to the chain.</p>
+<p>ModifyOutbound runs every modifier in the chain over outbound data, in the order the modifiers were added. It returns the transformed data, or an error naming the modifier that failed.</p>
 
 <p><a name="ModifierChain.Name"></a></p>
 
@@ -305,119 +393,119 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
 
 <p>Name returns the name of the modifier chain for logging and debugging.</p>
 
-<p><a name="PaddingModifier"></a></p>
+<p><a name="ModifierCloner"></a></p>
 
-<h2 id="type-paddingmodifier">type PaddingModifier</h2>
+<h2 id="type-modifiercloner">type ModifierCloner</h2>
 
-<p>PaddingModifier implements padding-based obfuscation by adding random padding to handshake messages and removing it during processing. Moved from: handshake/modifiers.go</p>
+<p>ModifierCloner is an optional interface a HandshakeModifier can implement to support deep copying. If a modifier holds mutable state (for example, configuration or statistics), it should implement Clone to return an independent copy. Config.Clone() deep-copies modifiers that implement this interface; otherwise the same modifier is shared between the original config and the clone.</p>
 
-<pre><code class="language-go">type PaddingModifier struct {
-    // contains filtered or unexported fields
+<pre><code class="language-go">type ModifierCloner interface {
+    HandshakeModifier
+    Clone() HandshakeModifier
 }
 </code></pre>
 
-<p><a name="NewPaddingModifier"></a></p>
+<p><a name="PaddingEngine"></a></p>
 
-<h3 id="func-newpaddingmodifier">func NewPaddingModifier</h3>
+<h2 id="type-paddingengine">type PaddingEngine</h2>
 
-<pre><code class="language-go">func NewPaddingModifier(name string, minPadding, maxPadding int) (*PaddingModifier, error)
-</code></pre>
+<p>PaddingEngine provides the shared padding math and I2P block wire format used by the transport protocols. Both the NTCP2 and SSU2 padding modifiers embed this engine and add their own protocol-specific constraints.</p>
 
-<p>NewPaddingModifier creates a new padding modifier with the specified minimum and maximum padding sizes.</p>
+<p>The engine is NOT thread-safe. The modifier that embeds it handles locking.</p>
 
-<p><a name="PaddingModifier.Close"></a></p>
-
-<h3 id="func-paddingmodifier-close">func (*PaddingModifier) Close</h3>
-
-<pre><code class="language-go">func (pm *PaddingModifier) Close() error
-</code></pre>
-
-<p>Close is a no-op for PaddingModifier because it holds no sensitive key material. It satisfies the HandshakeModifier lifecycle contract.</p>
-
-<p><a name="PaddingModifier.ModifyInbound"></a></p>
-
-<h3 id="func-paddingmodifier-modifyinbound">func (*PaddingModifier) ModifyInbound</h3>
-
-<pre><code class="language-go">func (pm *PaddingModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
-</code></pre>
-
-<p>ModifyInbound removes padding from inbound handshake data.</p>
-
-<p><a name="PaddingModifier.ModifyOutbound"></a></p>
-
-<h3 id="func-paddingmodifier-modifyoutbound">func (*PaddingModifier) ModifyOutbound</h3>
-
-<pre><code class="language-go">func (pm *PaddingModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
-</code></pre>
-
-<p>ModifyOutbound adds padding to outbound handshake data. Padding format: [original_length:4][original_data][padding_data] Returns an error if data exceeds the 4-byte length prefix capacity (math.MaxUint32).</p>
-
-<p><a name="PaddingModifier.Name"></a></p>
-
-<h3 id="func-paddingmodifier-name">func (*PaddingModifier) Name</h3>
-
-<pre><code class="language-go">func (pm *PaddingModifier) Name() string
-</code></pre>
-
-<p>Name returns the name of the padding modifier for logging and debugging.</p>
-
-<p><a name="XORModifier"></a></p>
-
-<h2 id="type-xormodifier">type XORModifier</h2>
-
-<p>XORModifier implements a simple XOR-based obfuscation modifier. It XORs handshake data with a configurable key pattern to provide basic obfuscation without compromising Noise protocol security. Moved from: handshake/modifiers.go</p>
-
-<pre><code class="language-go">type XORModifier struct {
-    // contains filtered or unexported fields
+<pre><code class="language-go">type PaddingEngine struct {
+    Config PaddingEngineConfig
 }
 </code></pre>
 
-<p><a name="NewXORModifier"></a></p>
+<p><a name="NewPaddingEngine"></a></p>
 
-<h3 id="func-newxormodifier">func NewXORModifier</h3>
+<h3 id="func-newpaddingengine">func NewPaddingEngine</h3>
 
-<pre><code class="language-go">func NewXORModifier(name string, xorKey []byte) *XORModifier
+<pre><code class="language-go">func NewPaddingEngine(config PaddingEngineConfig) (*PaddingEngine, error)
 </code></pre>
 
-<p>NewXORModifier creates a new XOR modifier with the specified key. The key is repeated as needed to match the data length.</p>
+<p>NewPaddingEngine creates a padding engine after validating its config. It returns an error if any parameter is out of the I2P-specified range.</p>
 
-<p>Security note: if key is nil or empty, a 32-byte cryptographically random key is generated automatically. Callers must NOT rely on any particular default value — the old well-known default (0xAA) provided no meaningful obfuscation and has been replaced by this random fallback.</p>
+<p><a name="PaddingEngine.AddAEADPadding"></a></p>
 
-<p><a name="XORModifier.Close"></a></p>
+<h3 id="func-paddingengine-addaeadpadding">func (*PaddingEngine) AddAEADPadding</h3>
 
-<h3 id="func-xormodifier-close">func (*XORModifier) Close</h3>
-
-<pre><code class="language-go">func (xm *XORModifier) Close() error
+<pre><code class="language-go">func (pe *PaddingEngine) AddAEADPadding(data []byte, paddingSize int) ([]byte, error)
 </code></pre>
 
-<p>Close zeroes the XOR key to prevent session-derived key material from lingering in memory after the connection is torn down.</p>
+<p>AddAEADPadding appends a padding block in I2P block format: [type:1][size:2][random padding], where type is <a href="#I2PPaddingBlockType">I2PPaddingBlockType</a> and size is the padding size as a 2-byte big-endian number.</p>
 
-<p><a name="XORModifier.ModifyInbound"></a></p>
+<p><a name="PaddingEngine.AddCleartextPadding"></a></p>
 
-<h3 id="func-xormodifier-modifyinbound">func (*XORModifier) ModifyInbound</h3>
+<h3 id="func-paddingengine-addcleartextpadding">func (*PaddingEngine) AddCleartextPadding</h3>
 
-<pre><code class="language-go">func (xm *XORModifier) ModifyInbound(phase HandshakePhase, data []byte) ([]byte, error)
+<pre><code class="language-go">func (pe *PaddingEngine) AddCleartextPadding(data []byte, paddingSize int) ([]byte, error)
 </code></pre>
 
-<p>ModifyInbound removes XOR obfuscation from inbound handshake data. Since XOR is symmetric, this performs the same operation as ModifyOutbound.</p>
+<p>AddCleartextPadding appends cryptographically random padding bytes directly after the data, with no block header.</p>
 
-<p><a name="XORModifier.ModifyOutbound"></a></p>
+<p><a name="PaddingEngine.CalculatePaddingSize"></a></p>
 
-<h3 id="func-xormodifier-modifyoutbound">func (*XORModifier) ModifyOutbound</h3>
+<h3 id="func-paddingengine-calculatepaddingsize">func (*PaddingEngine) CalculatePaddingSize</h3>
 
-<pre><code class="language-go">func (xm *XORModifier) ModifyOutbound(phase HandshakePhase, data []byte) ([]byte, error)
+<pre><code class="language-go">func (pe *PaddingEngine) CalculatePaddingSize(dataLen int) int
 </code></pre>
 
-<p>ModifyOutbound applies XOR obfuscation to outbound handshake data.</p>
+<p>CalculatePaddingSize computes how many bytes of padding to add for a message of the given length. It starts from the padding ratio, applies random variation, and clamps the result to [MinPadding, MaxPadding].</p>
 
-<p><a name="XORModifier.Name"></a></p>
+<p><a name="PaddingEngine.EstimatePaddingSize"></a></p>
 
-<h3 id="func-xormodifier-name">func (*XORModifier) Name</h3>
+<h3 id="func-paddingengine-estimatepaddingsize">func (*PaddingEngine) EstimatePaddingSize</h3>
 
-<pre><code class="language-go">func (xm *XORModifier) Name() string
+<pre><code class="language-go">func (pe *PaddingEngine) EstimatePaddingSize(dataLen int) int
 </code></pre>
 
-<p>Name returns the name of the XOR modifier for logging and debugging.</p>
+<p>EstimatePaddingSize estimates how much padding a message of the given length will get, for bandwidth calculations. With a ratio configured it uses the ratio (clamped to [MinPadding, MaxPadding]); otherwise it uses the midpoint of the min/max range.</p>
+
+<p><a name="PaddingEngine.RemoveTrailingAEADPadding"></a></p>
+
+<h3 id="func-paddingengine-removetrailingaeadpadding">func (*PaddingEngine) RemoveTrailingAEADPadding</h3>
+
+<pre><code class="language-go">func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding int) ([]byte, error)
+</code></pre>
+
+<p>RemoveTrailingAEADPadding removes a trailing I2P padding block (<a href="#I2PPaddingBlockType">I2PPaddingBlockType</a>) by scanning candidate padding sizes in [MinPadding, maxScanPadding]. maxScanPadding further limits the search range (for example, to the sender&rsquo;s configured maximum); a value &lt;= 0 means &ldquo;no additional limit&rdquo;.</p>
+
+<p>Because the preceding application payload is opaque (not itself I2P-block formatted), a candidate header can in principle appear more than once by coincidence. Rather than silently accepting the first match found (which could strip the wrong boundary and corrupt data), this function scans the entire bounded window and only succeeds when exactly one candidate matches. Zero candidates is treated as &ldquo;no padding present&rdquo; (the legitimate outcome when the sender&rsquo;s configured padding size was 0, so no block was ever appended). More than one candidate is treated as an unresolvable ambiguity and fails closed with an error, rather than guessing — the caller should abort the connection.</p>
+
+<p><a name="PaddingEngine.ShouldSkipPadding"></a></p>
+
+<h3 id="func-paddingengine-shouldskippadding">func (*PaddingEngine) ShouldSkipPadding</h3>
+
+<pre><code class="language-go">func (pe *PaddingEngine) ShouldSkipPadding() bool
+</code></pre>
+
+<p>ShouldSkipPadding reports whether no padding is configured (minimum, maximum, and ratio are all zero).</p>
+
+<p><a name="PaddingEngine.UpdateParams"></a></p>
+
+<h3 id="func-paddingengine-updateparams">func (*PaddingEngine) UpdateParams</h3>
+
+<pre><code class="language-go">func (pe *PaddingEngine) UpdateParams(minPad, maxPad int, ratio float64) error
+</code></pre>
+
+<p>UpdateParams changes the engine&rsquo;s padding parameters. The new values are validated first; if any is out of range, the parameters are left unchanged and an error is returned.</p>
+
+<p><a name="PaddingEngineConfig"></a></p>
+
+<h2 id="type-paddingengineconfig">type PaddingEngineConfig</h2>
+
+<p>PaddingEngineConfig holds the shared padding parameters for a <a href="#PaddingEngine">PaddingEngine</a>. The engine does not manage concurrency — callers must handle locking.</p>
+
+<pre><code class="language-go">type PaddingEngineConfig struct {
+    MinPadding   int
+    MaxPadding   int
+    PaddingRatio float64
+    TestMode     bool
+    Domain       string // Error domain for oops messages (e.g., &quot;ntcp2&quot;, &quot;ssu2&quot;)
+}
+</code></pre>
 
 <p>Generated by <a href="https://github.com/princjef/gomarkdoc" target="_blank">gomarkdoc</a></p>
 
@@ -425,7 +513,7 @@ recovered, _ := chain.ModifyInbound(handshake.PhaseInitial, outbound)
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-10-26 10:00:34 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-10-26 14:55:51 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>

@@ -13,7 +13,7 @@
         <a href="../index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 588 commits
+        📝 633 commits
          • 📜 License
       </div>
     </div>
@@ -23,8 +23,6 @@
       
       
         <div class="nav-section-title">Documentation:</div>
-        
-          <li><a href="../docs/ratchet/ratchet.html" >ECIES-X25519-AEAD-Ratchet</a></li>
         
           <li><a href="../docs/RELEASE_NOTES.html" >RELEASE NOTES</a></li>
         
@@ -88,65 +86,1228 @@
 
 <p><img src="../images/ssu2.svg" alt="ssu2.svg" /></p>
 
+<p>Package ssu2 implements the I2P SSU2 transport protocol.</p>
+
+<h1 id="what-is-ssu2">What is SSU2?</h1>
+
+<p>SSU2 (Secure Semi-reliable UDP version 2) is the transport protocol that I2P
+routers use to talk to each other over UDP. It carries I2NP messages (the
+messages routers exchange to build and use anonymous paths) between two routers,
+one UDP packet at a time.</p>
+
+<p>SSU2 is built on the Noise Protocol Framework, a well-studied way to securely
+agree on encryption keys between two parties. The exact Noise pattern SSU2 uses
+is:</p>
+
+<pre><code>Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256
+</code></pre>
+
+<p>In plain terms:</p>
+
+<pre><code>- XK: the initiator already knows the responder's long-term public key,
+  so the first message can be small and the handshake is fast.
+- chaobfse: the cleartext parts of the handshake (the one-time public
+  keys) are hidden with ChaCha20 stream encryption, so an observer
+  cannot tell which packets are handshake packets.
+- hs1+hs2+hs3: three handshake messages, each carrying a 16 or 32 byte
+  header that is bound into the encryption (see below).
+- 25519: X25519 key exchange (RFC 7748).
+- ChaChaPoly: ChaCha20-Poly1305 encryption (RFC 7539) with a 12-byte
+  nonce whose first 4 bytes are zero.
+- SHA256: SHA-256 for hashing.
+</code></pre>
+
+<p>See <a href="https://noiseprotocol.org/noise.html" target="_blank">Noise Protocol Framework</a> for
+details.</p>
+
+<h1 id="how-ssu2-extends-noise">How SSU2 extends Noise</h1>
+
+<p>I2P adds five extensions to the base Noise_XK pattern:</p>
+
+<pre><code>1. Each handshake message includes a 16 or 32 byte header.
+2. The header is mixed into the Noise mixHash before encryption, which
+   binds the header to the message so it cannot be tampered with.
+3. The header is encrypted and authenticated along with the message.
+4. The cleartext ephemeral (one-time) keys are obfuscated with ChaCha20
+   (unlike NTCP2, which uses AES).
+5. A payload format is defined for handshake messages 1, 2, and 3 and
+   for the data phase.
+</code></pre>
+
+<p>Because all three handshake messages use the header as associated data, the SSU2
+protocol identifier differs from NTCP2&rsquo;s.</p>
+
+<p>See <a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst" target="_blank">I2P Spec:
+SSU2</a> for
+details.</p>
+
+<h1 id="what-ssu2-does-and-does-not-do">What SSU2 does and does not do</h1>
+
+<p>SSU2 is an authenticated key agreement protocol for point-to-point
+router-to-router transport of I2NP messages over UDP. It is not a
+general-purpose data pipe.</p>
+
+<p>SSU2 does NOT provide in-order delivery or guaranteed delivery of I2NP messages,
+and it does NOT completely prevent duplicate delivery. Routers must be prepared
+to receive messages out of order or more than once.</p>
+
+<p>In addition to carrying I2NP messages, SSU2 provides:</p>
+
+<pre><code>- Relaying (NAT traversal): a third router can relay messages between
+  two peers that cannot reach each other directly.
+- Peer Testing: a peer can test whether it is reachable from outside
+  its network (inbound reachability).
+- Connection Migration: a session can survive the peer's IP address or
+  port changing (for example, when a NAT mapping changes).
+</code></pre>
+
+<h1 id="packet-format">Packet format</h1>
+
+<p>SSU2 packet headers are adapted from WireGuard and QUIC. Header obfuscation uses
+ChaCha20 (from ECIES) instead of AES. Packet numbering is adapted from WireGuard
+and QUIC, and ACKs/nacks are adapted from QUIC.</p>
+
+<h1 id="nat-detection-and-reachability-state">NAT detection and reachability state</h1>
+
+<p>All NAT detection, peer-test management, and reachability state management
+(PeerTestManager, TestResult, NATStatus) is delegated to the external
+github.com/go-i2p/path package. This means:</p>
+
+<pre><code>1. Errors or panics in path validation code cannot be observed or
+   instrumented from within go-noise.
+2. A bug in external path detection (for example, a false-positive
+   FIREWALLED state) would be invisible at the go-noise layer.
+3. NAT state is the single source of truth from go-i2p/path; go-noise does
+   not validate or override it.
+</code></pre>
+
+<p>If you need to observe NAT state transitions or integrate custom reachability
+logic, you must hook directly into go-i2p/path, not go-noise. This is by design,
+to keep the transport layer (go-noise) separate from the routing/path layer.</p>
+
+<h1 id="package-layout">Package layout</h1>
+
+<pre><code>- ssu2 (this package): top-level API — dialing, listening, the
+  Coordinator for peer tests and relaying, and re-exports of the
+  subpackages' types for backward compatibility.
+- ssu2/config: configuration types (SSU2Config, SSU2Addr) and
+  validation.
+- ssu2/handshake: the XK handshake state machine, key generation, and
+  key rotation.
+- ssu2/reliability: ACK handling, RTT estimation, congestion control,
+  receive window, and keepalive.
+- ssu2/server: the listener (inbound sessions), token admission, and
+  transport wiring.
+- ssu2/session: an established SSU2 connection (SSU2Conn), packet
+  routing, and I2NP message handling.
+- ssu2/wire: the on-the-wire packet and block formats, header
+  protection, and obfuscation.
+</code></pre>
+
 <h2 id="usage">Usage</h2>
+
+<pre><code class="language-go">const (
+	PublishedKeyMinAge       = handshake.PublishedKeyMinAge
+	UnpublishedKeyMinAge     = handshake.UnpublishedKeyMinAge
+	KeyRotationCheckInterval = handshake.KeyRotationCheckInterval
+	KeyGracePeriod           = handshake.KeyGracePeriod
+	StaticKeySize            = handshake.StaticKeySize
+	IntroKeySize             = handshake.IntroKeySize
+	KeyStateActive           = handshake.KeyStateActive
+	KeyStatePendingRotation  = handshake.KeyStatePendingRotation
+	KeyStateRotating         = handshake.KeyStateRotating
+	KeyStateRetired          = handshake.KeyStateRetired
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	NATUnknown        = path.NATUnknown
+	NATNone           = path.NATNone
+	NATCone           = path.NATCone
+	NATRestricted     = path.NATRestricted
+	NATPortRestricted = path.NATPortRestricted
+	NATSymmetric      = path.NATSymmetric
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	HolePunchRequested = path.HolePunchRequested
+	HolePunchSent      = path.HolePunchSent
+	HolePunchWaiting   = path.HolePunchWaiting
+	HolePunchSuccess   = path.HolePunchSuccess
+	HolePunchFailed    = path.HolePunchFailed
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	ChallengeSent      = path.ChallengeSent
+	ChallengeReceived  = path.ChallengeReceived
+	ChallengeValidated = path.ChallengeValidated
+	ChallengeFailed    = path.ChallengeFailed
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	PeerTestRequest      = path.PeerTestRequest
+	PeerTestRelay        = path.PeerTestRelay
+	PeerTestResponse     = path.PeerTestResponse
+	PeerTestResult       = path.PeerTestResult
+	PeerTestProbe        = path.PeerTestProbe
+	PeerTestReply        = path.PeerTestReply
+	PeerTestConfirmation = path.PeerTestConfirmation
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	RoleInitiator = path.RoleInitiator
+	RoleRelay     = path.RoleRelay
+	RoleResponder = path.RoleResponder
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	TestRequested = path.TestRequested
+	TestRelayed   = path.TestRelayed
+	TestProbed    = path.TestProbed
+	TestComplete  = path.TestComplete
+	TestFailed    = path.TestFailed
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	PathValidationTimeout  = path.PathValidationTimeout
+	MinMTU                 = path.MinMTU
+	RelayRequestPrologue   = path.RelayRequestPrologue
+	PeerTestPrologue       = path.PeerTestPrologue
+	RelayAgreementPrologue = path.RelayAgreementPrologue
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	CongestionFlagRequestACK = reliability.CongestionFlagRequestACK
+	CongestionFlagECN        = reliability.CongestionFlagECN
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	MinCongestionWindow     = reliability.MinCongestionWindow
+	InitialCongestionWindow = reliability.InitialCongestionWindow
+	MaxCongestionWindow     = reliability.MaxCongestionWindow
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	SlowStart           = reliability.SlowStart
+	CongestionAvoidance = reliability.CongestionAvoidance
+	Recovery            = reliability.Recovery
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	DefaultMaxWindowSize      = reliability.DefaultMaxWindowSize
+	MaxPacketNumber           = reliability.MaxPacketNumber
+	InitialSlowStartThreshold = reliability.InitialSlowStartThreshold
+	RTTKMultiplier            = reliability.RTTKMultiplier
+	ClockGranularity          = reliability.ClockGranularity
+	InitialRTO                = reliability.InitialRTO
+	MinRTO                    = reliability.MinRTO
+	MaxRTO                    = reliability.MaxRTO
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	StateInit        = session.StateInit
+	StateHandshaking = session.StateHandshaking
+	StateEstablished = session.StateEstablished
+	StateClosing     = session.StateClosing
+	StateClosed      = session.StateClosed
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	BlockTypeDateTime          = wire.BlockTypeDateTime
+	BlockTypeOptions           = wire.BlockTypeOptions
+	BlockTypeRouterInfo        = wire.BlockTypeRouterInfo
+	BlockTypeI2NPMessage       = wire.BlockTypeI2NPMessage
+	BlockTypeFirstFragment     = wire.BlockTypeFirstFragment
+	BlockTypeFollowOnFragment  = wire.BlockTypeFollowOnFragment
+	BlockTypeTermination       = wire.BlockTypeTermination
+	BlockTypeRelayRequest      = wire.BlockTypeRelayRequest
+	BlockTypeRelayResponse     = wire.BlockTypeRelayResponse
+	BlockTypeRelayIntro        = wire.BlockTypeRelayIntro
+	BlockTypePeerTest          = wire.BlockTypePeerTest
+	BlockTypeNextNonce         = wire.BlockTypeNextNonce
+	BlockTypeACK               = wire.BlockTypeACK
+	BlockTypeAddress           = wire.BlockTypeAddress
+	BlockTypeReserved14        = wire.BlockTypeReserved14
+	BlockTypeRelayTagRequest   = wire.BlockTypeRelayTagRequest
+	BlockTypeRelayTag          = wire.BlockTypeRelayTag
+	BlockTypeNewToken          = wire.BlockTypeNewToken
+	BlockTypePathChallenge     = wire.BlockTypePathChallenge
+	BlockTypePathResponse      = wire.BlockTypePathResponse
+	BlockTypeFirstPacketNumber = wire.BlockTypeFirstPacketNumber
+	BlockTypeCongestion        = wire.BlockTypeCongestion
+	BlockTypePadding           = wire.BlockTypePadding
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	TerminationNormalClose           = wire.TerminationNormalClose
+	TerminationReceived              = wire.TerminationReceived
+	TerminationIdleTimeout           = wire.TerminationIdleTimeout
+	TerminationRouterShutdown        = wire.TerminationRouterShutdown
+	TerminationDataPhaseAEADFailure  = wire.TerminationDataPhaseAEADFailure
+	TerminationIncompatibleOptions   = wire.TerminationIncompatibleOptions
+	TerminationIncompatibleSignature = wire.TerminationIncompatibleSignature
+	TerminationClockSkew             = wire.TerminationClockSkew
+	TerminationPaddingViolation      = wire.TerminationPaddingViolation
+	TerminationAEADFramingError      = wire.TerminationAEADFramingError
+	TerminationPayloadFormatError    = wire.TerminationPayloadFormatError
+	TerminationSessionRequestError   = wire.TerminationSessionRequestError
+	TerminationSessionCreatedError   = wire.TerminationSessionCreatedError
+	TerminationSessionConfirmedError = wire.TerminationSessionConfirmedError
+	TerminationTimeout               = wire.TerminationTimeout
+	TerminationRISigVerifyFail       = wire.TerminationRISigVerifyFail
+	TerminationSParamMissing         = wire.TerminationSParamMissing
+	TerminationBanned                = wire.TerminationBanned
+	TerminationBadToken              = wire.TerminationBadToken
+	TerminationConnectionLimits      = wire.TerminationConnectionLimits
+	TerminationIncompatibleVersion   = wire.TerminationIncompatibleVersion
+	TerminationWrongNetID            = wire.TerminationWrongNetID
+	TerminationReplacedByNewSession  = wire.TerminationReplacedByNewSession
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	CategoryMessage  = wire.CategoryMessage
+	CategoryRelay    = wire.CategoryRelay
+	CategoryPeerTest = wire.CategoryPeerTest
+	CategoryPath     = wire.CategoryPath
+	CategorySession  = wire.CategorySession
+	CategoryMetadata = wire.CategoryMetadata
+	CategoryUnknown  = wire.CategoryUnknown
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	HeaderTypeSessionRequest   = wire.HeaderTypeSessionRequest
+	HeaderTypeSessionCreated   = wire.HeaderTypeSessionCreated
+	HeaderTypeRetry            = wire.HeaderTypeRetry
+	HeaderTypeTokenRequest     = wire.HeaderTypeTokenRequest
+	HeaderTypeSessionConfirmed = wire.HeaderTypeSessionConfirmed
+	HeaderTypeData             = wire.HeaderTypeData
+	HeaderTypePeerTest         = wire.HeaderTypePeerTest
+	HeaderTypeHolePunch        = wire.HeaderTypeHolePunch
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	HeaderKeySize              = wire.HeaderKeySize
+	MinPacketSizeForEncryption = wire.MinPacketSizeForEncryption
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	MessageTypeSessionRequest   = wire.MessageTypeSessionRequest
+	MessageTypeSessionCreated   = wire.MessageTypeSessionCreated
+	MessageTypeSessionConfirmed = wire.MessageTypeSessionConfirmed
+	MessageTypeData             = wire.MessageTypeData
+	MessageTypePeerTest         = wire.MessageTypePeerTest
+	MessageTypeRetry            = wire.MessageTypeRetry
+	MessageTypeTokenRequest     = wire.MessageTypeTokenRequest
+	MessageTypeHolePunch        = wire.MessageTypeHolePunch
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	ShortHeaderSize  = wire.ShortHeaderSize
+	LongHeaderSize   = wire.LongHeaderSize
+	EphemeralKeySize = wire.EphemeralKeySize
+	MACSize          = wire.MACSize
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	MinPacketSize     = wire.MinPacketSize
+	MaxPacketSizeIPv4 = wire.MaxPacketSizeIPv4
+	MaxPacketSizeIPv6 = wire.MaxPacketSizeIPv6
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	SSU2ProtocolVersion = wire.SSU2ProtocolVersion
+	SSU2NetworkID       = wire.SSU2NetworkID
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	SipHashIVSize       = wire.SipHashIVSize
+	DataLengthFieldSize = wire.DataLengthFieldSize
+)
+</code></pre>
+
+<pre><code class="language-go">const (
+	TokenSize         = wire.TokenSize
+	MaxTokenCacheSize = wire.MaxTokenCacheSize
+)
+</code></pre>
+
+<pre><code class="language-go">const DefaultHandshakeTimeout = config.DefaultHandshakeTimeout
+</code></pre>
+
+<pre><code class="language-go">const SSU2ProtocolName = handshake.SSU2ProtocolName
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewSSU2Config              = config.NewSSU2Config
+	NewSSU2Addr                = config.NewSSU2Addr
+	GenerateConnectionID       = config.GenerateConnectionID
+	DefaultRouterInfoValidator = config.DefaultRouterInfoValidator
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewHandshakeHandler         = handshake.NewHandshakeHandler
+	NewHandshakeHandlerWithKeys = handshake.NewHandshakeHandlerWithKeys
+	ParseOptionsBlock           = handshake.ParseOptionsBlock
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewKeyRotationManager        = handshake.NewKeyRotationManager
+	NewKeyRotationManagerWithAge = handshake.NewKeyRotationManagerWithAge
+	GenerateNewStaticKey         = handshake.GenerateNewStaticKey
+	GenerateNewIntroKey          = handshake.GenerateNewIntroKey
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewHolePunchCoordinator      = path.NewHolePunchCoordinator
+	NewIntroducerRegistry        = path.NewIntroducerRegistry
+	NewPathValidator             = path.NewPathValidator
+	NewPeerTestManager           = path.NewPeerTestManager
+	NewPeerTestManagerWithFields = path.NewPeerTestManagerWithFields
+	NewRelayManager              = path.NewRelayManager
+
+	EncodePathChallenge            = path.EncodePathChallenge
+	EncodePathChallengeWithPadding = path.EncodePathChallengeWithPadding
+	EncodePathResponse             = path.EncodePathResponse
+	DecodePathChallenge            = path.DecodePathChallenge
+	DecodePathResponse             = path.DecodePathResponse
+
+	DecodePeerTestBlock   = path.DecodePeerTestBlock
+	EncodePeerTestBlock   = path.EncodePeerTestBlock
+	DecodeRelayIntro      = path.DecodeRelayIntro
+	EncodeRelayIntro      = path.EncodeRelayIntro
+	DecodeRelayRequest    = path.DecodeRelayRequest
+	EncodeRelayRequest    = path.EncodeRelayRequest
+	DecodeRelayResponse   = path.DecodeRelayResponse
+	EncodeRelayResponse   = path.EncodeRelayResponse
+	DecodeRelayTag        = path.DecodeRelayTag
+	EncodeRelayTag        = path.EncodeRelayTag
+	DecodeRelayTagRequest = path.DecodeRelayTagRequest
+	EncodeRelayTagRequest = path.EncodeRelayTagRequest
+
+	BuildPeerTestSignedData      = path.BuildPeerTestSignedData
+	BuildRelayRequestSignedData  = path.BuildRelayRequestSignedData
+	BuildRelayResponseSignedData = path.BuildRelayResponseSignedData
+	SignPeerTest                 = path.SignPeerTest
+	SignRelayRequest             = path.SignRelayRequest
+	SignRelayResponse            = path.SignRelayResponse
+	VerifyPeerTestSignature      = path.VerifyPeerTestSignature
+	VerifyRelayRequestSignature  = path.VerifyRelayRequestSignature
+	VerifyRelayResponseSignature = path.VerifyRelayResponseSignature
+
+	CompareNATTypes         = path.CompareNATTypes
+	DetermineNATType        = path.DetermineNATType
+	DescribeNATCapabilities = path.DescribeNATCapabilities
+	HasPublicIP             = path.HasPublicIP
+	IsSymmetricNAT          = path.IsSymmetricNAT
+	RequiresRelay           = path.RequiresRelay
+	SelectBestNATType       = path.SelectBestNATType
+	SelectWorstNATType      = path.SelectWorstNATType
+
+	AnalyzeProbeResults    = path.AnalyzeProbeResults
+	ExtractExternalAddress = path.ExtractExternalAddress
+	ExtractExternalPort    = path.ExtractExternalPort
+	IsDirectlyReachable    = path.IsDirectlyReachable
+	IsReachableViaRelay    = path.IsReachableViaRelay
+	ValidateTestResult     = path.ValidateTestResult
+
+	IsAddressConsistent = path.IsAddressConsistent
+	IsIPConsistent      = path.IsIPConsistent
+	IsPortConsistent    = path.IsPortConsistent
+	IsValidSourcePort   = path.IsValidSourcePort
+	NonceConnectionIDs  = path.NonceConnectionIDs
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewACKHandler                  = reliability.NewACKHandler
+	NewCongestionController        = reliability.NewCongestionController
+	NewCongestionControllerWithMTU = reliability.NewCongestionControllerWithMTU
+	NewRTTEstimator                = reliability.NewRTTEstimator
+	NewReceiveWindow               = reliability.NewReceiveWindow
+	DecodeCongestionBlock          = reliability.DecodeCongestionBlock
+	EncodeCongestionBlock          = reliability.EncodeCongestionBlock
+	SortDescDedupPackets           = reliability.SortDescDedupPackets
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewSSU2Listener                     = server.NewSSU2Listener
+	DialSSU2                            = server.DialSSU2
+	DialSSU2WithConn                    = server.DialSSU2WithConn
+	DialSSU2WithHandshake               = server.DialSSU2WithHandshake
+	DialSSU2WithConnAndHandshake        = server.DialSSU2WithConnAndHandshake
+	DialSSU2WithConnAndHandshakeContext = server.DialSSU2WithConnAndHandshakeContext
+	DialSSU2WithHandshakeContext        = server.DialSSU2WithHandshakeContext
+	ListenSSU2                          = server.ListenSSU2
+	WrapSSU2Conn                        = server.WrapSSU2Conn
+	WrapSSU2Listener                    = server.WrapSSU2Listener
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewSSU2Conn     = session.NewSSU2Conn
+	NewDataHandler  = session.NewDataHandler
+	NewPacketRouter = session.NewPacketRouter
+)
+</code></pre>
+
+<pre><code class="language-go">var (
+	NewSSU2Block      = wire.NewSSU2Block
+	NewSSU2Packet     = wire.NewSSU2Packet
+	NewBlockRouter    = wire.NewBlockRouter
+	SerializeBlocks   = wire.SerializeBlocks
+	DeserializeBlocks = wire.DeserializeBlocks
+	FindBlockByType   = wire.FindBlockByType
+	IsKnownBlockType  = wire.IsKnownBlockType
+	GetBlockTypeName  = wire.GetBlockTypeName
+	GetBlockCategory  = wire.GetBlockCategory
+	AllBlockTypes     = wire.AllBlockTypes
+
+	EncodeAddressBlock             = wire.EncodeAddressBlock
+	DecodeAddressBlock             = wire.DecodeAddressBlock
+	NewNewTokenBlock               = wire.NewNewTokenBlock
+	ParseNewTokenBlock             = wire.ParseNewTokenBlock
+	NewHeaderProtector             = wire.NewHeaderProtector
+	NewHeaderProtectorFromIntroKey = wire.NewHeaderProtectorFromIntroKey
+	NewHeaderProtectorManager      = wire.NewHeaderProtectorManager
+
+	ExtractConnectionID = wire.ExtractConnectionID
+	EncodeConnectionID  = wire.EncodeConnectionID
+	ExtractPacketNumber = wire.ExtractPacketNumber
+	EncodePacketNumber  = wire.EncodePacketNumber
+
+	// SipHash length modifier constructors
+	NewSipHashLengthModifier            = wire.NewSipHashLengthModifier
+	NewSipHashLengthModifierDirectional = wire.NewSipHashLengthModifierDirectional
+
+	// ChaCha obfuscation modifier constructor
+	NewChaChaObfuscationModifier = wire.NewChaChaObfuscationModifier
+
+	// SSU2 padding modifier constructors
+	NewSSU2PaddingModifier          = wire.NewSSU2PaddingModifier
+	NewSSU2PaddingModifierWithRatio = wire.NewSSU2PaddingModifierWithRatio
+	NewSSU2PaddingModifierWithMTU   = wire.NewSSU2PaddingModifierWithMTU
+
+	// IntroKey / StaticKey helpers
+	IntroKeyFromRouterAddress  = wire.IntroKeyFromRouterAddress
+	StaticKeyFromRouterAddress = wire.StaticKeyFromRouterAddress
+
+	// TokenCache constructors
+	NewTokenCache            = wire.NewTokenCache
+	NewTokenCacheWithMaxSize = wire.NewTokenCacheWithMaxSize
+)
+</code></pre>
+
+<pre><code class="language-go">var NewKeepaliveManager = reliability.NewKeepaliveManager
+</code></pre>
+
+<h4 id="type-ackhandler">type ACKHandler</h4>
+
+<pre><code class="language-go">type ACKHandler = reliability.ACKHandler
+</code></pre>
+
+<h4 id="type-acceptor">type Acceptor</h4>
+
+<pre><code class="language-go">type Acceptor = server.Acceptor
+</code></pre>
+
+<p>Acceptor is the consumer-facing interface for accepting SSU2 connections.
+*SSU2Listener satisfies this interface.</p>
+
+<h4 id="type-addressblock">type AddressBlock</h4>
+
+<pre><code class="language-go">type AddressBlock = wire.AddressBlock
+</code></pre>
+
+<h4 id="type-blockhandler">type BlockHandler</h4>
+
+<pre><code class="language-go">type BlockHandler = wire.BlockHandler
+</code></pre>
+
+<h4 id="type-blockhandlerfunc">type BlockHandlerFunc</h4>
+
+<pre><code class="language-go">type BlockHandlerFunc = wire.BlockHandlerFunc
+</code></pre>
+
+<h4 id="type-blockrouter">type BlockRouter</h4>
+
+<pre><code class="language-go">type BlockRouter = wire.BlockRouter
+</code></pre>
+
+<h4 id="type-blockrouterstats">type BlockRouterStats</h4>
+
+<pre><code class="language-go">type BlockRouterStats = wire.BlockRouterStats
+</code></pre>
+
+<h4 id="type-blocktypecategory">type BlockTypeCategory</h4>
+
+<pre><code class="language-go">type BlockTypeCategory = wire.BlockTypeCategory
+</code></pre>
 
 <h4 id="type-chachaobfuscationmodifier">type ChaChaObfuscationModifier</h4>
 
-<pre><code class="language-go">type ChaChaObfuscationModifier struct {
+<pre><code class="language-go">type ChaChaObfuscationModifier = wire.ChaChaObfuscationModifier
+</code></pre>
+
+<p>SipHash / ChaCha / padding modifier types</p>
+
+<h4 id="type-charlieselector">type CharlieSelector</h4>
+
+<pre><code class="language-go">type CharlieSelector func() (hash data.Hash, addr *net.UDPAddr, ok bool)
+</code></pre>
+
+<p>CharlieSelector picks a responder (&ldquo;Charlie&rdquo;) for a peer test that the local
+router is relaying as &ldquo;Bob&rdquo;. It returns ok=false when no suitable peer is
+available, in which case the peer test is dropped. The router supplies this from
+its peer database.</p>
+
+<h4 id="type-congestioncontroller">type CongestionController</h4>
+
+<pre><code class="language-go">type CongestionController = reliability.CongestionController
+</code></pre>
+
+<h4 id="type-congestioncontrolleraccessor">type CongestionControllerAccessor</h4>
+
+<pre><code class="language-go">type CongestionControllerAccessor = path.CongestionControllerAccessor
+</code></pre>
+
+<h4 id="type-congestionstate">type CongestionState</h4>
+
+<pre><code class="language-go">type CongestionState = reliability.CongestionState
+</code></pre>
+
+<h4 id="type-congestionstats">type CongestionStats</h4>
+
+<pre><code class="language-go">type CongestionStats = reliability.CongestionStats
+</code></pre>
+
+<h4 id="type-conniface">type ConnIface</h4>
+
+<pre><code class="language-go">type ConnIface interface {
+	net.Conn
+	// Handshake performs the SSU2 XK handshake. It must be called before
+	// Read/Write.
+	Handshake(ctx context.Context) error
+
+	// WriteBlocksWithNumbers sends blocks as individual Data packets and
+	// returns the packet number assigned to each block, in order. Callers can
+	// use these numbers to match explicit ACK blocks from the peer to the
+	// exact outbound packets, giving spec-correct delivery confirmation
+	// without guessing which packet an ACK refers to.
+	WriteBlocksWithNumbers(blocks []*session.SSU2Block) ([]uint32, error)
 }
 </code></pre>
 
-<p>ChaChaObfuscationModifier implements SSU2&rsquo;s ChaCha20-based ephemeral key
-obfuscation. This modifier encrypts/decrypts the X and Y ephemeral keys in
-messages 1 and 2 using ChaCha20 stream cipher with the router hash as key and
-published IV. Key differences from NTCP2&rsquo;s AES: 8-byte IV, XOR-based stream
-cipher vs block cipher.</p>
+<p>ConnIface is the minimal interface satisfied by *SSU2Conn. Dialer.DialContext
+returns ConnIface so that callers can substitute test doubles without importing
+the concrete *session.SSU2Conn type. Where SSU2-specific methods are needed, use
+a type assertion:</p>
 
-<h4 id="func-newchachaobfuscationmodifier">func  NewChaChaObfuscationModifier</h4>
-
-<pre><code class="language-go">func NewChaChaObfuscationModifier(name string, routerHash, iv []byte) (*ChaChaObfuscationModifier, error)
+<pre><code>conn.(*session.SSU2Conn).CloseWithReason(...)
 </code></pre>
 
-<p>NewChaChaObfuscationModifier creates a new ChaCha20 obfuscation modifier for
-SSU2. routerHash must be 32 bytes (RH_B), iv must be 8 bytes from network
-database. Returns error if parameters are invalid.</p>
+<h4 id="type-connstate">type ConnState</h4>
 
-<h4 id="func-chachaobfuscationmodifier-modifyinbound">func (*ChaChaObfuscationModifier) ModifyInbound</h4>
-
-<pre><code class="language-go">func (com *ChaChaObfuscationModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+<pre><code class="language-go">type ConnState = session.ConnState
 </code></pre>
 
-<p>ModifyInbound removes ChaCha20 obfuscation from ephemeral keys in handshake
-messages. ChaCha20 is symmetric (XOR-based), so encryption and decryption are
-identical.</p>
+<h4 id="type-coordinator">type Coordinator</h4>
 
-<h4 id="func-chachaobfuscationmodifier-modifyoutbound">func (*ChaChaObfuscationModifier) ModifyOutbound</h4>
-
-<pre><code class="language-go">func (com *ChaChaObfuscationModifier) ModifyOutbound(phase handshake.HandshakePhase, data []byte) ([]byte, error)
+<pre><code class="language-go">type Coordinator struct {
+}
 </code></pre>
 
-<p>ModifyOutbound applies ChaCha20 obfuscation to ephemeral keys in handshake
-messages. Message 1: XOR X key with ChaCha20(routerHash, iv) Message 2: XOR Y
-key with ChaCha20(routerHash, derived_iv) Message 3+: No obfuscation (like
-NTCP2)</p>
+<p>Coordinator wires the peer-test and relay state machines into session callbacks.
+A single instance is shared across all of the local router&rsquo;s SSU2 sessions.</p>
 
-<h4 id="func-chachaobfuscationmodifier-name">func (*ChaChaObfuscationModifier) Name</h4>
+<h1 id="what-the-coordinator-does">What the Coordinator does</h1>
 
-<pre><code class="language-go">func (com *ChaChaObfuscationModifier) Name() string
+<p>SSU2 has two extra features beyond carrying I2NP messages: peer testing
+(checking whether a peer can be reached from outside its network) and relaying
+(having a third router forward messages between two peers that cannot reach each
+other directly). The state machines for these features live in the go-i2p/path
+package (re-exported by this package). The Coordinator connects those state
+machines to a live session: it turns inbound PeerTest and Relay blocks into
+responses, and it verifies the signatures on those blocks.</p>
+
+<h1 id="layering">Layering</h1>
+
+<p>The Coordinator never resolves sessions or imports the router (go-i2p/go-i2p).
+It only decides <em>what</em> to send and <em>to which peer</em>. Actual delivery is delegated
+to an injected Dispatcher, which the router implements.</p>
+
+<h1 id="threading-model">Threading model</h1>
+
+<p>A single Coordinator is shared by the local router across all of its SSU2
+sessions. BuildCallbacks is called once per established session with that peer&rsquo;s
+router hash and Ed25519 signing key. It returns closures that read and write the
+Coordinator&rsquo;s shared, mutex-guarded state. Peer-test and relay flows span three
+peers and three distinct sessions (Alice&lt;-&gt;Bob, Bob&lt;-&gt;Charlie), so cross-session
+state such as the per-nonce context lives on the shared Coordinator, not on a
+per-connection object.</p>
+
+<h1 id="peer-test-signature-semantics">Peer-test signature semantics</h1>
+
+<p>In a peer test, three routers take the roles of Alice (initiator), Bob (relay),
+and Charlie (responder). Bob never signs; he forwards Alice&rsquo;s signature (message
+1 -&gt; message 2) and Charlie&rsquo;s signature (message 3 -&gt; message 4), only changing
+the message code and the included router hash. Only Alice (messages <sup>1</sup>&frasl;<sub>2</sub>) and
+Charlie (messages <sup>3</sup>&frasl;<sub>4</sub>) produce signatures. The same is true of relaying: Bob
+forwards Alice&rsquo;s request signature into the RelayIntro; only Alice and Charlie
+sign.</p>
+
+<p>See <a href="https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst" target="_blank">I2P Spec:
+SSU2</a> for
+details.</p>
+
+<h4 id="func-newcoordinator">func  NewCoordinator</h4>
+
+<pre><code class="language-go">func NewCoordinator(cfg CoordinatorConfig) (*Coordinator, error)
 </code></pre>
 
-<p>Name returns the modifier name for logging and debugging.</p>
+<p>NewCoordinator creates a Coordinator. Dispatcher, PeerTest and Relay are
+required; it returns an error if any of them is missing.</p>
 
-<h2 id="known-limitations">Known Limitations</h2>
+<h4 id="func-coordinator-buildcallbacks">func (*Coordinator) BuildCallbacks</h4>
 
-<h3 id="nextnonce-block-type-11-key-rotation-disabled-by-default">NextNonce (Block Type 11) — Key Rotation Disabled by Default</h3>
+<pre><code class="language-go">func (c *Coordinator) BuildCallbacks(remoteHash data.Hash, remoteKey ed25519.Ed25519PublicKey) DataHandlerCallbacks
+</code></pre>
 
-<p>The SSU2 spec marks NextNonce as &ldquo;TODO only if we rotate keys&rdquo; with size &ldquo;TBD&rdquo;.
-Accordingly, <code>SSU2Config.EnableNextNonce</code> defaults to <code>false</code>. When disabled,
-inbound NextNonce blocks are silently ignored and no key rotation occurs during
-long-lived sessions. Users expecting full SSU2 spec compliance should be aware
-that key rotation is not available until the spec finalizes this area. Set
-<code>EnableNextNonce: true</code> in <code>SSU2Config</code> to opt in to the experimental behavior.</p>
+<p>BuildCallbacks returns DataHandlerCallbacks bound to a single SSU2 session with
+the given peer (identified by its router hash and authenticated Ed25519 signing
+key). The returned closures read and mutate the shared Coordinator state, so
+cross-session peer-test/relay flows resolve correctly.</p>
+
+<p>remoteKey may be nil if the peer&rsquo;s signing key is not yet known; in that case
+any verification whose signer is the directly-connected peer fails closed.</p>
+
+<h4 id="func-coordinator-introduceroptions">func (*Coordinator) IntroducerOptions</h4>
+
+<pre><code class="language-go">func (c *Coordinator) IntroducerOptions() (map[string]string, error)
+</code></pre>
+
+<p>IntroducerOptions builds the SSU2 RouterAddress option map that advertises the
+local router&rsquo;s current introducers, so that introduced peers can be contacted
+through them. It bridges the shared relay manager&rsquo;s live introducer set to the
+wire encoding (the itag/ih/iexp option keys). Expired or invalid entries are
+skipped by the wire encoder.</p>
+
+<h4 id="func-coordinator-registerrelayclient">func (*Coordinator) RegisterRelayClient</h4>
+
+<pre><code class="language-go">func (c *Coordinator) RegisterRelayClient(relayTag uint32, routerHash data.Hash, addr *net.UDPAddr) error
+</code></pre>
+
+<p>RegisterRelayClient records that the local router (acting as Bob) has agreed to
+act as an introducer for the peer identified by routerHash/addr, reachable via
+the given relay tag. A relay tag is a small number that identifies an introducer
+relationship. It both records the tag-to-hash mapping the Coordinator needs to
+verify inbound RelayRequests and registers the peer with the shared relay
+manager.</p>
+
+<h4 id="func-coordinator-startpeertest">func (*Coordinator) StartPeerTest</h4>
+
+<pre><code class="language-go">func (c *Coordinator) StartPeerTest(bobHash data.Hash, bobAddr, aliceExternal *net.UDPAddr) (uint32, error)
+</code></pre>
+
+<p>StartPeerTest initiates a peer test toward bobHash/bobAddr. aliceExternal is the
+local router&rsquo;s believed external endpoint, embedded in the signed request. It
+returns the test nonce.</p>
+
+<h4 id="func-coordinator-startrelay">func (*Coordinator) StartRelay</h4>
+
+<pre><code class="language-go">func (c *Coordinator) StartRelay(bobHash data.Hash, bobAddr *net.UDPAddr, charlieHash data.Hash, relayTag uint32, aliceExternal *net.UDPAddr) (uint32, error)
+</code></pre>
+
+<p>StartRelay initiates a relay request asking bobHash to introduce the local
+router to charlieHash via the given relay tag. aliceExternal is the local
+router&rsquo;s believed external endpoint. It returns the relay nonce.</p>
+
+<h4 id="type-coordinatorconfig">type CoordinatorConfig</h4>
+
+<pre><code class="language-go">type CoordinatorConfig struct {
+	// LocalRouterHash is the local router's identity hash. It is used as the
+	// Bob hash when the local router acts as Bob, and as the Alice or Charlie
+	// hash when it is the initiator or responder.
+	LocalRouterHash data.Hash
+
+	// SigningKey is the local router's Ed25519 signing private key. It is used
+	// when the local router is Alice (signs peer-test and relay requests) or
+	// Charlie (signs peer-test and relay responses). It is never used when
+	// acting purely as Bob, because Bob never signs.
+	SigningKey ed25519.Ed25519PrivateKey
+
+	// KeyResolver resolves a remote router hash to its signing public key. It
+	// is used to verify forwarded signatures whose signer is not the
+	// directly-connected peer (for example, Charlie verifying Alice's
+	// signature in a RelayIntro). If nil, such verifications fail closed.
+	KeyResolver PeerKeyResolver
+
+	// Dispatcher delivers outbound blocks. Required.
+	Dispatcher Dispatcher
+
+	// PeerTest is the shared peer-test state manager. Required.
+	PeerTest *PeerTestManager
+
+	// Relay is the shared relay/introducer state manager. Required.
+	Relay *RelayManager
+
+	// Introducers is the optional introducer registry used when the local
+	// router is an introduced peer publishing its introducers.
+	Introducers *IntroducerRegistry
+
+	// SelectCharlie picks a responder when relaying a peer test as Bob. If nil,
+	// inbound peer-test requests (message 1) are acknowledged-as-dropped.
+	SelectCharlie CharlieSelector
+
+	// LocalExternal is the local router's believed external endpoint, embedded
+	// as Charlie's address in relay responses. May be nil if unknown.
+	LocalExternal *net.UDPAddr
+
+	// Now returns the current time; defaults to time.Now. Injectable for tests.
+	Now func() time.Time
+}
+</code></pre>
+
+<p>CoordinatorConfig configures a Coordinator. Dispatcher, PeerTest and Relay are
+required; the remaining fields enable specific roles and default to safe no-ops
+or fail-closed behavior when omitted.</p>
+
+<h4 id="type-datahandler">type DataHandler</h4>
+
+<pre><code class="language-go">type DataHandler = session.DataHandler
+</code></pre>
+
+<h4 id="type-datahandlercallbacks">type DataHandlerCallbacks</h4>
+
+<pre><code class="language-go">type DataHandlerCallbacks = session.DataHandlerCallbacks
+</code></pre>
+
+<h4 id="type-datahandlerstats">type DataHandlerStats</h4>
+
+<pre><code class="language-go">type DataHandlerStats = session.DataHandlerStats
+</code></pre>
+
+<h4 id="type-dialer">type Dialer</h4>
+
+<pre><code class="language-go">type Dialer interface {
+	// DialContext establishes a new SSU2 session from localAddr to remoteAddr.
+	// The context controls connection and handshake timeouts.
+	DialContext(ctx context.Context, localAddr, remoteAddr *net.UDPAddr, config *SSU2Config) (ConnIface, error)
+}
+</code></pre>
+
+<p>Dialer establishes outbound SSU2 connections, including the handshake. Use
+NewDialer to obtain the default implementation.</p>
+
+<h4 id="func-newdialer">func  NewDialer</h4>
+
+<pre><code class="language-go">func NewDialer() Dialer
+</code></pre>
+
+<p>NewDialer returns a Dialer backed by DialSSU2WithHandshakeContext.</p>
+
+<h4 id="type-dispatcher">type Dispatcher</h4>
+
+<pre><code class="language-go">type Dispatcher interface {
+	Dispatch(target SendTarget) error
+}
+</code></pre>
+
+<p>Dispatcher delivers Coordinator-produced blocks to a peer. The router implements
+this interface; it owns session resolution and the actual UDP write. Keeping
+delivery behind an interface preserves the layering rule that go-noise must not
+depend on the router.</p>
+
+<h4 id="type-dispatcherfunc">type DispatcherFunc</h4>
+
+<pre><code class="language-go">type DispatcherFunc func(SendTarget) error
+</code></pre>
+
+<p>DispatcherFunc adapts an ordinary function to the Dispatcher interface.</p>
+
+<h4 id="func-dispatcherfunc-dispatch">func (DispatcherFunc) Dispatch</h4>
+
+<pre><code class="language-go">func (f DispatcherFunc) Dispatch(t SendTarget) error
+</code></pre>
+
+<p>Dispatch implements Dispatcher.</p>
+
+<h4 id="type-fragmentset">type FragmentSet</h4>
+
+<pre><code class="language-go">type FragmentSet = session.FragmentSet
+</code></pre>
+
+<h4 id="type-handshakehandler">type HandshakeHandler</h4>
+
+<pre><code class="language-go">type HandshakeHandler = handshake.HandshakeHandler
+</code></pre>
+
+<h4 id="type-headerprotector">type HeaderProtector</h4>
+
+<pre><code class="language-go">type HeaderProtector = wire.HeaderProtector
+</code></pre>
+
+<h4 id="type-headerprotectormanager">type HeaderProtectorManager</h4>
+
+<pre><code class="language-go">type HeaderProtectorManager = wire.HeaderProtectorManager
+</code></pre>
+
+<h4 id="type-headertype">type HeaderType</h4>
+
+<pre><code class="language-go">type HeaderType = wire.HeaderType
+</code></pre>
+
+<h4 id="type-holepunchattempt">type HolePunchAttempt</h4>
+
+<pre><code class="language-go">type HolePunchAttempt = path.HolePunchAttempt
+</code></pre>
+
+<h4 id="type-holepunchcontextresolver">type HolePunchContextResolver</h4>
+
+<pre><code class="language-go">type HolePunchContextResolver = path.HolePunchContextResolver
+</code></pre>
+
+<h4 id="type-holepunchcoordinator">type HolePunchCoordinator</h4>
+
+<pre><code class="language-go">type HolePunchCoordinator = path.HolePunchCoordinator
+</code></pre>
+
+<h4 id="type-holepunchstate">type HolePunchState</h4>
+
+<pre><code class="language-go">type HolePunchState = path.HolePunchState
+</code></pre>
+
+<h4 id="type-holepunchverifycontext">type HolePunchVerifyContext</h4>
+
+<pre><code class="language-go">type HolePunchVerifyContext = path.HolePunchVerifyContext
+</code></pre>
+
+<h4 id="type-holepunchverifyinfo">type HolePunchVerifyInfo</h4>
+
+<pre><code class="language-go">type HolePunchVerifyInfo = path.HolePunchVerifyInfo
+</code></pre>
+
+<h4 id="type-introducerinfo">type IntroducerInfo</h4>
+
+<pre><code class="language-go">type IntroducerInfo = path.IntroducerInfo
+</code></pre>
+
+<h4 id="type-introducerregistry">type IntroducerRegistry</h4>
+
+<pre><code class="language-go">type IntroducerRegistry = path.IntroducerRegistry
+</code></pre>
+
+<h4 id="type-keepalivemanager">type KeepaliveManager</h4>
+
+<pre><code class="language-go">type KeepaliveManager = reliability.KeepaliveManager
+</code></pre>
+
+<h4 id="type-keyrotationcallback">type KeyRotationCallback</h4>
+
+<pre><code class="language-go">type KeyRotationCallback = handshake.KeyRotationCallback
+</code></pre>
+
+<h4 id="type-keyrotationmanager">type KeyRotationManager</h4>
+
+<pre><code class="language-go">type KeyRotationManager = handshake.KeyRotationManager
+</code></pre>
+
+<h4 id="type-keyrotationstatus">type KeyRotationStatus</h4>
+
+<pre><code class="language-go">type KeyRotationStatus = handshake.KeyRotationStatus
+</code></pre>
+
+<h4 id="type-keystate">type KeyState</h4>
+
+<pre><code class="language-go">type KeyState = handshake.KeyState
+</code></pre>
+
+<h4 id="type-listenerref">type ListenerRef</h4>
+
+<pre><code class="language-go">type ListenerRef = path.ListenerRef
+</code></pre>
+
+<h4 id="type-managedkey">type ManagedKey</h4>
+
+<pre><code class="language-go">type ManagedKey = handshake.ManagedKey
+</code></pre>
+
+<h4 id="type-nattype">type NATType</h4>
+
+<pre><code class="language-go">type NATType = path.NATType
+</code></pre>
+
+<h4 id="type-newtokenblock">type NewTokenBlock</h4>
+
+<pre><code class="language-go">type NewTokenBlock = wire.NewTokenBlock
+</code></pre>
+
+<h4 id="type-optionsparams">type OptionsParams</h4>
+
+<pre><code class="language-go">type OptionsParams = handshake.OptionsParams
+</code></pre>
+
+<h4 id="type-packetrouter">type PacketRouter</h4>
+
+<pre><code class="language-go">type PacketRouter = session.PacketRouter
+</code></pre>
+
+<h4 id="type-pathchallenge">type PathChallenge</h4>
+
+<pre><code class="language-go">type PathChallenge = path.PathChallenge
+</code></pre>
+
+<h4 id="type-pathchallengestate">type PathChallengeState</h4>
+
+<pre><code class="language-go">type PathChallengeState = path.PathChallengeState
+</code></pre>
+
+<h4 id="type-pathvalidationconn">type PathValidationConn</h4>
+
+<pre><code class="language-go">type PathValidationConn = path.PathValidationConn
+</code></pre>
+
+<h4 id="type-pathvalidator">type PathValidator</h4>
+
+<pre><code class="language-go">type PathValidator = path.PathValidator
+</code></pre>
+
+<h4 id="type-peerkeyresolver">type PeerKeyResolver</h4>
+
+<pre><code class="language-go">type PeerKeyResolver func(routerHash data.Hash) (ed25519.Ed25519PublicKey, bool)
+</code></pre>
+
+<p>PeerKeyResolver looks up a peer&rsquo;s Ed25519 signing public key from its router
+hash (the 32-byte identity that identifies a router on the I2P network). It is
+used to verify signatures. It returns ok=false when the key is unknown; in that
+case verification fails closed (the signature is rejected). The router backs
+this with its network database; go-noise never resolves identities itself.</p>
+
+<h4 id="type-peertest">type PeerTest</h4>
+
+<pre><code class="language-go">type PeerTest = path.PeerTest
+</code></pre>
+
+<h4 id="type-peertestblock">type PeerTestBlock</h4>
+
+<pre><code class="language-go">type PeerTestBlock = path.PeerTestBlock
+</code></pre>
+
+<h4 id="type-peertestmanager">type PeerTestManager</h4>
+
+<pre><code class="language-go">type PeerTestManager = path.PeerTestManager
+</code></pre>
+
+<h4 id="type-peertestmessagecode">type PeerTestMessageCode</h4>
+
+<pre><code class="language-go">type PeerTestMessageCode = path.PeerTestMessageCode
+</code></pre>
+
+<h4 id="type-peertestrole">type PeerTestRole</h4>
+
+<pre><code class="language-go">type PeerTestRole = path.PeerTestRole
+</code></pre>
+
+<h4 id="type-peerteststate">type PeerTestState</h4>
+
+<pre><code class="language-go">type PeerTestState = path.PeerTestState
+</code></pre>
+
+<h4 id="type-pendingack">type PendingACK</h4>
+
+<pre><code class="language-go">type PendingACK = reliability.PendingACK
+</code></pre>
+
+<h4 id="type-pendingpacket">type PendingPacket</h4>
+
+<pre><code class="language-go">type PendingPacket = session.PendingPacket
+</code></pre>
+
+<h4 id="type-pendingsession">type PendingSession</h4>
+
+<pre><code class="language-go">type PendingSession = path.PendingSession
+</code></pre>
+
+<h4 id="type-rttestimator">type RTTEstimator</h4>
+
+<pre><code class="language-go">type RTTEstimator = reliability.RTTEstimator
+</code></pre>
+
+<h4 id="type-receivewindow">type ReceiveWindow</h4>
+
+<pre><code class="language-go">type ReceiveWindow = reliability.ReceiveWindow
+</code></pre>
+
+<h4 id="type-registeredintroducer">type RegisteredIntroducer</h4>
+
+<pre><code class="language-go">type RegisteredIntroducer = path.RegisteredIntroducer
+</code></pre>
+
+<h4 id="type-relayintroblock">type RelayIntroBlock</h4>
+
+<pre><code class="language-go">type RelayIntroBlock = path.RelayIntroBlock
+</code></pre>
+
+<h4 id="type-relaymanager">type RelayManager</h4>
+
+<pre><code class="language-go">type RelayManager = path.RelayManager
+</code></pre>
+
+<h4 id="type-relayrequestblock">type RelayRequestBlock</h4>
+
+<pre><code class="language-go">type RelayRequestBlock = path.RelayRequestBlock
+</code></pre>
+
+<h4 id="type-relayresponseblock">type RelayResponseBlock</h4>
+
+<pre><code class="language-go">type RelayResponseBlock = path.RelayResponseBlock
+</code></pre>
+
+<h4 id="type-relaytag">type RelayTag</h4>
+
+<pre><code class="language-go">type RelayTag = path.RelayTag
+</code></pre>
+
+<h4 id="type-relaytagblock">type RelayTagBlock</h4>
+
+<pre><code class="language-go">type RelayTagBlock = path.RelayTagBlock
+</code></pre>
+
+<h4 id="type-relaytagrequestblock">type RelayTagRequestBlock</h4>
+
+<pre><code class="language-go">type RelayTagRequestBlock = path.RelayTagRequestBlock
+</code></pre>
+
+<h4 id="type-router">type Router</h4>
+
+<pre><code class="language-go">type Router = session.Router
+</code></pre>
+
+<p>Router is the consumer-facing interface for routing SSU2 packets. *PacketRouter
+satisfies this interface.</p>
+
+<h4 id="type-ssu2addr">type SSU2Addr</h4>
+
+<pre><code class="language-go">type SSU2Addr = config.SSU2Addr
+</code></pre>
+
+<h4 id="type-ssu2block">type SSU2Block</h4>
+
+<pre><code class="language-go">type SSU2Block = wire.SSU2Block
+</code></pre>
+
+<h4 id="type-ssu2config">type SSU2Config</h4>
+
+<pre><code class="language-go">type SSU2Config = config.SSU2Config
+</code></pre>
+
+<h4 id="type-ssu2conn">type SSU2Conn</h4>
+
+<pre><code class="language-go">type SSU2Conn = session.SSU2Conn
+</code></pre>
+
+<h4 id="type-ssu2listener">type SSU2Listener</h4>
+
+<pre><code class="language-go">type SSU2Listener = server.SSU2Listener
+</code></pre>
+
+<h4 id="type-ssu2packet">type SSU2Packet</h4>
+
+<pre><code class="language-go">type SSU2Packet = wire.SSU2Packet
+</code></pre>
+
+<h4 id="type-ssu2paddingmodifier">type SSU2PaddingModifier</h4>
+
+<pre><code class="language-go">type SSU2PaddingModifier = wire.SSU2PaddingModifier
+</code></pre>
+
+<p>SipHash / ChaCha / padding modifier types</p>
+
+<h4 id="type-sendreceiver">type SendReceiver</h4>
+
+<pre><code class="language-go">type SendReceiver = reliability.SendReceiver
+</code></pre>
+
+<h4 id="type-sendtarget">type SendTarget</h4>
+
+<pre><code class="language-go">type SendTarget struct {
+	// RouterHash is the destination peer's router identity hash. Zero when the
+	// destination is identified only by Addr.
+	RouterHash data.Hash
+
+	// Addr is the destination UDP endpoint, used for out-of-session delivery.
+	// nil when the destination is identified only by RouterHash.
+	Addr *net.UDPAddr
+
+	// Blocks are the SSU2 blocks to deliver to the destination.
+	Blocks []*SSU2Block
+}
+</code></pre>
+
+<p>SendTarget describes a set of outbound SSU2 blocks and where they must be
+delivered. RouterHash identifies a known peer (the common case); Addr is set for
+out-of-session delivery, such as a hole-punch probe sent to a raw endpoint that
+has no session yet.</p>
+
+<h4 id="type-siphashlengthmodifier">type SipHashLengthModifier</h4>
+
+<pre><code class="language-go">type SipHashLengthModifier = wire.SipHashLengthModifier
+</code></pre>
+
+<p>SipHash / ChaCha / padding modifier types</p>
+
+<h4 id="type-terminationreason">type TerminationReason</h4>
+
+<pre><code class="language-go">type TerminationReason = wire.TerminationReason
+</code></pre>
+
+<h4 id="type-testresult">type TestResult</h4>
+
+<pre><code class="language-go">type TestResult = path.TestResult
+</code></pre>
+
+<h4 id="type-token">type Token</h4>
+
+<pre><code class="language-go">type Token = wire.Token
+</code></pre>
+
+<p>TokenCache types</p>
+
+<h4 id="type-tokencache">type TokenCache</h4>
+
+<pre><code class="language-go">type TokenCache = wire.TokenCache
+</code></pre>
+
+<p>TokenCache types</p>
+
+<h4 id="type-tokencacheaccessor">type TokenCacheAccessor</h4>
+
+<pre><code class="language-go">type TokenCacheAccessor = path.TokenCacheAccessor
+</code></pre>
 
 <p>ssu2</p>
 
@@ -158,7 +1319,7 @@ that key rotation is not available until the spec finalizes this area. Set
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-10-26 10:00:34 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-10-26 14:55:51 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>

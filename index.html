@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 588 commits
+        📝 633 commits
          • 📜 License
       </div>
     </div>
@@ -23,8 +23,6 @@
       
       
         <div class="nav-section-title">Documentation:</div>
-        
-          <li><a href="docs/ratchet/ratchet.html">ECIES-X25519-AEAD-Ratchet</a></li>
         
           <li><a href="docs/RELEASE_NOTES.html">RELEASE NOTES</a></li>
         
@@ -80,12 +78,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>588 commits</span>
+          <span>📝</span> <span>633 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: October 15, 2026</span>
+          <span>📅</span> <span>Last updated: October 26, 2026</span>
         </div>
         
         
@@ -138,11 +136,10 @@ It is currently slightly jumbled with <code>go-i2p/crypto</code> on the lower le
 <li><strong>net.Conn Interface</strong>:
 
 <ul>
-<li>The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully but is subject to the Noise Protocol specification limit of 65535 bytes per write (from the 2-byte length prefix). For automatic transparent fragmentation of larger payloads, use the transport-layer implementations below.</li>
+<li>The core Noise connection wrapper (<code>conn/conn.go</code>) implements <code>net.Conn</code> fully but is subject to the Noise Protocol specification limit of 65535 bytes per message (from the 2-byte length prefix). That limit applies to the ciphertext frame including the 16-byte AEAD tag, so the largest single <code>Write</code> is 65519 bytes of plaintext. For automatic transparent fragmentation of larger payloads, use the transport-layer implementations below.</li>
 <li>NTCP2 connections (<code>ntcp2/conn.go</code>) implement <code>net.Conn</code> with <code>Write</code> auto-fragmentation for payloads larger than the frame size.</li>
 <li>SSU2 connections (<code>ssu2/session/conn.go</code>) implement <code>net.Conn</code> with <code>Write</code> auto-fragmentation.</li>
-<li>All implementations: <code>Read</code> returns one I2NP message at a time (buffering any remainder that does not fit the supplied buffer). A callback-based message path is additionally available via <code>DataHandler.MessageChan()</code> — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.<br>
-</li>
+<li>Message boundaries differ per implementation: SSU2 <code>Read</code> returns one reassembled I2NP message at a time; the core Noise <code>conn.Conn</code> and NTCP2 <code>Read</code> each return one decrypted Noise/NTCP2 frame (which may contain part of, exactly one, or several I2NP blocks). All implementations buffer any remainder that does not fit the supplied buffer and return it on the next <code>Read</code>. A callback-based message path is additionally available via <code>DataHandler.MessageChan()</code> — see <a href="ssu2/README.md" target="_blank">SSU2 README</a> for details.</li>
 </ul></li>
 <li><strong>Error Handling</strong>: Contextual error information using samber/oops<br>
 </li>
@@ -168,16 +165,35 @@ It is currently slightly jumbled with <code>go-i2p/crypto</code> on the lower le
 
 import (
     &quot;context&quot;
+    &quot;crypto/ecdh&quot;
+    &quot;crypto/rand&quot;
     &quot;fmt&quot;
     &quot;net&quot;
     &quot;time&quot;
     
-    &quot;github.com/go-i2p/go-noise&quot;
+    noise &quot;github.com/go-i2p/go-noise&quot;
 )
 
+// generateKey returns a 32-byte X25519 private key.
+func generateKey() ([]byte, error) {
+    key, err := ecdh.X25519().GenerateKey(rand.Reader)
+    if err != nil {
+        return nil, err
+    }
+    return key.Bytes(), nil
+}
+
 func main() {
+    // XX requires a long-term (static) private key on BOTH sides. Generate or
+    // load a 32-byte Curve25519 key; the handshake fails without it.
+    staticKey, err := generateKey()
+    if err != nil {
+        panic(err)
+    }
+
     // Create configuration for XX pattern
     config := noise.NewConnConfig(&quot;XX&quot;, true).
+        WithStaticKey(staticKey).
         WithHandshakeTimeout(10 * time.Second).
         WithReadTimeout(5 * time.Second)
     
@@ -216,6 +232,14 @@ func main() {
     fmt.Printf(&quot;Received: %s\n&quot;, buffer[:n])
 }
 </code></pre>
+
+<blockquote>
+<p><strong>Note:</strong> The <code>XX</code> pattern authenticates both peers with static keys, so each
+side must call <code>WithStaticKey(...)</code> with its own 32-byte Curve25519 private
+key before <code>Handshake</code>. If you want a no-authentication example, use the <code>NN</code>
+pattern instead (which needs no keys but provides no identity — not for
+production).</p>
+</blockquote>
 
 <h2 id="configuration">Configuration</h2>
 
@@ -295,6 +319,37 @@ fmt.Printf(&quot;Handshake completed in %v\n&quot;, handshakeDuration)
 <p>The root package provides <code>net.Conn</code>, <code>net.Listener</code>, and <code>net.Addr</code> wrappers
 for the Noise Protocol Framework, used by I2P&rsquo;s NTCP2 transport.</p>
 
+<p><code>Transport</code> is the entry point for dialing and listening. Each <code>Transport</code>
+owns its connection pool and shutdown manager, so separate parts of a program
+do not share (or race over) package-level state:</p>
+
+<pre><code class="language-go">transport := noise.NewTransport(pool.NewConnPool(cfg), noise.NewShutdownManager(30*time.Second))
+defer transport.GracefulShutdown()
+
+conn, err := transport.DialWithHandshake(&quot;tcp&quot;, &quot;127.0.0.1:8080&quot;, config)
+</code></pre>
+
+<p><code>WrapConn</code> / <code>WrapListener</code> remain for wrapping an already-established
+<code>net.Conn</code> / <code>net.Listener</code>. The former package-level <code>DialNoise*</code> /
+<code>ListenNoise*</code> functions and the shared <code>Default</code> transport have been removed;
+use a <code>Transport</code> method instead (the <code>examples/exampleutil</code> helpers show the
+pattern used by the example programs).</p>
+
+<h4 id="ntcp2-note-bobrouterhash-is-the-responder-s-hash">NTCP2 note: <code>BobRouterHash</code> is the responder&rsquo;s hash</h4>
+
+<p><code>ntcp2.NewNTCP2Config(bobRouterHash, initiator)</code> takes <strong>RH_B</strong>, the
+<em>responder&rsquo;s</em> router hash. It is the AES key for the obfuscated ephemeral keys
+in handshake messages 1 and 2 (ntcp2.md §&rdquo;1) SessionRequest&rdquo;: &ldquo;AES encryption
+uses Bob&rsquo;s router hash as the key&rdquo;; §&rdquo;2) Created&rdquo;: same). For an initiator that
+is the <strong>peer&rsquo;s</strong> identity, not your own. Set <code>WithLocalRouterHash</code> to this
+side&rsquo;s own hash so <code>LocalAddr()</code> on a dialed connection reports your identity
+rather than the peer&rsquo;s.</p>
+
+<p>Configuration validation now rejects an initiator whose <code>BobRouterHash</code> is zero
+(<code>MISSING_BOB_ROUTER_HASH</code>, when AES obfuscation is enabled) or disagrees with
+<code>WithRemoteRouterHash</code> (<code>BOB_ROUTER_HASH_MISMATCH</code>) — both would otherwise
+obfuscate with a key no conformant peer can decrypt.</p>
+
 <h3 id="ratchet-ecies-x25519-aead-ratchet"><code>ratchet/</code> — ECIES-X25519-AEAD-Ratchet</h3>
 
 <p>The <a href="ratchet/" target="_blank"><code>ratchet</code></a> package provides the ECIES-X25519-AEAD-Ratchet
@@ -353,12 +408,12 @@ detection (<code>ReplayCache</code>), and KDF utilities.</p>
 
 <tr>
 <td><code>WARNFAIL_I2P</code></td>
-<td><code>true</code></td>
-<td>Promotes warnings to fatal errors (useful for CI).</td>
+<td>any non-empty value</td>
+<td>Promotes warnings to fatal errors (useful for CI). Only read when <code>DEBUG_I2P</code> is also set, so <code>WARNFAIL_I2P</code> has no effect on its own; the value is not compared to <code>true</code> — any non-empty string arms it.</td>
 </tr>
 </tbody>
 </table>
-<p>Each package has a dedicated <code>log.go</code> file that initializes a package-level logger:</p>
+<p>Most packages have a dedicated <code>log.go</code> file that initializes a package-level logger:</p>
 
 <pre><code class="language-go">var log = logger.GetGoI2PLogger()
 </code></pre>
@@ -377,7 +432,7 @@ log.WithFields(logger.Fields{
 }).WithError(err).Error(&quot;Handshake failed&quot;)
 </code></pre>
 
-<p>Available <code>pkg</code> values: <code>noise</code>, <code>handshake</code>, <code>internal</code>, <code>replaycache</code>, <code>ntcp2</code>, <code>pool</code>, <code>ratchet</code>, <code>ssu2</code>.</p>
+<p>Values used in the <code>pkg</code> field include: <code>noise</code>, <code>conn</code>, <code>handshake</code>, <code>handshake/siphash</code>, <code>ntcp2</code>, <code>ratchet</code>, <code>replaycache</code>, <code>mod</code>, <code>mod/validation</code>, <code>validation</code>, <code>ssu2</code>, <code>config</code>, <code>session</code>, <code>server</code>, <code>wire</code>, <code>reliability</code>, <code>internal/cryptorand</code>, and <code>internal/securemem</code>.</p>
 
 <h3 id="running-tests-with-logging">Running Tests with Logging</h3>
 
@@ -396,8 +451,10 @@ DEBUG_I2P=debug go test ./...
 WARNFAIL_I2P=true DEBUG_I2P=debug go test ./...
 
 # Production-path test subset for CI (WARNFAIL_I2P compatible):
-# These packages contain only production-path tests that should not trigger warnings:
-WARNFAIL_I2P=true go test -count=1 \
+# These packages contain only production-path tests that should not trigger warnings.
+# DEBUG_I2P must be set: go-i2p/logger only reads WARNFAIL_I2P when DEBUG_I2P is
+# non-empty, so WARNFAIL_I2P on its own is a no-op.
+WARNFAIL_I2P=true DEBUG_I2P=debug go test -count=1 \
   ./conn \
   ./internal/securemem \
   ./mod/... \
@@ -435,7 +492,7 @@ WARNFAIL_I2P=true go test -count=1 \
 <li><p><strong>Per-package tests</strong> (<code>*_test.go</code> files): Unit and integration tests live alongside their source code. Each package includes focused tests for its own functionality.</p>
 
 <ul>
-<li><code>conn_test.go</code>, <code>handshake_test.go</code>, etc. test their respective packages in isolation</li>
+<li><code>conn/conn_test.go</code>, <code>conn/config_test.go</code>, <code>transport_test.go</code>, etc. test their respective packages in isolation</li>
 <li>Some packages include integration tests (e.g., <code>conn/integration_test.go</code>, <code>ntcp2/e2e_integration_test.go</code>) for testing cross-package interaction</li>
 </ul></li>
 
@@ -487,7 +544,7 @@ WARNFAIL_I2P=true go test -count=1 \
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                588 commits
+                633 commits
               </div>
             </div>
           </div>
@@ -499,7 +556,7 @@ WARNFAIL_I2P=true go test -count=1 \
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-10-26 10:00:34 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-10-26 14:55:51 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
