@@ -120,22 +120,32 @@ const (
 	sessionReplaceAge = 3 * time.Minute
 )
 
-// targetTagWindowSize computes the desired tag window size based on the number
-// of tags consumed in the current tagset. The window grows linearly with usage,
-// capped at tagWindowMax.
+// targetTagWindowSize computes the desired inbound tag window from N, the index
+// of the tag most recently consumed in the CURRENT inbound tagset, and the
+// zero-based index of that tagset.
 //
-// Spec ref: ecies.md §"Parameters" — "Tagset look ahead of tag N: min(tsmax, tsmin + N/4)".
+// Spec ref: ecies.md §"Parameters" — "Tagset look ahead of tag N: min(tsmax,
+// tsmin + N/4)", where §"4b) Session Tag Ratchet" defines N as "the message
+// number of the message in the current chain".
 //
-// The two references differ from the dev spec here: Java I2P
-// (RatchetTagSet.addTags, line 431) grows with N/2 and i2pd grows with 2N.
-// The dev spec is authoritative for this implementation, so N/4 is used; the
-// divergence is recorded as an open question in the compliance report because
-// it only changes how eagerly a receiver pre-derives tags, not any wire value.
-func targetTagWindowSize(usedTags uint32) int {
-	growth := usedTags / 4
-	size := tagWindowMin + int(growth)
-	if size > tagWindowMax {
-		size = tagWindowMax
+// The tsmin/tsmax pair depends on which tagset is in use, per the same section:
+// "ES tagset 0 size: tsmin 24, tsmax 160" but "ES tagset (1+) size: 160 tsmin
+// and tsmax". After the first DH ratchet a tagset therefore starts fully grown
+// rather than at 24, which is why the tagset index is an input.
+//
+// The two reference implementations differ from the dev spec on the growth rate:
+// Java I2P (RatchetTagSet.addTags, line 431) grows with N/2 and i2pd grows with
+// 2N. The dev spec is authoritative here, so N/4 is used; the divergence is
+// recorded as an open question because it only changes how eagerly a receiver
+// pre-derives tags, not any wire value.
+func targetTagWindowSize(n uint32, tagsetIndex int) int {
+	tsmin, tsmax := tagWindowMin, tagWindowMax
+	if tagsetIndex >= 1 {
+		tsmin = tagWindowMax
+	}
+	size := tsmin + int(n/4)
+	if size > tsmax {
+		size = tsmax
 	}
 	return size
 }

@@ -19,7 +19,6 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 	for hash, session := range sm.sessions {
 		expired := false
 		var tags [][8]byte
-		var nsrTag *[8]byte
 
 		// Snapshot session state under its lock
 		session.mu.Lock()
@@ -30,7 +29,6 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 		if !sm.isSessionValid(session) {
 			expired = true
 			tags = session.pendingTags
-			nsrTag = session.nsrTag
 			for _, retired := range session.retiredRecv {
 				tags = append(tags, retired.tags...)
 			}
@@ -43,9 +41,9 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 				delete(sm.tagIndex, tag)
 				delete(sm.tagCounterIndex, tag)
 			}
-			if nsrTag != nil {
-				delete(sm.nsrTagIndex, *nsrTag)
-			}
+			// Remove the full registered reply window, not just the first tag.
+			// sm.mu is already held by this function.
+			sm.clearNSRTagsLocked(session)
 			removed++
 		}
 	}

@@ -53,6 +53,9 @@ func resetRecvWindow(session *Session) {
 	session.recvWindowBase = 0
 	session.recvFillMark = 0
 	session.nextRecvTagCounter = 0
+	// The inbound tag index is tagset-local (§"4b) Session Tag Ratchet"), so it
+	// restarts with the window.
+	session.usedRecvTags = 0
 	session.recvKeyCache = zeroAndClearMap(session.recvKeyCache)
 }
 
@@ -81,12 +84,27 @@ func (p *prevRecvTagset) fillKeyCache(session *Session, upTo uint32) error {
 	return nil
 }
 
-// trimRecvWindowByPN removes// trimRecvWindowByPN removes pre-derived message keys from the receive window
-// that are above the PN (previous tag set message count) value received in a
-// MessageNumber block. Per ecies.rst §"Message Numbers", when a peer signals
-// PN it indicates the last message counter used in the previous tag set. Keys
-// for counters beyond PN in that range will never arrive, so they can be
-// deleted to bound memory usage.
+// trimRecvWindowByPN deletes the pre-derived message keys and tags of the
+// PREVIOUS inbound tag set whose counters are higher than the PN value received
+// in a Message Number block.
+//
+// ecies.md §"Message Numbers": "If the message contains a Message Number block
+// with a PN value, the recipient can delete any tags higher than that value in
+// the previous tag set, while retaining skipped tags from the previous tag set in
+// case the skipped messages arrive later." §"Block Specifications" ->
+// §"Message Numbers" states the same rule and its rationale: "PN :: 2 bytes big
+// endian. The index of the last tag sent in the previous tag set … Receiver may
+// immediately delete tags higher than PN from the previous tag set."
+//
+// PN is the peer's high-water mark for that tag set, so a counter above it can
+// never arrive; every counter at or below it must be kept, because a skipped
+// message with that counter may still turn up within the retention window.
+//
+// The keys live in the retired tag sets (Session.retiredRecv), not the live
+// recvKeyCache: archiveRecvTagset moves the superseded window there, and the
+// live cache holds only current-tagset keys, which this rule must never touch.
+// Trimming the live cache instead — as this function previously attempted with a
+// predicate that could not be satisfied — made the whole rule a no-op.
 //
 // This is safe to call from outside session.mu — it acquires the lock itself.
 func trimRecvWindowByPN(session *Session, pn uint16) {
@@ -95,16 +113,45 @@ func trimRecvWindowByPN(session *Session, pn uint16) {
 
 	pn32 := uint32(pn)
 	trimmed := 0
-	for counter := range session.recvKeyCache {
-		if counter > pn32 && counter < session.recvWindowBase {
-			// Keys below recvWindowBase that are above PN belong to the
-			// previous tag set and will never be used.
-			delete(session.recvKeyCache, counter)
-			trimmed++
+
+	for _, retired := range session.retiredRecv {
+		for counter := range retired.keyCache {
+			if counter > pn32 {
+				var zeroKey [32]byte
+				retired.keyCache[counter] = zeroKey
+				delete(retired.keyCache, counter)
+				trimmed++
+			}
+		}
+		// The tags above PN are deleted with their keys: they can no longer be
+		// matched to a counter, so leaving them registered would only keep
+		// dead entries in the manager's tag index.
+		if len(retired.tagCounter) == 0 {
+			continue
+		}
+		for tag, counter := range retired.tagCounter {
+			if counter > pn32 {
+				delete(retired.tagCounter, tag)
+				retired.tags = removeTag(retired.tags, tag)
+			}
 		}
 	}
 
 	if trimmed > 0 {
-		flog("trimRecvWindowByPN", logger.Fields{"pn": pn, "trimmed": trimmed}).Debug("Trimmed stale recv window keys above PN")
+		flog("trimRecvWindowByPN", logger.Fields{"pn": pn, "trimmed": trimmed}).Debug("Trimmed previous-tagset keys above PN")
 	}
+}
+
+// removeTag returns tags without the given entry, preserving order.
+func removeTag(tags [][8]byte, tag [8]byte) [][8]byte {
+	if len(tags) == 0 {
+		return tags
+	}
+	out := tags[:0]
+	for _, t := range tags {
+		if t != tag {
+			out = append(out, t)
+		}
+	}
+	return out
 }

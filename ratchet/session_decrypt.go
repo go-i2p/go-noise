@@ -339,24 +339,46 @@ func (sm *SessionManager) queueAdditionalNSReplyLocked(session *Session, hs *noi
 // The tag is derived from the same chain key that the responder will use when
 // constructing its NSR, ensuring both sides agree on the routing tag.
 func (sm *SessionManager) registerNSRTagLocked(session *Session, hs *noiseHandshakeState) error {
-	flog("registerNSRTagLocked").Debug("Registering NSR tag for initiator session")
-	nsrTagRatchet, err := deriveNSRTagRatchet(hs.ck)
+	flog("registerNSRTagLocked").Debug("Registering NSR tags for initiator session")
+
+	// Register the whole expected reply window, not just tag_0.
+	//
+	// ecies.md §"1g) New Session Reply format": "One or more New Session Replies
+	// may be sent in response to a single New Session message. Each reply is
+	// prepended by a tag, which is generated from a TagSet for the session", and
+	// §"Parameters" fixes that set's size at "NSR tagset size: 12 tsmin and tsmax".
+	// Because the tag is mixed into the Noise transcript (§"KDF for Reply Key
+	// Section Encrypted Contents": "MixHash(tag)"), a reply carrying any tag we
+	// did not pre-derive is unroutable and fails AEAD — registering only the
+	// first tag made every reply after the first undecryptable.
+	//
+	// Both sides derive the sequence from the same post-New-Session chaining key,
+	// so generating the window here matches what the responder will produce.
+	tagset, err := hs.nsrTagsetFor()
 	if err != nil {
-		return oops.Wrapf(err, "failed to derive NSR tag ratchet for initiator registration")
+		return oops.Wrapf(err, "failed to initialize NSR tag ratchet for initiator registration")
 	}
-	tag, err := nsrTagRatchet.GenerateNextTag()
+	tags, err := tagset.peekTags(nsrTagsetMin)
 	if err != nil {
-		return oops.Wrapf(err, "failed to generate NSR tag for initiator registration")
+		return oops.Wrapf(err, "failed to generate NSR tag window for initiator registration")
 	}
-	// Allocate a new [8]byte on the heap and copy the tag value to avoid
-	// taking the address of a stack-local variable.
-	session.nsrTag = new([8]byte)
-	*session.nsrTag = tag
-	sm.nsrTagIndex[tag] = session
+	if len(tags) == 0 {
+		return oops.Code("NSR_TAGSET_EMPTY").In("ratchet").
+			Errorf("NSR tag set produced no tags for initiator registration")
+	}
+
 	if session.pendingNSRs == nil {
 		session.pendingNSRs = make(map[[8]byte]*noiseHandshakeState)
 	}
-	session.pendingNSRs[tag] = hs
+	// Allocate a new [8]byte on the heap and copy the tag value to avoid
+	// taking the address of a stack-local variable. session.nsrTag keeps the
+	// first tag for diagnostics; the authoritative set is pendingNSRs.
+	session.nsrTag = new([8]byte)
+	*session.nsrTag = tags[0]
+	for _, tag := range tags {
+		sm.nsrTagIndex[tag] = session
+		session.pendingNSRs[tag] = hs
+	}
 	return nil
 }
 
@@ -593,6 +615,13 @@ func (sm *SessionManager) decryptExistingSession(
 	// decrypting the first inbound ES message from the initiator.
 	if !session.isInitiator && session.awaitingFirstES {
 		session.awaitingFirstES = false
+		// The same message also ends the NSR-reply obligation: ecies.md
+		// §"Multiple NSR Messages" - "For each NS message received, UNTIL AN ES
+		// MESSAGE IS RECEIVED, Bob must reply with a new NSR" and "Bob must
+		// maintain the handshake state and tagset for all NS messages received,
+		// until an ES message is received. The other inbound NSR tagsets may be
+		// removed soon or allowed to expire."
+		session.clearNSRReplyQueue()
 		flog("decryptExistingSession", logger.Fields{"counter": usedCounter}).Debug("First inbound ES received; responder may now send ES")
 	}
 

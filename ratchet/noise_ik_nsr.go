@@ -59,6 +59,30 @@ type noiseHandshakeState struct {
 	// remoteStaticPub is the remote peer's static public key (recovered from
 	// the encrypted static key section). Set on the responder side for "se".
 	remoteStaticPub [32]byte
+
+	// nsrTags is the tag set for the replies to THIS New Session, created on
+	// first use from ck above. It is retained on the handshake state rather than
+	// re-derived per reply so successive replies advance through the set, as
+	// ecies.md §"1g) New Session Reply format" requires ("Each reply is prepended
+	// by a tag, which is generated from a TagSet for the session").
+	nsrTags *nsrTagset
+}
+
+// nsrTagsetFor returns this handshake state's NSR tag set, initializing it from
+// the stored chaining key on first use. Both sides derive the identical set
+// because both store the same post-New-Session ck.
+func (hs *noiseHandshakeState) nsrTagsetFor() (*nsrTagset, error) {
+	if hs == nil {
+		return nil, oops.Code("NSR_STATE_MISSING").In("ratchet").Errorf("no Noise handshake state for NSR tag set")
+	}
+	if hs.nsrTags == nil {
+		set, err := newNSRTagset(hs.ck)
+		if err != nil {
+			return nil, err
+		}
+		hs.nsrTags = set
+	}
+	return hs.nsrTags, nil
 }
 
 // nsrSessionKeys holds the directional keys derived from the NSR split() operation.
@@ -118,12 +142,16 @@ func writeNoiseIKMessage2(
 	payload []byte,
 ) (nsrTag [8]byte, wireMsg []byte, keys *nsrSessionKeys, err error) {
 	flog("writeNoiseIKMessage2", logger.Fields{"payload_len": len(payload)}).Debug("Constructing New Session Reply (NSR) message")
-	// Derive NSR tag
-	nsrTagRatchet, err := deriveNSRTagRatchet(hs.ck)
+	// Take the NEXT tag from this NS's tag set. ecies.md §"KDF for Reply Key
+	// Section Encrypted Contents": "tagsetEntry = tagset_nsr.GET_NEXT_ENTRY()",
+	// and §"TAGSET" -> GET_NEXT_ENTRY(): "EXTEND(1) is called if there are no
+	// remaining TAGSET_ENTRIES". Using a fresh ratchet per reply would hand every
+	// reply the same tag.
+	tagset, err := hs.nsrTagsetFor()
 	if err != nil {
-		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to derive NSR tag ratchet")
+		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to initialize NSR tag ratchet")
 	}
-	tag, err := nsrTagRatchet.GenerateNextTag()
+	tag, err := tagset.nextTag()
 	if err != nil {
 		return [8]byte{}, nil, nil, oops.Wrapf(err, "failed to generate NSR tag")
 	}

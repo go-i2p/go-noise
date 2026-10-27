@@ -131,8 +131,15 @@ func (sm *SessionManager) validateAndConsumeTagFromSession(session *Session, tag
 	if !sm.isSessionValid(session) {
 		return false, false
 	}
-	sm.removeTagFromPendingList(tag, session)
-	return true, len(session.pendingTags) < tagReplenishThreshold(session.usedTags)
+	// The inbound tag index N advances only for a tag of the CURRENT inbound
+	// tagset — §"4b) Session Tag Ratchet" defines N as "the message number of the
+	// message in the current chain", and §"Parameters" sizes the look-ahead from
+	// it. A tag served by a retained previous tagset belongs to that chain.
+	fromCurrent := sm.removeTagFromPendingList(tag, session)
+	if fromCurrent {
+		session.usedRecvTags++
+	}
+	return true, len(session.pendingTags) < tagReplenishThreshold(session.usedRecvTags, session.recvTagsetIndex)
 }
 
 // isSessionValid reports whether a session is still within its lifetime.
@@ -162,7 +169,11 @@ func (sm *SessionManager) isSessionValid(session *Session) bool {
 	return time.Since(session.lastSent) <= senderESTimeout
 }
 
-func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session) {
+// removeTagFromPendingList removes a consumed tag from the session's pending
+// list. It returns false when the tag belonged to a retained previous inbound
+// tagset (or was not found at all), true when it came from the current tagset's
+// list.
+func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session) bool {
 	flog("removeTagFromPendingList", logger.Fields{"pending_count": len(session.pendingTags)}).Debug("Removing tag from session pending list")
 	// Tags belonging to the retained previous inbound tag set are not in the
 	// current pending list by design (ecies.md §"DH RATCHET MESSAGE FLOW":
@@ -170,7 +181,7 @@ func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session
 	for _, retired := range session.retiredRecv {
 		for _, t := range retired.tags {
 			if t == tag {
-				return
+				return false
 			}
 		}
 	}
@@ -178,7 +189,7 @@ func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session
 		if pendingTag == tag {
 			session.pendingTags[i] = session.pendingTags[len(session.pendingTags)-1]
 			session.pendingTags = session.pendingTags[:len(session.pendingTags)-1]
-			return
+			return true
 		}
 	}
 	// The tag was present in the manager's tag index but absent from this
@@ -186,6 +197,7 @@ func (sm *SessionManager) removeTagFromPendingList(tag [8]byte, session *Session
 	// Surface it at Warn so CI under WARNFAIL_I2P catches any future
 	// desynchronization between the two structures.
 	flog("removeTagFromPendingList").Warn("tag not found in session pending list; tagIndex/pendingTags out of sync")
+	return false
 }
 
 // bytesLess returns true if a is lexicographically less than b.
@@ -333,8 +345,30 @@ func (sm *SessionManager) cleanupSessionIndexesLocked(session *Session, hash [32
 		delete(sm.tagIndex, tag)
 		delete(sm.tagCounterIndex, tag)
 	}
+	sm.clearNSRTagsLocked(session)
+	delete(sm.sessions, hash)
+}
+
+// clearNSRTagsLocked removes every NSR tag registered for this session from the
+// manager's NSR index.
+//
+// An initiator registers the whole expected reply window (§"1g) New Session
+// Reply format": "One or more New Session Replies may be sent in response to a
+// single New Session message. Each reply is prepended by a tag, which is
+// generated from a TagSet for the session"), so cleanup must not stop at the
+// first tag or the remaining entries keep routing to a dead session.
+//
+// Must be called with sm.mu held.
+func (sm *SessionManager) clearNSRTagsLocked(session *Session) {
+	if session == nil {
+		return
+	}
+	for tag := range session.pendingNSRs {
+		if existing, ok := sm.nsrTagIndex[tag]; ok && existing == session {
+			delete(sm.nsrTagIndex, tag)
+		}
+	}
 	if session.nsrTag != nil {
 		delete(sm.nsrTagIndex, *session.nsrTag)
 	}
-	delete(sm.sessions, hash)
 }

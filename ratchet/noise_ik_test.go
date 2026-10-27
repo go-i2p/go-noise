@@ -924,7 +924,16 @@ func TestSessionManager_EncryptNewSessionReply_InitiatorCantSendNSR(t *testing.T
 	assert.Error(t, err, "Initiator should not be able to send NSR")
 }
 
-func TestSessionManager_EncryptNewSessionReply_ClearsHandshakeState(t *testing.T) {
+// TestSessionManager_EncryptNewSessionReply_MaintainsStateUntilES pins
+// ecies.md §"Multiple NSR Messages": "For each NS message received, until an ES
+// message is received, Bob must reply with a new NSR" and "Bob must maintain the
+// handshake state and tagset for all NS messages received, until an ES message is
+// received."
+//
+// Repeated NSRs therefore SUCCEED (each taking the next tag from the session's
+// NSR tagset) until the initiator's first ES message lands; only then is the
+// retained handshake state released and further replies rejected.
+func TestSessionManager_EncryptNewSessionReply_MaintainsStateUntilES(t *testing.T) {
 	initiator := createTestSessionManager(t)
 	responder := createTestSessionManager(t)
 
@@ -940,11 +949,25 @@ func TestSessionManager_EncryptNewSessionReply_ClearsHandshakeState(t *testing.T
 
 	sessionHash := hashPubKey(initiator.ourPublicKey)
 
-	// First NSR should succeed
-	_, err = responder.EncryptNewSessionReply(sessionHash, []byte("nsr1"))
+	nsr1, err := responder.EncryptNewSessionReply(sessionHash, []byte("nsr1"))
 	require.NoError(t, err)
 
-	// Second NSR should fail (handshake state cleared)
-	_, err = responder.EncryptNewSessionReply(sessionHash, []byte("nsr2"))
-	assert.Error(t, err, "Second NSR should fail after handshake state is cleared")
+	// A second NSR for the same NS must succeed, with a different tag.
+	nsr2, err := responder.EncryptNewSessionReply(sessionHash, []byte("nsr2"))
+	require.NoError(t, err, "a second NSR must be sendable until an ES is received")
+	assert.NotEqual(t, nsr1[:8], nsr2[:8], "successive NSRs advance through the NSR tagset")
+
+	// Alice adopts the session by receiving NSR1 and sending an ES message.
+	_, _, _, err = initiator.DecryptGarlicMessage(nsr1)
+	require.NoError(t, err)
+	es, err := initiator.EncryptGarlicMessage(
+		hashPubKey(responder.ourPublicKey), responder.ourPublicKey, []byte("first-es"),
+	)
+	require.NoError(t, err)
+	_, _, _, err = responder.DecryptGarlicMessage(es)
+	require.NoError(t, err, "responder must accept the first inbound ES")
+
+	// The ES released the retained state: further NSR replies are now refused.
+	_, err = responder.EncryptNewSessionReply(sessionHash, []byte("nsr3"))
+	assert.Error(t, err, "NSR must fail after the first ES released the handshake state")
 }

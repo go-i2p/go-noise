@@ -251,6 +251,12 @@ func (s *Session) installRecvTagset(tagSetID uint16) error {
 	// be emptied to let the caller generate the new tag set's window.
 	s.recvTagCounter = make(map[[8]byte]uint32)
 	s.pendingTags = nil
+	// A new inbound tagset restarts the tagset-local message-number chain, so the
+	// inbound index N restarts at 0 and the tagset counter advances. The counter
+	// is what selects the sizing rule — "ES tagset 0 size: tsmin 24, tsmax 160"
+	// versus "ES tagset (1+) size: 160 tsmin and tsmax" (ecies.md §"Parameters").
+	s.usedRecvTags = 0
+	s.recvTagsetIndex++
 	resetRecvWindow(s)
 	return nil
 }

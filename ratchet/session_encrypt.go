@@ -178,7 +178,7 @@ func (sm *SessionManager) addInitiatorNSLocked(session *Session, hs *noiseHandsh
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
-	if len(session.pendingNSRs) >= maxPendingNSReplies {
+	if session.pendingNSCount() >= maxPendingNSReplies {
 		// Spec §"Multiple NS Messages" permits limiting NS sends to avoid a
 		// resource-exhaustion attack; the caller's NS is dropped.
 		flog("addInitiatorNSLocked", logger.Fields{"pending": len(session.pendingNSRs)}).
@@ -365,8 +365,12 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	//
 	// Spec ref: ecies.md §"Multiple NSR Messages" - "Each NSR uses the handshake
 	// state and tagset corresponding to the incoming NS."
+	// Answer the queued additional NS messages first so each gets its own reply,
+	// then fall back to the head NS, which may legitimately receive several
+	// replies. Consuming the head state only when the queue is empty is what keeps
+	// both rules of §"Multiple NSR Messages" true at once.
 	hs := session.handshakeState
-	if hs == nil && len(session.awaitingNSRReplies) > 0 {
+	if len(session.awaitingNSRReplies) > 0 {
 		hs = session.awaitingNSRReplies[0]
 		session.awaitingNSRReplies = session.awaitingNSRReplies[1:]
 	}
@@ -374,7 +378,23 @@ func (sm *SessionManager) EncryptNewSessionReply(
 		session.mu.Unlock()
 		return nil, oops.Errorf("session has no pending handshake state for NSR")
 	}
-	session.handshakeState = nil // the head NS is now answered
+	// The NS's handshake state is deliberately NOT consumed here.
+	//
+	// ecies.md §"1g) New Session Reply format": "One or more New Session Replies
+	// may be sent in response to a single New Session message", and
+	// §"Multiple NSR Messages": "For each NS message received, until an ES message
+	// is received, Bob must reply with a new NSR … Bob must maintain the handshake
+	// state and tagset for all NS messages received, until an ES message is
+	// received."
+	//
+	// Clearing it after the first reply made a second reply to the same NS
+	// impossible and reset the tag sequence; the state (and its tag set) is kept
+	// until the initiator's first ES message identifies the live session, which is
+	// where awaitingFirstES is cleared.
+	// Record whether this is a reply beyond the first, before marking the
+	// session as having replied.
+	wasReply := session.nsrSent
+	session.nsrSent = true
 
 	_, wireMsg, nsrKeys, err := writeNoiseIKMessage2(hs, payload)
 	session.mu.Unlock()
@@ -395,11 +415,14 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	// Spec ref: ecies.md §"Multiple NS Messages" - "For each NS message received,
 	// Bob creates a new inbound session, using the KDF results of the reply
 	// Payload Section for inputs to the new inbound and outbound ES DH Ratchet."
-	additionalReply := session.nsrSent
-	if additionalReply {
+	// A reply after the first must archive the inbound tag set the previous reply
+	// established rather than replacing it: the initiator uses whichever NSR
+	// arrives first, so until an ES message identifies the live one, every reply's
+	// tag set has to stay decryptable. §"Multiple NS Messages" - "The other
+	// inbound NSR tagsets may be removed soon or allowed to expire".
+	if wasReply {
 		session.archiveRecvTagset()
 	}
-	session.nsrSent = true
 	if applyErr := sm.applyNSRKeysToSessionWhileLocked(session, nsrKeys, false); applyErr != nil {
 		session.mu.Unlock()
 		sm.mu.Unlock()

@@ -202,8 +202,8 @@ func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 //
 // Java I2P (RatchetTagSet.addTags): replenishment is triggered when
 // remaining < lookAhead/2, where lookAhead is the dynamic target.
-func tagReplenishThreshold(usedTags uint32) int {
-	return targetTagWindowSize(usedTags) / 2
+func tagReplenishThreshold(n uint32, tagsetIndex int) int {
+	return targetTagWindowSize(n, tagsetIndex) / 2
 }
 
 // replenishTagWindowOutsideLock, installGeneratedTagsLocked,
@@ -229,8 +229,11 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 	for attempt := 0; attempt < maxReplenishAttempts; attempt++ {
 		// Phase 1: derive tags under session lock only — sm.mu is NOT held here.
 		session.mu.Lock()
-		usedTags := session.usedTags
-		target := targetTagWindowSize(usedTags)
+		// Inbound look-ahead is driven by the inbound tag index, not the send
+		// counter (ecies.md §"4b) Session Tag Ratchet": N is "the message number of
+		// the message in the current chain").
+		usedTags := session.usedRecvTags
+		target := targetTagWindowSize(usedTags, session.recvTagsetIndex)
 		stillNeeded := target - len(session.pendingTags)
 		if stillNeeded <= 0 {
 			session.mu.Unlock()
@@ -255,8 +258,8 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 		sm.mu.Lock()
 		session.mu.Lock()
 		sm.installGeneratedTagsLocked(session, newTags)
-		usedTags = session.usedTags
-		target = targetTagWindowSize(usedTags)
+		usedTags = session.usedRecvTags
+		target = targetTagWindowSize(usedTags, session.recvTagsetIndex)
 		remaining := target - len(session.pendingTags)
 		session.mu.Unlock()
 		sm.mu.Unlock()
@@ -269,8 +272,8 @@ func (sm *SessionManager) replenishTagWindowOutsideLock(session *Session) {
 
 	// All attempts exhausted: check final state and warn if still under-sized.
 	session.mu.Lock()
-	finalUsed := session.usedTags
-	finalTarget := targetTagWindowSize(finalUsed)
+	finalUsed := session.usedRecvTags
+	finalTarget := targetTagWindowSize(finalUsed, session.recvTagsetIndex)
 	finalRemaining := finalTarget - len(session.pendingTags)
 	session.mu.Unlock()
 
@@ -330,7 +333,7 @@ func (sm *SessionManager) installGeneratedTagsLocked(session *Session, newTags [
 	if session.recvTagCounter == nil {
 		session.recvTagCounter = make(map[[8]byte]uint32)
 	}
-	target := targetTagWindowSize(session.usedTags)
+	target := targetTagWindowSize(session.usedRecvTags, session.recvTagsetIndex)
 	for _, tc := range newTags {
 		if len(session.pendingTags) >= target {
 			// Another goroutine may have already replenished; stop early.
@@ -363,7 +366,7 @@ func (sm *SessionManager) generateTagWindow(session *Session) error {
 	if tagRatchet == nil {
 		return oops.Errorf("RecvTagRatchet is nil for session — cannot populate incoming tag index")
 	}
-	target := targetTagWindowSize(session.usedTags)
+	target := targetTagWindowSize(session.usedRecvTags, session.recvTagsetIndex)
 	for len(session.pendingTags) < target {
 		tag, err := tagRatchet.GenerateNextTag()
 		if err != nil {

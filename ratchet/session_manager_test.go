@@ -970,9 +970,13 @@ func TestPerPeerQuotaPreservesNSRPendingSessions(t *testing.T) {
 	assert.GreaterOrEqual(t, nsrPendingCount, 1,
 		"at least one NSR-pending session should survive eviction")
 
-	// Verify that nsrTagIndex still has entries (NSR tags not prematurely dropped)
-	assertNSRTagIndexLen(t, initiator, nsrPendingCount,
-		"nsrTagIndex should contain %d entries matching NSR-pending sessions", nsrPendingCount)
+	// Verify that nsrTagIndex still has entries (NSR tags not prematurely
+	// dropped). Each pending session registers the whole expected reply window
+	// (ecies.md §"Parameters": "NSR tagset size: 12 tsmin and tsmax"), so the
+	// index holds nsrTagsetMin tags per pending session, not one.
+	assertNSRTagIndexLen(t, initiator, nsrPendingCount*nsrTagsetMin,
+		"nsrTagIndex should contain %d entries (%d NSR-pending sessions x the %d-tag reply window)",
+		nsrPendingCount*nsrTagsetMin, nsrPendingCount, nsrTagsetMin)
 }
 
 // TestPerPeerQuotaZeroHashGuard verifies that enforcePerPeerQuotaLocked does
@@ -1622,8 +1626,13 @@ func TestEncryptNewSessionReply_UsesReturnedSessionHash(t *testing.T) {
 }
 
 // TestNSRTag_RegisteredAndConsumedOnReceipt verifies that:
-//   - After sending a New Session, the initiator's nsrTagIndex has one entry.
-//   - After receiving the NSR, the nsrTagIndex entry is consumed.
+//   - After sending a New Session, the initiator's nsrTagIndex has the full
+//     expected reply window, because "One or more New Session Replies may be sent
+//     in response to a single New Session message. Each reply is prepended by a
+//     tag, which is generated from a TagSet for the session" (ecies.md §"1g) New
+//     Session Reply format") and §"Parameters" fixes that set at "NSR tagset size:
+//     12 tsmin and tsmax".
+//   - After receiving the NSR, the index is emptied for that session.
 //   - The initiator's nsrTag field on the session is cleared.
 func TestNSRTag_RegisteredAndConsumedOnReceipt(t *testing.T) {
 	initiator, responder := createLinkedManagers(t)
@@ -1634,7 +1643,8 @@ func TestNSRTag_RegisteredAndConsumedOnReceipt(t *testing.T) {
 	nsMsg, err := initiator.EncryptGarlicMessage(destHash, responder.ourPublicKey, mustBuildNSPayload(t, []byte("ns")))
 	require.NoError(t, err)
 
-	assertNSRTagIndexLen(t, initiator, 1, "After sending NS, initiator should have one NSR tag registered")
+	assertNSRTagIndexLen(t, initiator, nsrTagsetMin,
+		"After sending NS, the initiator should have the whole expected NSR reply window registered")
 
 	// Step 2: Bob processes NS and sends NSR
 	_, _, sessionHash, err := responder.DecryptGarlicMessage(nsMsg)
@@ -2208,47 +2218,80 @@ func TestTrimRecvWindowByPN_NoKeysToTrim(t *testing.T) {
 	for i := uint32(10); i < 20; i++ {
 		session.recvKeyCache[i] = [32]byte{byte(i)}
 	}
+	// A previous tag set whose keys are all at or below PN.
+	retired := newRetiredTagsetForTest(6)
+	session.retiredRecv = altTagsetList{retired}
 
-	// PN=5 is below recvWindowBase so no keys should be trimmed.
-	trimRecvWindowByPN(session, 5)
+	// PN=6 covers every key in the previous tag set, so nothing is trimmed.
+	trimRecvWindowByPN(session, 6)
+
 	assert.Equal(t, 10, len(session.recvKeyCache),
-		"no keys should be trimmed when PN is below window base")
+		"the live tag set's keys must never be trimmed by PN")
+	assert.Equal(t, 7, len(retired.keyCache),
+		"previous-tagset keys at or below PN must be retained (skipped messages may arrive)")
 }
 
-func TestTrimRecvWindowByPN_TrimsStaleKeys(t *testing.T) {
+func TestTrimRecvWindowByPN_TrimsPreviousTagsetAbovePN(t *testing.T) {
 	session := &Session{
 		recvWindowBase: 10,
 		recvFillMark:   20,
 		recvKeyCache:   make(map[uint32][32]byte),
 	}
-	// Simulate stale keys from a previous tag set (counters 4-9) that are
-	// below recvWindowBase but still in the cache.
-	for i := uint32(4); i < 10; i++ {
-		session.recvKeyCache[i] = [32]byte{byte(i)}
-	}
-	// Also populate current window keys.
+	// Current tag set keys: PN refers to the PREVIOUS tag set, so these must
+	// survive regardless of their counters.
 	for i := uint32(10); i < 20; i++ {
 		session.recvKeyCache[i] = [32]byte{byte(i)}
 	}
 
-	// PN=6 means only counters 4,5,6 should survive (<=6), counters 7,8,9 trimmed.
+	// Previous tag set with counters 0..9 (archiveRecvTagset moves the
+	// superseded window here in production).
+	retired := newRetiredTagsetForTest(9)
+	session.retiredRecv = altTagsetList{retired}
+
+	// PN=6: the peer sent its last previous-tagset message at counter 6, so
+	// counters 7, 8 and 9 can never arrive.
 	trimRecvWindowByPN(session, 6)
 
-	// Current window keys (10-19) should be untouched.
 	for i := uint32(10); i < 20; i++ {
 		_, exists := session.recvKeyCache[i]
-		assert.True(t, exists, "current window key %d should not be trimmed", i)
+		assert.True(t, exists, "current window key %d must not be trimmed", i)
 	}
-	// Stale keys at 7,8,9 (above PN=6, below recvWindowBase=10) should be trimmed.
-	for i := uint32(7); i < 10; i++ {
-		_, exists := session.recvKeyCache[i]
-		assert.False(t, exists, "stale key %d above PN should be trimmed", i)
+	for i := uint32(7); i <= 9; i++ {
+		_, exists := retired.keyCache[i]
+		assert.False(t, exists, "previous-tagset key %d above PN must be trimmed", i)
 	}
-	// Keys at 4,5,6 (<=PN=6) should survive.
-	for i := uint32(4); i <= 6; i++ {
-		_, exists := session.recvKeyCache[i]
-		assert.True(t, exists, "key %d at or below PN should not be trimmed", i)
+	// §"Message Numbers": "while retaining skipped tags from the previous tag
+	// set in case the skipped messages arrive later" — counters <= PN stay.
+	for i := uint32(0); i <= 6; i++ {
+		_, exists := retired.keyCache[i]
+		assert.True(t, exists, "previous-tagset key %d at or below PN must be retained", i)
 	}
+	// Their tags go with them, so the manager's index is not kept alive by
+	// counters that can never be used.
+	for _, tag := range retired.tags {
+		_, exists := retired.tagCounter[tag]
+		assert.True(t, exists, "retained keys must keep their tags addressable")
+	}
+	assert.Len(t, retired.tags, 7, "only the retained tags stay advertised")
+}
+
+// newRetiredTagsetForTest builds a superseded inbound tag set with keys and tags
+// for counters 0..highest, mirroring what archiveRecvTagset parks.
+func newRetiredTagsetForTest(highest uint32) *prevRecvTagset {
+	retired := &prevRecvTagset{
+		keyCache:   make(map[uint32][32]byte),
+		tagCounter: make(map[[8]byte]uint32),
+		expiresAt:  time.Now().Add(previousTagsetExpiry),
+	}
+	for i := uint32(0); i <= highest; i++ {
+		retired.keyCache[i] = [32]byte{byte(i)}
+		var tag [8]byte
+		tag[0] = byte(i)
+		tag[7] = 0xAA
+		retired.tagCounter[tag] = i
+		retired.tags = append(retired.tags, tag)
+	}
+	return retired
 }
 
 // ============================================================================
@@ -2453,12 +2496,13 @@ func TestCleanupExpiredSessions_RemovesNSRTag(t *testing.T) {
 	_, err := alice.EncryptGarlicMessage(destHash, bob.ourPublicKey, mustBuildNSPayload(t, []byte("ns-pre-expiry")))
 	require.NoError(t, err)
 
-	// Verify nsrTagIndex has exactly one entry and the session has a non-nil nsrTag.
+	// Verify nsrTagIndex holds the registered reply window and the session has a
+	// non-nil nsrTag.
 	alice.mu.RLock()
 	nsrTagCount := len(alice.nsrTagIndex)
 	session := alice.sessions[destHash]
 	alice.mu.RUnlock()
-	require.Equal(t, 1, nsrTagCount, "After sending NS, initiator should have one NSR tag")
+	require.Equal(t, nsrTagsetMin, nsrTagCount, "After sending NS, initiator should have the NSR reply window registered")
 	require.NotNil(t, session, "Session should exist after NS send")
 
 	session.mu.Lock()
@@ -2811,7 +2855,7 @@ func TestNSRTagRegistration_ErrorPropagation(t *testing.T) {
 	sm.mu.RUnlock()
 
 	assert.Equal(t, 1, sessionCount, "session should be stored")
-	assert.Equal(t, 1, nsrTagCount, "NSR tag should be registered for initiator session")
+	assert.Equal(t, nsrTagsetMin, nsrTagCount, "the NSR reply window should be registered for an initiator session")
 }
 
 // TestInboundSessionReplacement_LateNS verifies that when a New Session message

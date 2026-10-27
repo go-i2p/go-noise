@@ -104,12 +104,30 @@ type Session struct {
 	// pendingTags tracks tags we expect to receive (tag window).
 	pendingTags [][8]byte
 	// usedTags tracks the number of tags consumed in the current outbound
-	// tagset (i.e. the index of the next tag to be used). It drives both the
-	// dynamic tag look-ahead and the "send next key at tag 4096" threshold.
+	// tagset (i.e. the index of the next tag to be used). It drives the
+	// "send next key at tag 4096" threshold.
 	//
-	// Spec ref: ecies.md §"Parameters" - "Tagset look ahead of tag N" and
-	// "Send next key at tag: 4096".
+	// Spec ref: ecies.md §"Parameters" - "Send next key at tag: 4096".
 	usedTags uint32
+	// usedRecvTags is the inbound tag index N: how many tags of the CURRENT
+	// inbound tagset have been consumed. It drives the receive look-ahead only.
+	//
+	// ecies.md §"4b) Session Tag Ratchet" defines N as "the message number of the
+	// message in the current chain", and §"Parameters" sizes the window from it
+	// ("Tagset look ahead of tag N: min(tsmax, tsmin + N/4)"). The outbound
+	// counter cannot stand in for it: a session that only receives would never
+	// grow its inbound window past tsmin, and one that only sends would grow a
+	// window it does not need.
+	//
+	// Reset with each new inbound tagset (installRecvTagset / resetRecvWindow),
+	// because the index is tagset-local.
+	usedRecvTags uint32
+	// recvTagsetIndex counts the inbound tagsets installed so far: 0 for the one
+	// established by the handshake, 1+ after each receiving DH ratchet.
+	//
+	// Spec ref: ecies.md §"Parameters" - "ES tagset 0 size: tsmin 24, tsmax 160";
+	// "ES tagset (1+) size: 160 tsmin and tsmax".
+	recvTagsetIndex int
 	// sendTagSetID / recvTagSetID are the current tag set IDs for each
 	// direction. Spec ref: ecies.md §"KEY AND TAG SET IDS" - "the tag set
 	// number is (1 + sender key id + receiver key id)". They are reported in
@@ -301,4 +319,51 @@ func (s *Session) GetPendingAcks() []PayloadBlock {
 // Must be called with session.mu held.
 func (s *Session) GetLastAckedEntries() []AckEntry {
 	return s.lastAckedEntries
+}
+
+// clearNSRReplyQueue releases the New Session handshake states and reply queues
+// once the initiator's first Existing Session message has arrived.
+//
+// ecies.md §"Multiple NSR Messages": "Bob must maintain the handshake state and
+// tagset for all NS messages received, until an ES message is received. The other
+// inbound NSR tagsets may be removed soon or allowed to expire." The ES message
+// identifies which reply the initiator adopted, so every retained state — the
+// head NS and each queued additional NS — is now dead weight, and its tag ratchet
+// key material should be zeroed rather than left in memory.
+//
+// Must be called with session.mu held.
+func (s *Session) clearNSRReplyQueue() {
+	if s.handshakeState != nil {
+		s.handshakeState.nsrTags.zero()
+		s.handshakeState = nil
+	}
+	for _, hs := range s.awaitingNSRReplies {
+		if hs != nil {
+			hs.nsrTags.zero()
+		}
+	}
+	s.awaitingNSRReplies = nil
+	for tag, hs := range s.pendingNSRs {
+		if hs != nil && hs != s.handshakeState {
+			hs.nsrTags.zero()
+		}
+		delete(s.pendingNSRs, tag)
+	}
+}
+
+// pendingNSCount returns how many distinct New Session messages this session is
+// holding reply state for.
+//
+// pendingNSRs is keyed by NSR tag, and an initiator registers the whole expected
+// reply window per NS (see registerNSRTagLocked), so the map holds several tags
+// per New Session. The §"Multiple NS Messages" resource limit is about the number
+// of NS messages, so it must be measured by distinct states, not tag entries.
+//
+// Must be called with session.mu held.
+func (s *Session) pendingNSCount() int {
+	seen := make(map[*noiseHandshakeState]struct{}, len(s.pendingNSRs))
+	for _, hs := range s.pendingNSRs {
+		seen[hs] = struct{}{}
+	}
+	return len(seen)
 }
