@@ -13,7 +13,7 @@
         <a href="index.html">go-i2p/go-noise</a>
       </h2>
       <div class="repo-meta">
-        📝 645 commits
+        📝 654 commits
          • 📜 License
       </div>
     </div>
@@ -78,12 +78,12 @@
       <div class="repo-stats">
         
         <div class="repo-stat">
-          <span>📝</span> <span>645 commits</span>
+          <span>📝</span> <span>654 commits</span>
         </div>
         
         
         <div class="repo-stat">
-          <span>📅</span> <span>Last updated: October 26, 2026</span>
+          <span>📅</span> <span>Last updated: October 27, 2026</span>
         </div>
         
         
@@ -380,11 +380,31 @@ detection (<code>ReplayCache</code>), and KDF utilities.</p>
 
 <h2 id="dependencies">Dependencies</h2>
 
+<p>Direct requirements, as declared in <code>go.mod</code>:</p>
+
 <ul>
 <li><strong>go-i2p/noise</strong>: Core Noise Protocol implementation</li>
+<li><strong>go-i2p/crypto</strong>: Cryptographic primitives — <code>curve25519</code>, <code>chacha20</code>,
+<code>chacha20poly1305</code>, <code>aes</code>, <code>siphash</code>, <code>hkdf</code>, <code>hmac</code>, <code>kdf</code>, <code>ecies</code>,
+<code>elligator2</code>, <code>ed25519</code>, <code>ratchet</code>, <code>rand</code></li>
+<li><strong>go-i2p/common</strong>: I2P common data structures — <code>data</code>, <code>router_info</code>,
+<code>router_identity</code>, <code>router_address</code>, <code>signature</code>, <code>keys_and_cert</code>,
+<code>key_certificate</code>, <code>base64</code></li>
+<li><strong>go-i2p/path</strong>: SSU2 relay, hole-punch and path-validation logic, re-exported
+through <code>ssu2</code> and <code>ssu2/session</code> and used by <code>ssu2/server</code></li>
+<li><strong>go-i2p/pool</strong>: Connection pooling used by the root <code>transport.go</code> and
+<code>pool_wrapper.go</code></li>
 <li><strong>go-i2p/logger</strong>: Structured logging support</li>
 <li><strong>samber/oops</strong>: Rich error context</li>
+<li><strong>stretchr/testify</strong>: Assertions, declared as a direct requirement because the
+<code>internal/testri</code> fixture helper is a regular (non-<code>_test</code>) source file</li>
 </ul>
+
+<p><code>go-i2p/path</code> and <code>go-i2p/go-noise</code> reference each other at the module level
+(<code>path</code> imports <code>go-noise/ssu2/wire</code>), but there is no package cycle:
+<code>go-noise/ssu2/wire</code> imports nothing from <code>path</code>. The pins do form a
+release-ordering constraint — see the upstream report
+<code>go-i2p/bugs/path-ssu2-path-validation-and-build.md</code>.</p>
 
 <h2 id="logging">Logging</h2>
 
@@ -544,7 +564,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test -count=1 \
                 eyedeekay
               </div>
               <div class="contributor-commits">
-                645 commits
+                654 commits
               </div>
             </div>
           </div>
@@ -556,7 +576,7 @@ WARNFAIL_I2P=true DEBUG_I2P=debug go test -count=1 \
     </main>
     
     <footer class="page-footer">
-      <p>Generated on 2026-10-27 07:31:41 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
+      <p>Generated on 2026-10-27 13:35:04 • <a href="https://github.com/go-i2p/go-noise" target="_blank">View on GitHub</a></p>
     </footer>
   </div>
 </body>
