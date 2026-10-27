@@ -289,6 +289,13 @@ func ExistingSessionPayloadBuilder() *PayloadBuilder {
 	return newSessionPayloadBuilder(false, messageTypeExistingSession)
 }
 
+// NSReplyPayloadBuilder creates an empty [PayloadBuilder] for New Session
+// Reply messages. The spec does not permit a DateTime block in NSR payloads,
+// so none is prepended. Allowed blocks: GarlicClove, Options, Padding.
+func NSReplyPayloadBuilder() *PayloadBuilder {
+	return newSessionPayloadBuilder(false, messageTypeNewSessionReply)
+}
+
 // ValidateNewSessionPayload checks that payload is a valid New Session body:
 // it must be non-empty, parse as a sequence of valid blocks, and have a
 // DateTime block as the very first block.
@@ -333,6 +340,20 @@ func ValidateNewSessionPayload(payload []byte) error {
 func BuildNSPayload(garlicData []byte) ([]byte, error) {
 	flog("BuildNSPayload", logger.Fields{"garlic_data_len": len(garlicData)}).Debug("Building New Session payload")
 	return NewSessionPayloadBuilder().
+		AddBlock(PayloadBlock{Type: BlockGarlicClove, Data: garlicData}).
+		Build()
+}
+
+// BuildNSReplyPayload is a convenience wrapper that constructs a spec-compliant
+// New Session Reply payload containing a single GarlicClove block that carries
+// the provided garlic data.
+//
+// Use this when you have a raw garlic byte slice and need to wrap it in the
+// structured New Session Reply payload format required by
+// [Session.EncryptNewSessionReply].
+func BuildNSReplyPayload(garlicData []byte) ([]byte, error) {
+	flog("BuildNSReplyPayload", logger.Fields{"garlic_data_len": len(garlicData)}).Debug("Building New Session Reply payload")
+	return NSReplyPayloadBuilder().
 		AddBlock(PayloadBlock{Type: BlockGarlicClove, Data: garlicData}).
 		Build()
 }

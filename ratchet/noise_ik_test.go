@@ -889,9 +889,9 @@ func TestSessionManager_EncryptNewSessionReply(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, nsPayload, decrypted)
 
-	// Responder sends NSR
+	// Responder sends NSR — must be a valid NSR payload (no DateTime block).
 	sessionHash := hashPubKey(initiator.ourPublicKey)
-	nsrPayload := []byte("reply garlic clove")
+	nsrPayload := mustBuildNSReplyPayload(t, []byte("reply garlic clove"))
 	nsrMsg, err := responder.EncryptNewSessionReply(sessionHash, nsrPayload)
 	require.NoError(t, err)
 	require.NotNil(t, nsrMsg)

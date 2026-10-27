@@ -171,6 +171,16 @@ func mustBuildNSPayload(t testing.TB, data []byte) []byte {
 	return payload
 }
 
+// mustBuildNSReplyPayload wraps raw garlic data in a spec-compliant New
+// Session Reply payload: a single GarlicClove block (no DateTime block).
+// Fails the test immediately if BuildNSReplyPayload returns an error.
+func mustBuildNSReplyPayload(t testing.TB, data []byte) []byte {
+	t.Helper()
+	payload, err := BuildNSReplyPayload(data)
+	require.NoError(t, err, "mustBuildNSReplyPayload: BuildNSReplyPayload failed")
+	return payload
+}
+
 // createTestSession creates a Session with random keys for unit tests.
 
 // firstSession returns the first session stored in the given SessionManager.
@@ -1594,7 +1604,7 @@ func TestNSNSRESFlow_EndToEnd(t *testing.T) {
 	assert.Equal(t, nsPayload, decNS, "Bob should recover Alice's NS payload")
 	require.NotNil(t, sessionHash, "Bob must receive session hash to send NSR")
 
-	nsrPayload := []byte("Hello Alice, session accepted")
+	nsrPayload := mustBuildNSReplyPayload(t, []byte("Hello Alice, session accepted"))
 	nsrMsg, err := bob.EncryptNewSessionReply(*sessionHash, nsrPayload)
 	require.NoError(t, err)
 	require.NotNil(t, nsrMsg)

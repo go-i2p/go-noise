@@ -506,6 +506,56 @@ func TestExistingSessionPayloadBuilder(t *testing.T) {
 	assert.NotEmpty(t, data)
 }
 
+func TestNSReplyPayloadBuilder(t *testing.T) {
+	// No DateTime block is prepended: the first block must be the caller's own.
+	pb := NSReplyPayloadBuilder().
+		AddBlock(NewGarlicCloveBlock([]byte("reply clove"))).
+		AddBlock(NewPaddingBlock(4))
+
+	blocks := mustBuildAndParse(t, pb.Build, 2)
+	assert.Equal(t, BlockGarlicClove, blocks[0].Type)
+	assert.Equal(t, BlockPadding, blocks[1].Type)
+}
+
+func TestPayloadBuilder_NSReplyAllowlist(t *testing.T) {
+	// Spec: New Session Reply payloads may contain only GarlicClove, Options,
+	// and Padding (ecies.rst §"Block Ordering Rules"). DateTime — required in
+	// New Session — and every Existing Session block must be rejected.
+	disallowed := []PayloadBlock{
+		NewDateTimeBlock(time.Now()),
+		NewNextKeyBlock(1, &[32]byte{1}, false, false),
+		NewAckBlock([]AckEntry{{TagSetID: 1, N: 1}}),
+		NewAckRequestBlock(1),
+		NewMessageNumberBlock(1),
+		NewTerminationBlock(0, nil),
+	}
+	for i, block := range disallowed {
+		b := NSReplyPayloadBuilder().AddBlock(block)
+		if _, err := b.Build(); err == nil {
+			t.Errorf("case %d: block type %d should be rejected in a New Session Reply payload, got nil error", i, block.Type)
+		}
+	}
+
+	// Allowed blocks (GarlicClove + Padding) must build fine.
+	ok := NSReplyPayloadBuilder().
+		AddBlock(NewGarlicCloveBlock([]byte("garlic"))).
+		AddBlock(NewPaddingBlock(2))
+	if _, err := ok.Build(); err != nil {
+		t.Fatalf("allowed New Session Reply blocks should build, got error: %v", err)
+	}
+}
+
+func TestBuildNSReplyPayload(t *testing.T) {
+	payload, err := BuildNSReplyPayload([]byte("garlic data"))
+	require.NoError(t, err)
+
+	blocks, err := ParsePayload(payload)
+	require.NoError(t, err)
+	require.Len(t, blocks, 1)
+	assert.Equal(t, BlockGarlicClove, blocks[0].Type)
+	assert.Equal(t, []byte("garlic data"), blocks[0].Data)
+}
+
 // ============================================================================
 // ParsePayload
 // ============================================================================
