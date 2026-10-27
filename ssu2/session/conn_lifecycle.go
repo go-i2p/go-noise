@@ -200,24 +200,43 @@ func (h *SSU2Conn) RemoteAddr() net.Addr {
 	return h.ssu2Addr
 }
 
-// SendToAddress sends a block to a specific UDP address (implements PathValidationConn).
+// SendToAddress sends one or more blocks in a single Data packet to a specific
+// UDP address (implements PathValidationConn).
 //
 // ssu2.rst §"Initiating Path Validation" requires the Path Challenge sent to a
 // new IP/port to be "a data packet ... [that] uses the same connection ID and
 // encryption keys as the current session", and §"Data Message (Type 6)" states
 // that from Session Confirmed onward "all messages are inside an authenticated
-// and encrypted ChaChaPoly payload". Sending the block in a cleartext 16-byte
+// and encrypted ChaChaPoly payload". Sending the blocks in a cleartext 16-byte
 // Data header would be rejected by every conformant peer (and could not be
 // decrypted by the intended recipient, which holds only session keys), so this
 // runs the packet through the normal seal-and-send pipeline, addressed to the
 // peer's new path instead of the session's current one.
 //
+// wantACK tells this method to append an ACK block for anything received but
+// not yet acknowledged. ssu2.rst §"Initiating Path Validation" says the packet
+// carries "a Path Challenge block, an Address block (containing the new
+// IP/port), and, typically, an ACK block", and §"Message Contents" lists an ACK
+// among the blocks these messages should carry. The ACK content is derived from
+// this connection's receive state, which ssu2path cannot see, so assembling it
+// belongs here. When there is nothing to acknowledge, or wantACK is false (PMTU
+// probes, whose datagram size must be exact), no ACK is added; omitting it
+// remains conformant.
+//
+// SerializeBlocks enforces §"Block Ordering Rules", so the ACK cannot end up
+// after Padding.
+//
 // The packet consumes a real send-sequence number and is tracked for
 // retransmission exactly like any other Data packet: Path Challenge/Response
 // blocks are ack-eliciting per the spec.
-func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
-	if block == nil {
-		return oops.Errorf("SendToAddress: block is nil")
+func (h *SSU2Conn) SendToAddress(blocks []*SSU2Block, addr *net.UDPAddr, wantACK bool) error {
+	if len(blocks) == 0 {
+		return oops.Errorf("SendToAddress: no blocks to send")
+	}
+	for _, b := range blocks {
+		if b == nil {
+			return oops.Errorf("SendToAddress: block is nil")
+		}
 	}
 	if addr == nil {
 		return oops.Errorf("SendToAddress: address is nil")
@@ -226,10 +245,18 @@ func (h *SSU2Conn) SendToAddress(block *SSU2Block, addr *net.UDPAddr) error {
 		return oops.Wrapf(err, "SendToAddress")
 	}
 
+	outgoing := make([]*SSU2Block, 0, len(blocks)+1)
+	outgoing = append(outgoing, blocks...)
+	if wantACK {
+		if ackBlock, ackErr := h.ackHandler.GenerateACK(); ackErr == nil && ackBlock != nil {
+			outgoing = append(outgoing, ackBlock)
+		}
+	}
+
 	packet := h.newDataPacket()
-	payload, err := SerializeBlocks([]*SSU2Block{block})
+	payload, err := SerializeBlocks(outgoing)
 	if err != nil {
-		return oops.Wrapf(err, "failed to serialize block for path validation")
+		return oops.Wrapf(err, "failed to serialize blocks for path validation")
 	}
 	packet.Payload = payload
 
