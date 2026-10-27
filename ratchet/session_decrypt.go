@@ -903,22 +903,34 @@ func tryRetiredTagset(prev *prevRecvTagset, session *Session, sessionTag [8]byte
 // Blocks are removed from the front of the payload, which is where
 // prependPendingNextKeys places them. If the payload does not parse as a block
 // sequence, it is returned unchanged.
+//
+// Unknown block types are skipped along with padding, per ecies.md
+// §"Unencrypted data": "For extensibility, receivers MUST ignore blocks with
+// unknown type nunmbers, and treat them as padding." Handing one to the higher
+// layer instead would make a peer's use of a future block type look like corrupt
+// garlic data; skipping it delivers the message and lets the newer receiver
+// define what the block means.
 func stripECIESControlBlocks(plaintext []byte) []byte {
 	blocks := ParsePayloadLenient(plaintext)
 	if len(blocks) == 0 {
 		return plaintext
 	}
-	// Strip a contiguous prefix of signaling blocks; everything after the last
-	// one belongs to the caller (it may be a block sequence or opaque data).
+	// Strip a contiguous prefix of signaling blocks and unknown blocks;
+	// everything after the last one belongs to the caller (it may be a block
+	// sequence or opaque data).
 	offset := 0
 	for _, b := range blocks {
 		switch b.Type {
 		case BlockNextKey, BlockAck, BlockAckRequest, BlockPadding, BlockTermination, BlockMessageNumber:
 			offset += blockHeaderSize + len(b.Data)
 		default:
+			if !IsKnownBlockType(b.Type) {
+				offset += blockHeaderSize + len(b.Data)
+				continue
+			}
 			return plaintext[offset:]
 		}
 	}
-	// Every parsed block was signaling: return whatever bytes follow them.
+	// Every parsed block was signaling or unknown: return whatever follows them.
 	return plaintext[offset:]
 }

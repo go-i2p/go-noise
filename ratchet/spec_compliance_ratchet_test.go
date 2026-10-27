@@ -1,9 +1,11 @@
 package ratchet
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
+	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -265,4 +267,208 @@ func serializeBlocksForTest(blocks []PayloadBlock) ([]byte, error) {
 		out = append(out, buf[:n]...)
 	}
 	return out, nil
+}
+
+// TestStripECIESControlBlocks_UnknownTypeAsPadding covers ecies.md
+// §"Unencrypted data": "For extensibility, receivers MUST ignore blocks with
+// unknown type nunmbers, and treat them as padding."
+//
+// An unknown type must not be handed to the higher layer as if it were the
+// message: a peer using a block type this build has never seen would deliver
+// garbage instead of the garlic clove that follows it.
+func TestStripECIESControlBlocks_UnknownTypeAsPadding(t *testing.T) {
+	// The clove block itself stays for the higher layer to parse; only the
+	// ratchet's own signaling blocks and unknown ones are removed.
+	cloveBlock := []byte{byte(BlockGarlicClove), 0x00, 0x03, 0xAA, 0xBB, 0xCC}
+
+	// [NextKey][unknown type 200][garlic clove]
+	payload := []byte{byte(BlockNextKey), 0x00, 0x02, 0x11, 0x22}
+	payload = append(payload, 200, 0x00, 0x04, 0xDE, 0xAD, 0xBE, 0xEF)
+	payload = append(payload, cloveBlock...)
+
+	stripped := stripECIESControlBlocks(payload)
+	assert.Equal(t, cloveBlock, stripped,
+		"an unknown-type block must be skipped like padding, leaving the clove")
+
+	// An unknown block in front of everything is dropped too.
+	onlyUnknown := []byte{201, 0x00, 0x02, 0x01, 0x02}
+	assert.Empty(t, stripECIESControlBlocks(onlyUnknown))
+}
+
+// TestIsKnownBlockType pins the set of types ecies.md §"5) Payload" defines.
+func TestIsKnownBlockType(t *testing.T) {
+	known := []BlockType{BlockDateTime, BlockTermination, BlockOptions,
+		BlockMessageNumber, BlockNextKey, BlockAck, BlockAckRequest,
+		BlockGarlicClove, BlockPadding}
+	for _, b := range known {
+		assert.True(t, IsKnownBlockType(b), "type %d is defined by the spec", b)
+	}
+	for _, b := range []BlockType{1, 2, 3, 10, 12, 100, 200, 253, 255} {
+		assert.False(t, IsKnownBlockType(b), "type %d is not defined", b)
+	}
+}
+
+// TestDestroyKeyMaterial_ZeroesSessionKeys covers ecies.md §"Defense" and the
+// §"Notes" requirement that superseded sessions be "destroyed immediately".
+//
+// Removing a session from the manager's map only drops the reference; the chain
+// keys, root keys, tag ratchets, DH private keys and pre-derived message keys stay
+// in the heap until the GC reuses that memory, so a later memory disclosure still
+// reveals a "closed" session's keys.
+func TestDestroyKeyMaterial_ZeroesSessionKeys(t *testing.T) {
+	session := createTestSession(t, true)
+
+	require.False(t, isAllZeroBytes(session.sendRootKey[:]), "fixture must hold key material")
+	require.False(t, isAllZeroBytes(session.recvRootKey[:]))
+	require.NotEqual(t, [32]byte{}, session.SymmetricRatchet.GetChainKey())
+	require.NotEqual(t, [32]byte{}, session.RecvSymmetricRatchet.GetChainKey())
+
+	session.destroyKeyMaterial()
+
+	assert.True(t, isAllZeroBytes(session.sendRootKey[:]), "the outbound root key must be zeroed")
+	assert.True(t, isAllZeroBytes(session.recvRootKey[:]), "the inbound root key must be zeroed")
+	assert.Equal(t, [32]byte{}, session.SymmetricRatchet.GetChainKey(),
+		"the outbound chain key must be zeroed")
+	assert.Equal(t, [32]byte{}, session.RecvSymmetricRatchet.GetChainKey(),
+		"the inbound chain key must be zeroed")
+	assert.Empty(t, session.recvKeyCache, "cached message keys must be destroyed")
+	assert.Nil(t, session.pendingTags, "the advertised tag window must be dropped")
+	assert.Nil(t, session.handshakeState)
+	assert.Nil(t, session.awaitingNSRReplies)
+	assert.Nil(t, session.pendingNSRs)
+}
+
+// TestDestroyKeyMaterial_RetiredTagsets: superseded inbound tag sets hold their own
+// ratchets, which zeroing the primary inbound ratchet does not reach.
+func TestDestroyKeyMaterial_RetiredTagsets(t *testing.T) {
+	session := createTestSession(t, false)
+	session.archiveRecvTagset()
+	require.NotEmpty(t, session.retiredRecv, "fixture must retain a previous tag set")
+
+	retired := session.retiredRecv[0]
+	require.NotNil(t, retired.tagRatchet)
+	require.NotEqual(t, [32]byte{}, retired.symRatchet.GetChainKey())
+
+	session.destroyKeyMaterial()
+
+	assert.Equal(t, [32]byte{}, retired.symRatchet.GetChainKey(),
+		"a retired tag set's chain key must be zeroed too")
+	assert.Nil(t, session.retiredRecv)
+}
+
+// TestRemoveSessionDestroysKeys proves the removal path actually destroys the key
+// material rather than only unlinking the map entry.
+func TestRemoveSessionDestroysKeys(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	mustBootstrapSession(t, sender, receiver)
+	_ = sender
+
+	session := firstSession(t, receiver)
+	require.False(t, isAllZeroBytes(session.sendRootKey[:]), "fixture must hold key material")
+
+	receiver.removeSessionByPointer(session)
+
+	assert.True(t, isAllZeroBytes(session.sendRootKey[:]),
+		"removal must destroy the session's key material")
+}
+
+// TestSessionManagerCloseDestroysKeys: manager shutdown must zero every session,
+// not just drop the maps.
+func TestSessionManagerCloseDestroysKeys(t *testing.T) {
+	sender, receiver := createLinkedManagers(t)
+	mustBootstrapSession(t, sender, receiver)
+
+	session := firstSession(t, receiver)
+	require.False(t, isAllZeroBytes(session.sendRootKey[:]))
+
+	require.NoError(t, receiver.Close())
+
+	assert.True(t, isAllZeroBytes(session.sendRootKey[:]),
+		"Close() must destroy the key material of every session")
+	assert.Zero(t, receiver.GetSessionCount())
+}
+
+func isAllZeroBytes(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// TestNextKey_ReservedFlagsRejected covers ecies.md §"Next DH Ratchet Public
+// Key": "bits 7-2: Unused, set to 0 for future compatibility".
+//
+// A peer setting a reserved bit is using a flag this build cannot interpret;
+// applying the block anyway would act on half of its meaning, so the block is
+// rejected at the wire boundary.
+func TestNextKey_ReservedFlagsRejected(t *testing.T) {
+	block := PayloadBlock{Type: BlockNextKey, Data: make([]byte, 3)}
+	block.Data[0] = 0x08 // bit 3: outside bits 0-2 defined by the spec
+	binary.BigEndian.PutUint16(block.Data[1:3], 0)
+
+	_, err := block.NextKey()
+	require.Error(t, err, "a NextKey block with reserved bits set must be rejected")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "NEXTKEY_RESERVED_FLAGS", oopsErr.Code())
+}
+
+// TestNextKey_ContradictoryFlags covers "bit 2: 1 to request reverse key …
+// only set if bit 1 is 0".
+func TestNextKey_ContradictoryFlags(t *testing.T) {
+	block := PayloadBlock{Type: BlockNextKey, Data: make([]byte, 3)}
+	block.Data[0] = NextKeyFlagReverse | NextKeyFlagRequestReverse
+
+	_, err := block.NextKey()
+	require.Error(t, err,
+		"a reverse key block may not also request a reverse key")
+}
+
+// TestNewAckRequestBlock_ZeroesFlags covers ecies.md §"Ack Request": "flg ::
+// 1 byte flags / bits 7-0: Unused, set to 0 for future compatibility".
+//
+// The whole byte is reserved, so no non-zero value may go on the wire.
+func TestNewAckRequestBlock_ZeroesFlags(t *testing.T) {
+	assert.Equal(t, []byte{0}, NewAckRequestBlock(0).Data)
+	assert.Equal(t, []byte{0}, NewAckRequestBlock(0xFF).Data,
+		"the reserved flag byte must always be sent as 0")
+}
+
+// TestSessionExpiry_NSRTagsetTimeoutForReceiver covers ecies.md §"Parameters":
+// "NSR tagset timeout: 3 minutes for receiver".
+//
+// The receiver is Bob, the one who holds an NSR tag set because he generates the
+// replies. He retains the New Session handshake state — and with it the tag set —
+// until Alice's first Existing Session message (§"Multiple NSR Messages": "Bob must
+// maintain the handshake state and tagset for all NS messages received, until an ES
+// message is received"), so his session must run on the 3-minute NSR clock while
+// that state exists and on the ES clock afterwards.
+func TestSessionExpiry_NSRTagsetTimeoutForReceiver(t *testing.T) {
+	sender, receiver, destHash, sessionHash := mustSendNS(t)
+
+	bob := requireSessionByHash(t, receiver, sessionHash)
+	require.NotNil(t, bob.handshakeState,
+		"Bob retains the NS handshake state and its tag set until Alice's first ES")
+
+	receiver.mu.RLock()
+	pendingExpiry := receiver.sessionExpiry(bob)
+	receiver.mu.RUnlock()
+	assert.Equal(t, nsrPendingTimeout, pendingExpiry,
+		"a session still holding its NSR tag set must use the 3-minute NSR timeout")
+
+	// Completing the NSR and taking Alice's first ES discharges the state.
+	mustCompleteNSR(t, sender, receiver, sessionHash)
+	mustExchangeES(t, sender, receiver, destHash, receiver.ourPublicKey, []byte("es"))
+
+	bob = requireSessionByHash(t, receiver, sessionHash)
+	require.Nil(t, bob.handshakeState,
+		"the first ES message releases the retained NSR state")
+
+	receiver.mu.RLock()
+	establishedExpiry := receiver.sessionExpiry(bob)
+	receiver.mu.RUnlock()
+	assert.Equal(t, receiver.sessionTimeout, establishedExpiry,
+		"an established session uses the ES receiver timeout, not the NSR one")
 }

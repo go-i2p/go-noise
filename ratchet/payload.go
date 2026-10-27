@@ -56,6 +56,21 @@ const (
 	BlockPadding BlockType = 254
 )
 
+// IsKnownBlockType reports whether blockType is defined by ecies.md §"5)
+// Payload". Receivers must know this to honour §"Unencrypted data": "For
+// extensibility, receivers MUST ignore blocks with unknown type nunmbers, and
+// treat them as padding." A type outside this set is not an error and not data —
+// it is skipped, so a future block type does not break message delivery.
+func IsKnownBlockType(blockType BlockType) bool {
+	switch blockType {
+	case BlockDateTime, BlockTermination, BlockOptions, BlockMessageNumber,
+		BlockNextKey, BlockAck, BlockAckRequest, BlockGarlicClove, BlockPadding:
+		return true
+	default:
+		return false
+	}
+}
+
 // blockHeaderSize is the size of a block header: 1 byte type + 2 bytes length.
 const blockHeaderSize = 3
 
@@ -198,9 +213,16 @@ func NewAckBlock(acks []AckEntry) PayloadBlock {
 	return PayloadBlock{Type: BlockAck, Data: data}
 }
 
-// NewAckRequestBlock creates an Ack Request block with the given flags.
+// NewAckRequestBlock creates an Ack Request block requesting an in-band
+// acknowledgment.
+//
+// The flag byte is sent as zero and any non-zero value a caller passes is
+// ignored: ecies.md §"Ack Request" defines the whole byte as "bits 7-0: Unused,
+// set to 0 for future compatibility", so there is no legal non-zero flag to put
+// on the wire.
 func NewAckRequestBlock(flags byte) PayloadBlock {
-	return PayloadBlock{Type: BlockAckRequest, Data: []byte{flags}}
+	_ = flags
+	return PayloadBlock{Type: BlockAckRequest, Data: []byte{0}}
 }
 
 // NewGarlicCloveBlock creates a Garlic Clove block containing raw clove data.
@@ -313,6 +335,25 @@ func (b PayloadBlock) NextKey() (NextKeyInfo, error) {
 			return NextKeyInfo{}, oops.Errorf("NextKey block has key-present flag but only %d bytes", len(b.Data))
 		}
 		readArray32(&info.PublicKey, b.Data[3:35])
+	}
+	// ecies.md §"Next DH Ratchet Public Key": "bits 7-2: Unused, set to 0 for
+	// future compatibility". A non-zero reserved bit means the peer is using a
+	// flag this build cannot interpret, so the block is rejected rather than
+	// silently applied with half its meaning dropped.
+	if reserved := b.Data[0] & ^byte(NextKeyFlagKeyPresent|NextKeyFlagReverse|NextKeyFlagRequestReverse); reserved != 0 {
+		return NextKeyInfo{}, oops.
+			Code("NEXTKEY_RESERVED_FLAGS").
+			With("flags", b.Data[0]).
+			Errorf("NextKey block sets reserved flag bits 7-3 (0x%02x), which the spec requires to be 0", reserved)
+	}
+	// "bit 2: 1 to request reverse key, 0 for no request / only set if bit 1 is 0"
+	// — requesting a reverse key on a block that IS the reverse key is
+	// self-contradictory.
+	if info.Reverse && info.RequestReverse {
+		return NextKeyInfo{}, oops.
+			Code("NEXTKEY_FLAGS_CONTRADICTORY").
+			With("flags", b.Data[0]).
+			Errorf("NextKey block sets both the reverse key (bit 1) and request-reverse (bit 2) flags; bit 2 may only be set when bit 1 is 0")
 	}
 	return info, nil
 }

@@ -1,148 +1,143 @@
-# ratchet — ECIES-X25519-AEAD-Ratchet Crypto Engine
+# ratchet — ECIES-X25519-AEAD-Ratchet crypto engine
 
-Package `ratchet` provides the ECIES-X25519-AEAD-Ratchet cryptographic primitives
-used by the I2P network for end-to-end garlic encryption and tunnel build record
-encryption.
+Package `ratchet` implements the ECIES-X25519-AEAD double ratchet that I2P uses
+for end-to-end garlic encryption: New Session (NS) handshake, New Session Reply
+(NSR), Existing Session (ES) messages, the DH ratchet, and session tag sets.
 
 This package was extracted from [go-i2p/go-i2p](https://github.com/go-i2p/go-i2p)
 into [go-i2p/go-noise](https://github.com/go-i2p/go-noise) to separate pure
 cryptographic logic from I2P routing concerns.
 
-## Overview
+## Scope
 
-The package implements three main areas:
+The package implements the garlic session of `ecies.md` and nothing else:
 
-1. **Garlic Session Management** — Full ECIES-X25519-AEAD double-ratchet session
-   lifecycle: New Session (ECIES handshake), Existing Session (symmetric ratchet),
-   DH ratchet rotation, session tag generation, and LRU eviction.
+1. **Session lifecycle** — NS / NSR / ES encryption and decryption, DH ratchet
+   rotation, tag set generation and look-ahead, session tag lookup, expiry and
+   LRU eviction.
+2. **Payload composition** — the block types the ratchet itself consumes
+   (DateTime, NextKey, Ack, Ack Request, Message Number, Termination, Padding,
+   Garlic Clove) and the per-message-type ordering rules.
+3. **Response obligations** — receipt of an NS, NSR, Ack Request or NextKey block
+   requires a response; the timers that track that are exposed for the host to
+   sweep (see [`response_timer.go`](response_timer.go)).
 
-2. **Tunnel Build Record Crypto** — ChaCha20-Poly1305 encryption/decryption of
-   tunnel build reply records (I2P 0.9.44+).
+Tunnel build-record crypto (ECIES build request records, ChaCha20-Poly1305 build
+reply records) is deliberately **not** here. Those formats are defined in
+`tunnel-ecies.md`, not `ecies.md`, and are a tunnel-layer concern; they belong in
+`github.com/go-i2p/crypto` alongside the ECIES primitives they are built from.
+The `BuildRecordEncryptor` / `BuildReplyEncryptor` interfaces and their
+implementations were removed because they encoded ElGamal-era record sizes that
+no ECIES record format in the spec uses — see the note in
+[`interfaces.go`](interfaces.go).
 
-3. **ECIES Build Request Crypto** — ECIES-X25519-AEAD encryption/decryption of
-   tunnel build request records, identity hash verification.
+## Protocol compliance
 
-## Protocol Compliance
-
-- **Pattern**: `Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256`
+- **Pattern**: `Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256` (40 bytes)
 - **DH**: Curve25519
 - **Cipher**: ChaCha20-Poly1305 AEAD
 - **Hash**: SHA-256
 - **Modifiers**:
-  - `elg2`: Elligator2 encoding of ephemeral public keys (indistinguishable from random)
-  - `hs2`: An extra `MixHash()` before the second handshake message (the New
-    Session Reply) to mix in the session tag value. The responder's static key
-    pre-message uses the RAW key (`h = SHA256(h || bpk)`), per `ecies.rst`
-    §"KDF for Flags/Static Key Section" — `hs2` does **not** mean `Hash(s)`.
+  - `elg2`: Elligator2 encoding of the ephemeral public key, so it is
+    indistinguishable from random.
+  - `hs2`: an extra `MixHash()` of the session tag before the second handshake
+    message (the New Session Reply). The responder's static key pre-message uses
+    the RAW key (`h = SHA256(h || bpk)`), per `ecies.md` §"KDF for Flags/Static
+    Key Section" — `hs2` does **not** mean `Hash(s)`.
 
-## Interfaces
+## Public API
 
-All public API is defined via interfaces in [`interfaces.go`](interfaces.go):
+`NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption)` returns the
+one concrete type, `*SessionManager`:
 
-| Interface | Purpose |
+| Method | Purpose |
 |---|---|
-| `GarlicSessionManager` | Full encrypt/decrypt/lifecycle for garlic sessions |
-| `GarlicEncryptor` | Encrypt-only subset (e.g., I2CP message router) |
-| `GarlicDecryptor` | Decrypt-only subset (e.g., message processor) |
-| `BuildRecordEncryptor` | ECIES encrypt/decrypt for tunnel build requests |
-| `BuildReplyEncryptor` | ChaCha20-Poly1305/AES for build reply records |
-| `TagResolver` | O(1) session tag lookup |
+| `EncryptGarlicMessage(destHash, destPubKey, plaintext)` | NS if unknown, ES if the session exists |
+| `EncryptUnboundGarlicMessage(destPubKey, plaintext)` | one-shot NS with no binding or session (§1c/§1d) |
+| `EncryptNewSessionReply(sessionHash, payload)` | NSR for a received NS |
+| `DecryptGarlicMessage(encrypted)` | plaintext, session tag, session hash |
+| `FindSessionByTag(tag)` | O(1) tag lookup that consumes the tag ([`TagResolver`]) |
+| `RegisterOneTimeKey(tag, key)` | key for an unbound one-shot message |
+| `ProcessReceivedNextKey(tag, info)` | apply a NextKey block out of band |
+| `SweepResponses()` | sessions whose ratchet-layer response is overdue |
+| `GetSessionCount` / `CleanupExpiredSessions` / `StartCleanupLoop` / `Close` | lifecycle |
+| `GetPublicKey()` | this endpoint's static public key |
 
-All interfaces use **primitive types** (`[32]byte`, `[8]byte`, `[]byte`) rather
-than I2P-specific types, ensuring go-noise has zero dependency on go-i2p.
-
-## Implementations
-
-| Type | Implements |
-|---|---|
-| `SessionManager` | `GarlicSessionManager` (embeds `GarlicEncryptor` + `GarlicDecryptor`) |
-| `BuildReplyCrypto` | `BuildReplyEncryptor` (ChaCha20-Poly1305 reply records) |
-| `BuildRequestCrypto` | `BuildRecordEncryptor` (ECIES-X25519 request records) |
-| `BuildRecordCrypto` | **Deprecated.** Combined wrapper; use `BuildReplyCrypto` or `BuildRequestCrypto` instead. Will be removed in the next major version. |
+Consumers should depend on the interfaces in [`interfaces.go`](interfaces.go) —
+`GarlicEncryptor`, `GarlicDecryptor`, `GarlicSessionManager`, `TagResolver` —
+rather than the concrete type. All of them use primitive types (`[32]byte`,
+`[8]byte`, `[]byte`) rather than I2P-specific ones, so go-noise has no dependency
+on go-i2p.
 
 ## Usage
 
-### Garlic Session Encryption
-
 ```go
 import "github.com/go-i2p/go-noise/ratchet"
 
-// Create a session manager with our static private key
+// Create a session manager with our static private key.
 var privateKey [32]byte
-// ... populate from key store ...
+// ... populate from the key store ...
 sm, err := ratchet.NewSessionManager(privateKey)
 if err != nil {
-    return err
+	return err
 }
 defer sm.Close()
 
-// Encrypt a garlic message for a destination
+// Encrypt a garlic message for a destination. An unknown destination starts a
+// New Session; an established one is encrypted as an Existing Session message.
 var destHash, destPubKey [32]byte
-// ... populate from destination info ...
+// ... populate from the destination's RouterInfo ...
 encrypted, err := sm.EncryptGarlicMessage(destHash, destPubKey, plaintext)
 
-// Decrypt an incoming garlic message
-plaintext, sessionTag, err := sm.DecryptGarlicMessage(encrypted)
+// Decrypt an incoming garlic message.
+plaintext, sessionTag, sessionHash, err := sm.DecryptGarlicMessage(encrypted)
+
+// Answer a received New Session with a New Session Reply.
+if sessionHash != nil {
+	nsr, err := sm.EncryptNewSessionReply(*sessionHash, replyPayload)
+}
 ```
 
-### Tunnel Build Record Crypto
+## Design principles
 
-```go
-import "github.com/go-i2p/go-noise/ratchet"
-
-crypto := ratchet.NewBuildRecordCrypto()
-
-// Encrypt a reply record (ChaCha20-Poly1305)
-var replyKey [32]byte
-var replyIV [16]byte
-encrypted, err := crypto.EncryptReplyRecord(record, replyKey, replyIV)
-
-// ECIES encrypt a build request
-encrypted, err := crypto.EncryptBuildRequest(plaintext, recipientPubKey)
-```
-
-## Design Principles
-
-- **No I2P imports**: This package depends only on `go-i2p/crypto` and
-  standard library. Callers convert I2P types to primitives at the boundary.
-- **Interface-first**: Consumers depend on interfaces, enabling mock injection
-  for testing.
-- **Thread-safe**: `SessionManager` is safe for concurrent use from multiple
-  goroutines.
-- **Compile-time checks**: All implementations are verified at compile time:
-  ```go
-  var _ GarlicSessionManager = (*SessionManager)(nil)
-  var _ BuildRecordEncryptor = (*BuildRecordCrypto)(nil)
-  var _ BuildReplyEncryptor  = (*BuildRecordCrypto)(nil)
-  ```
+- **No I2P imports**: this package depends on `go-i2p/crypto` and the standard
+  library only. Callers convert I2P types at the boundary.
+- **Interface-first**: consumers depend on interfaces, enabling mock injection.
+- **Thread-safe**: `SessionManager` is safe for concurrent use. Lock order is the
+  manager lock and then the session lock; never the reverse.
+- **Key material is destroyed**: when a session is removed — expired, terminated,
+  evicted, or dropped by `Close()` — its chain keys, root keys, tag ratchets, DH
+  private keys and cached message keys are zeroed, not just unlinked. See
+  `Session.destroyKeyMaterial`.
+- **Compile-time checks**: `SessionManager`'s conformance to `GarlicSessionManager`
+  is asserted in `session_manager.go`.
 
 ## Testing
 
 ```bash
-# Run all tests with race detection
 go test -race -v ./ratchet/
-
-# Run benchmarks
 go test -bench=. -benchmem ./ratchet/
 ```
 
-The test suite includes 46+ tests covering:
-- New/Existing session encrypt→decrypt round-trips
-- DH ratchet rotation at configurable intervals
-- Session tag generation and lookup
-- LRU eviction and concurrent access safety
-- ECIES and ChaCha20-Poly1305 round-trips
-- Error handling and edge cases
+`spec_compliance_ratchet_test.go` pins the requirements that were previously
+violated — NSR tag set advancement and retention, inbound tag window sizing,
+per-tagset sizing, message-number trimming, unknown blocks treated as padding,
+reserved NextKey flag bits, key destruction on removal — each citing the
+`ecies.md` section it comes from.
 
 ## Specification
 
-For the full I2P ECIES-X25519-AEAD-Ratchet specification, see the official spec:
-[ecies.rst](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ecies.rst)
-(`lastupdated: 2025-06`, `accuratefor: 0.9.67`). The original proposal is
-[proposal 144](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/proposals/144-ecies-x25519-aead-ratchet.rst),
-but `ecies.rst` is the design of record and is what the code citations refer to.
+The design of record is the I2P developer spec
+[`ecies.md`](https://github.com/i2p/i2p.website/blob/main/content/en/docs/specs/ecies.md)
+(`content/en/docs/specs/ecies.md` on `main`). Proposal 144 is the design history;
+where the two disagree, the dev spec wins and the conflict is recorded in a code
+comment.
 
-> Do not vendor a copy of the spec into this package. A previously checked-in
-> copy (`ratchet.md`) had been edited away from the official text (notably the
-> `hs2` pre-message), and code citations anchored to it propagated the error.
-> Cite `ecies.rst` sections directly instead.
+> Do not vendor a copy of the spec into this package. A previously checked-in copy
+> (`ratchet.md`) had been edited away from the official text (notably the `hs2`
+> pre-message), and code citations anchored to it propagated the error. Cite the
+> spec sections directly instead.
+>
+> Note also that the spec's pseudo-code uses inclusive-end slice notation
+> (`keydata[0:31]` means 32 bytes). Check the prose byte count before reading an
+> off-by-one into a slice bound.

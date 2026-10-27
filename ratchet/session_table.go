@@ -347,6 +347,7 @@ func (sm *SessionManager) cleanupSessionIndexesLocked(session *Session, hash [32
 	}
 	sm.clearNSRTagsLocked(session)
 	delete(sm.sessions, hash)
+	session.destroyKeyMaterial()
 }
 
 // clearNSRTagsLocked removes every NSR tag registered for this session from the
