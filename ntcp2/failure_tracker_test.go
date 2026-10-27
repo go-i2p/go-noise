@@ -169,12 +169,13 @@ func TestAccept_RefusesBlacklistedSource(t *testing.T) {
 		return conn.(*net.TCPConn)
 	}
 
-	// Pre-blacklist the dialer, then connect: Accept must swallow the connection
-	// and keep waiting rather than hand it back or error. The listener attributes
-	// failures to the peer side of the socket, which is the dialer's LOCAL address.
-	client := dial()
-	tracker.RecordFailure(client.LocalAddr())
+	// Blacklist the loopback source BEFORE dialing. sourceKey reduces an address to
+	// its IP, so this covers any port the dialer happens to use, and it makes the
+	// ordering deterministic: the listener's check runs after underlying.Accept()
+	// returns, which is necessarily after the dial.
+	tracker.RecordFailure(addr("127.0.0.1", 0))
 
+	client := dial()
 	_, err := client.Write([]byte("junk from a refused source"))
 	require.NoError(t, err)
 

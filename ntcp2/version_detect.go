@@ -133,6 +133,15 @@ func detectNTCPVersion(cfg *Config, raw net.Conn, deadline time.Time) ([]byte, d
 	tmp := make([]byte, ntcp2MaxMsg1Size)
 
 	for {
+		// The spec's order is preserved: the length rule is step two and is
+		// unconditional, ahead of the NTCP2 decode attempt that is only offered
+		// "If less than 288 bytes". That is not an oversight — the burden sits on
+		// the initiator, per §"1) SessionRequest": "When initiating a connection to
+		// an address published as \"NTCP\", Alice must limit the maximum size of this
+		// message, including padding, to 287 bytes or less. This facilitates
+		// automatic protocol identification by Bob." A Bob running detection is
+		// published as "NTCP", so a stream that crosses the threshold has already
+		// broken the rule for this port and is treated as version 1.
 		if len(buf) >= ntcp1SizeThreshold {
 			return buf, protocolNTCP1, nil
 		}
