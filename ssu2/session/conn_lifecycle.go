@@ -73,7 +73,16 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 			packet.Payload = payload
 			// Capture send error into debug log instead of discarding.
 			// If socket is dead, short-circuit the destroy wait.
-			if err := h.sendPacketDirect(packet); err != nil {
+			if datagram, err := h.sendPacketDirectAndCapture(packet); err == nil {
+				// ssu2.md §"Session Termination" -> §"Data phase": a closing
+				// session "sends a packet containing a Termination block in
+				// response to any incoming packet that it attributes to the
+				// session", and may "send the exact same packet with the same
+				// packet number as-is". Retain those bytes for ProcessInboundPacket.
+				h.closingMutex.Lock()
+				h.closingDatagram = datagram
+				h.closingMutex.Unlock()
+			} else {
 				flog("CloseWithReason", logger.Fields{"error": err.Error()}).Warn("failed to send Termination block (best effort)")
 				// Check if error indicates socket is already dead (e.g., broken pipe, connection refused)
 				// This lets us skip the destroy wait since there's no peer to respond anyway.

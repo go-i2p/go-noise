@@ -221,6 +221,12 @@ func (h *SSU2Conn) wrapTerminationCallback(cbs *DataHandlerCallbacks) {
 		}
 		if TerminationReason(reason) != TerminationReceived {
 			h.sendTerminationReceived()
+		} else {
+			// §"Session Termination": "After receiving a Termination block with
+			// the reason \"Termination Received\", the session may exit the
+			// closing phase." Record it so the closing state stops re-sending its
+			// Termination packet in response to further inbound traffic.
+			h.closingPeerAcked.Store(true)
 		}
 		if existingOnTermination != nil {
 			existingOnTermination(peerReceived, reason, additionalData)

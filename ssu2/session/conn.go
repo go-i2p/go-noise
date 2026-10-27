@@ -369,6 +369,26 @@ type SSU2Conn struct {
 	// confirmedAckedOnce guards the close of confirmedAcked.
 	confirmedAckedOnce sync.Once
 
+	// closingDatagram is the exact wire bytes of the Termination packet this
+	// session sent when it entered the closing phase, retained so the closing
+	// state can answer further inbound packets with "the exact same packet with
+	// the same packet number as-is" (ssu2.md §"Session Termination" -> §"Data
+	// phase").
+	//
+	// closingResponses counts how many of those answers have been emitted, and
+	// closingSeen counts received packets since the last one, which is how the
+	// spec's "limit the rate at which it generates packets in the closing state"
+	// is satisfied. All three are guarded by closingMutex.
+	closingDatagram  []byte
+	closingResponses int
+	closingSeen      uint32
+	closingMutex     sync.Mutex
+
+	// closingPeerAcked is set when the peer answers our Termination with reason
+	// "Termination Received", which §"Session Termination" says lets the session
+	// "exit the closing phase" — after that, no further retransmissions.
+	closingPeerAcked atomic.Bool
+
 	// windowSignal wakes a sender parked in waitForWindow when the congestion
 	// window gains room. Guarded by windowMutex.
 	windowSignal chan struct{}

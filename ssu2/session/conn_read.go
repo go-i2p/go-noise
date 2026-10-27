@@ -424,6 +424,20 @@ func (h *SSU2Conn) keepaliveLoop() {
 // Parameters:
 //   - packet: The parsed SSU2Packet to process
 func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
+	// ssu2.md §"Session Termination" -> §"Data phase": "After sending or receiving
+	// a Termination block, the session should enter the closing phase … A session
+	// in the closing state sends a packet containing a Termination block in
+	// response to any incoming packet that it attributes to the session. A session
+	// should limit the rate at which it generates packets in the closing state."
+	//
+	// Without this branch, a lost termination packet leaves the peer half-open: it
+	// keeps sending into a session we have already decided to close and receives
+	// nothing back, so it can only time out. The closing state exists precisely to
+	// cover that loss.
+	if h.resendClosingTermination(packet) {
+		return
+	}
+
 	switch packet.MessageType {
 	case MessageTypeData:
 		if !h.decryptInboundPayload(packet) {
@@ -433,6 +447,97 @@ func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
 		h.processHandshakePacket(packet)
 	}
+}
+
+// closingPhaseResponseLimit is how many closing-phase retransmissions one session
+// emits in total. §"Session Termination" requires the response but also tells the
+// session to "limit the rate at which it generates packets in the closing state",
+// and §"Handshake Retransmission" gives 11 s (the maximum RTO) as the destroy
+// window; a small fixed budget bounds an attacker that floods a closing session
+// with packets we would otherwise answer one-for-one.
+const closingPhaseResponseLimit = 4
+
+// resendClosingTermination re-sends this session's Termination datagram to a
+// packet attributed to a closing session, and reports whether the packet was
+// consumed.
+//
+// §"Session Termination" -> §"Data phase" permits the cheapest form of this:
+// "To minimize the state that a router maintains for a closing session, sessions
+// may, but are not required to, send the exact same packet with the same packet
+// number as-is in response to any received packet. Note: Allowing retransmission
+// of a termination packet is an exception to the requirement that a new packet
+// number be used for each packet."
+//
+// Rate limiting is by count rather than by time, which the same paragraph allows
+// ("an session could wait for a progressively increasing number of received
+// packets or amount of time before responding"), and doubles the gap between
+// responses so a flood costs us logarithmically many packets.
+func (h *SSU2Conn) resendClosingTermination(packet *SSU2Packet) bool {
+	h.stateMutex.RLock()
+	state := h.state
+	h.stateMutex.RUnlock()
+	if state != StateClosing {
+		return false
+	}
+
+	// A peer that has answered with "Termination Received" has acknowledged us, so
+	// the closing exchange is complete and no further replies are warranted:
+	// §"Session Termination": "After receiving a Termination block with the reason
+	// \"Termination Received\", the session may exit the closing phase." The
+	// packet is still consumed — "While in the closing phase, there is no
+	// requirement to process any additional received packets."
+	if h.closingPeerAcknowledged() {
+		return true
+	}
+
+	h.closingMutex.Lock()
+	defer h.closingMutex.Unlock()
+
+	if h.closingResponses >= closingPhaseResponseLimit {
+		return true // still consume: nothing else may act on a closing session
+	}
+	h.closingSeen++
+	// Skip 1, then 2, then 4 … received packets before each further response.
+	if h.closingSeen < closingPhaseBackoff(h.closingResponses) {
+		return true
+	}
+	h.closingSeen = 0
+	h.closingResponses++
+
+	datagram := h.closingDatagram
+	if len(datagram) == 0 {
+		return true
+	}
+
+	h.remoteAddrLock.RLock()
+	addr := h.remoteAddr
+	h.remoteAddrLock.RUnlock()
+	if addr == nil {
+		return true
+	}
+	if _, err := h.underlying.WriteTo(datagram, addr); err != nil {
+		flog("resendClosingTermination", logger.Fields{"error": err.Error()}).
+			Debug("failed to re-send the closing Termination packet")
+	}
+	return true
+}
+
+// closingPeerAcknowledged reports whether the peer has completed the closing
+// exchange by sending "Termination Received".
+func (h *SSU2Conn) closingPeerAcknowledged() bool {
+	return h.closingPeerAcked.Load()
+}
+
+// closingPhaseBackoff returns how many received packets must arrive before
+// response number n is emitted.
+func closingPhaseBackoff(n int) uint32 {
+	if n <= 0 {
+		return 1
+	}
+	if n >= 16 {
+		return 1 << 16
+	}
+	return uint32(1) << uint(n)
 }
 
 func (h *SSU2Conn) processDataPackets(packet *SSU2Packet) {
