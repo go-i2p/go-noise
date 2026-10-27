@@ -64,10 +64,15 @@ const (
 	// messages as soon as possible".
 	responseTimerHandshake = 500 * time.Millisecond
 
-	// ackResponseDelay is how long to wait before sending an explicit ACK, so a
-	// real reply can carry it instead. Spec §"Message ACKs": "wait a short time
-	// (perhaps a hundred ms) before sending an explicit ACK".
-	ackResponseDelay = 100 * time.Millisecond
+	// An explicit ACK is never sent on its own timer: ecies.md §"Message ACKs"
+	// says "in most cases, an explict ACK can be avoided, as there is reverse
+	// traffic. It may be desirable for implementations to wait a short time
+	// (perhaps a hundred ms) before sending an explicit ACK, to give the
+	// streaming or application layer time to respond." Receipt of an Ack or
+	// NextKey block therefore marks the session as owing a response, and the
+	// timers above are what discharge that obligation — a real outbound message
+	// carries the queued block if one arrives first, otherwise the empty response
+	// does. No separate delay constant is needed.
 )
 
 // responseOwed records that this session must produce a message at the ECIES

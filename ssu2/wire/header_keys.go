@@ -34,9 +34,6 @@ type HeaderProtectorManager struct {
 	// from chainKey after message 2 with info \"SessionConfirmed\"
 	sessionConfirmedHeader2 []byte
 
-	// current is the current header protector
-	current *HeaderProtector
-
 	// isInitiator indicates if we are the handshake initiator
 	isInitiator bool
 }

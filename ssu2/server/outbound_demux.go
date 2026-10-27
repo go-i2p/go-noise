@@ -40,9 +40,6 @@ type PendingOutboundSession struct {
 
 	// createdAt tracks when this pending session was registered
 	createdAt time.Time
-
-	// handshakeDoneOnce ensures cleanup happens exactly once
-	handshakeDoneOnce sync.Once
 }
 
 // PendingOutboundRegistry manages pending outbound sessions registered on a listener.

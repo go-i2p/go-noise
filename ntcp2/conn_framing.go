@@ -610,13 +610,6 @@ func (nc *Conn) encryptFrame(b []byte) ([]byte, error) {
 	return encrypted, nil
 }
 
-// buildWireFrame constructs the NTCP2 wire frame by prepending a 2-byte SipHash-obfuscated
-// length to the ciphertext. After this call the SipHash outbound state has advanced.
-func (nc *Conn) buildWireFrame(encrypted []byte, slm *SipHashLengthModifier) ([]byte, error) {
-	frame, _, err := nc.buildWireFrameWithMask(encrypted, slm)
-	return frame, err
-}
-
 // buildWireFrameWithMask is identical to buildWireFrame but also returns
 // the SipHash mask used for the obfuscated length field, for diagnostic
 // logging.

@@ -81,34 +81,6 @@ func (t *nsrTagset) nextTag() ([8]byte, error) {
 	return tag, nil
 }
 
-// fillTo generates entries until the set covers index, so that a tag the peer
-// presents can be recognized. This is the receiving-side rule from ecies.md
-// §"TAGSET" -> GET_ENTRY(tag): "If there are few TAGSET_ENTRIES remaining,
-// EXTEND(n) is called."
-//
-// Returns the tags for indices [0, index] inclusive. Already-generated entries
-// are not re-derived — the ratchet only moves forward.
-func (t *nsrTagset) fillTo(index int) ([][8]byte, error) {
-	if t.ratchet == nil {
-		return nil, oops.Code("NSR_TAGSET_MISSING").In("ratchet").
-			Errorf("NSR tag set has no tag ratchet")
-	}
-	if index >= nsrTagsetMax {
-		return nil, oops.
-			Code("NSR_TAG_INDEX_OUT_OF_RANGE").
-			In("ratchet").
-			With("index", index).
-			With("max", nsrTagsetMax).
-			Errorf("NSR tag index %d is outside the tag set (tsmax %d)", index, nsrTagsetMax)
-	}
-	for t.generated <= index {
-		if _, err := t.nextTag(); err != nil {
-			return nil, err
-		}
-	}
-	return nil, nil
-}
-
 // peekTags returns the next count tags without committing them, generating the
 // set forward as needed. Used by the initiator to advertise the whole expected
 // reply window up front, so any of the peer's replies can be routed.
@@ -140,9 +112,6 @@ func (t *nsrTagset) peekTags(count int) ([][8]byte, error) {
 	}
 	return tags, nil
 }
-
-// generated returns how many entries the set has produced.
-func (t *nsrTagset) count() int { return t.generated }
 
 // zero clears the tag ratchet's key material.
 func (t *nsrTagset) zero() {

@@ -28,10 +28,6 @@ const (
 	// 8 (tag) + 32 (ephemeral) + 16 (key section MAC) + 16 (empty payload MAC).
 	nsrMinMessageSize = 8 + 32 + 16 + 16
 
-	// nsrHeaderSize is the fixed header before the encrypted payload:
-	// 8 (tag) + 32 (ephemeral) + 16 (key section MAC).
-	nsrHeaderSize = 8 + 32 + 16
-
 	// hkdfInfoSessionReplyTags is the info string for deriving the NSR reply tagset key.
 	// Spec ref: ecies.rst §"KDF for Reply TagSet".
 	hkdfInfoSessionReplyTags = "SessionReplyTags"

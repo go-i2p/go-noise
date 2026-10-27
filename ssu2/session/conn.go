@@ -82,12 +82,6 @@ const (
 	// stall established-session datagrams by filling packetQueue.
 	handshakeEnqueueTimeout = 10 * time.Millisecond
 
-	// destroyTimeout is the default time to wait after sending a Termination
-	// block before releasing session resources. Per spec §Termination:
-	// "Wait for 11 seconds (the maximum RTO)" after sending a Termination
-	// block. Can be overridden via SSU2Config.DestroyTimeout.
-	destroyTimeout = 11 * time.Second
-
 	// defaultHandshakeTimeout is the fallback deadline for SSU2 handshakes
 	// when neither SSU2Config.HandshakeTimeout is set nor the caller's
 	// context carries a deadline (LEAK-2 / TIMEOUT-1). A stalling peer

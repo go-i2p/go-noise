@@ -65,9 +65,6 @@ const (
 	// persistent congestion event is declared.
 	persistentCongestionMultiplier = 3
 
-	// timerGranularity is the system timer granularity (RFC 9002 uses 1ms).
-	timerGranularity = time.Millisecond
-
 	// bweAlpha is the EWMA smoothing factor for bandwidth estimation.
 	// Westwood+ uses 7/8 old + 1/8 new.
 	bweAlpha = 0.875

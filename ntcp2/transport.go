@@ -380,11 +380,6 @@ func createDialAddresses(conn net.Conn, config *Config) (*Addr, *Addr, error) {
 	return localAddr, remoteAddr, nil
 }
 
-// establishTCPConnection dials the underlying TCP connection with proper error handling.
-func establishTCPConnection(network, addr string) (net.Conn, error) {
-	return establishTCPConnectionContext(context.Background(), network, addr)
-}
-
 // establishTCPConnectionContext dials the underlying TCP connection with context support.
 func establishTCPConnectionContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	dialer := &net.Dialer{}

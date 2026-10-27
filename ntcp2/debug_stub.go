@@ -10,14 +10,12 @@ package ntcp2
 
 import "sync/atomic"
 
-// msg1WireDumpRemaining and msg3WireDumpRemaining are the zero-value no-op
-// counterparts to the atomic counters declared in debug.go. They always read
-// as zero so all Load() > 0 guards in the production code path are never
-// taken.
-var (
-	msg1WireDumpRemaining atomic.Int32
-	msg3WireDumpRemaining atomic.Int32
-)
+// msg1WireDumpRemaining is the zero-value no-op counterpart to the atomic
+// counter declared in debug.go. It always reads as zero, so the Load() > 0
+// guard in the production write path is never taken. Only the msg1 counter is
+// read outside debug.go; the msg3 counter lives entirely inside the tagged
+// implementation, so the stub does not declare it.
+var msg1WireDumpRemaining atomic.Int32
 
 func dumpMsg1IfEnabled(_ *Config, _ interface{}, _, _ []byte)                 {}
 func dumpInboundMsg1IfEnabled(_ *Config, _ interface{}, _, _ []byte, _ error) {}
