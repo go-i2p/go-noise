@@ -129,10 +129,10 @@ func TestFallbackReplayDetectorIsSharedAndProtective(t *testing.T) {
 }
 
 // TestValidatePeerRouterInfo covers ntcp2.md §"3) SessionConfirmed" -> §"Notes":
-//"Bob must verify that Alice's static key received in the first frame matches
-//the static key in the Router Info", and "Bob must perform the usual Router Info
-//validation. Ensure the signature type is supported, verify the signature,
-//verify the timestamp is within bounds".
+// "Bob must verify that Alice's static key received in the first frame matches
+// the static key in the Router Info", and "Bob must perform the usual Router Info
+// validation. Ensure the signature type is supported, verify the signature,
+// verify the timestamp is within bounds".
 func TestValidatePeerRouterInfo(t *testing.T) {
 	staticPriv := make([]byte, StaticKeySize)
 	staticPriv[0] = 0x08

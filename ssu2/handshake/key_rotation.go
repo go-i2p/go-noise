@@ -1,10 +1,11 @@
 package handshake
 
 import (
-	"github.com/go-i2p/crypto/rand"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/internal/securemem"
 	"github.com/go-i2p/logger"

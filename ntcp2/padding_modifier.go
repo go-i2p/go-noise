@@ -1,6 +1,7 @@
 package ntcp2
 
 import (
+	"encoding/binary"
 	"math"
 	"sync"
 
@@ -143,6 +144,90 @@ func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, d
 	}
 
 	return data, nil
+}
+
+// ValidateAEADFrame validates that a frame contains properly formatted
+// AEAD blocks, enforcing the I2P NTCP2 block ordering rules
+// (ntcp2.rst:1455-1469).
+//
+// A frame is a sequence of I2P blocks, each a 1-byte type, a 2-byte
+// big-endian size, and that many bytes of data. The rules enforced here:
+//   - every block header must be complete and its size must not run past
+//     the end of the frame;
+//   - at most one Padding (type 254) block per frame;
+//   - a Padding block, if present, must be the last block in the frame.
+//
+// Returns true if the frame structure is valid, false otherwise.
+func (npm *NTCP2PaddingModifier) ValidateAEADFrame(data []byte) bool {
+	if len(data) == 0 {
+		return true // Empty frame is valid
+	}
+
+	offset := 0
+	hasPadding := false
+
+	for offset < len(data) {
+		blockType, blockSize, ok := npm.validateBlockAtOffset(data, offset)
+		if !ok {
+			return false
+		}
+
+		if !npm.validateFramePaddingRules(blockType, blockSize, offset, len(data), &hasPadding) {
+			return false
+		}
+
+		offset += 3 + blockSize
+	}
+
+	return true
+}
+
+// validateFramePaddingRules enforces the I2P NTCP2 padding block ordering
+// rules for a single parsed block.
+func (npm *NTCP2PaddingModifier) validateFramePaddingRules(blockType byte, blockSize, offset, dataLen int, hasPadding *bool) bool {
+	if blockType == PaddingBlockType { // Padding block
+		if *hasPadding {
+			return false // Multiple padding blocks not allowed
+		}
+		*hasPadding = true
+		// Padding must be the last block in the frame.
+		if offset+3+blockSize != dataLen {
+			return false
+		}
+	}
+	return true
+}
+
+// validateBlockAtOffset validates header and size bounds, then returns the
+// parsed block type and size.
+func (npm *NTCP2PaddingModifier) validateBlockAtOffset(data []byte, offset int) (blockType byte, blockSize int, ok bool) {
+	if !npm.validateBlockBounds(data, offset) {
+		return 0, 0, false
+	}
+
+	blockType, blockSize = npm.extractBlockHeader(data, offset)
+	if !npm.validateBlockSize(data, offset, blockSize) {
+		return 0, 0, false
+	}
+
+	return blockType, blockSize, true
+}
+
+// validateBlockBounds checks if there's enough data for a block header at the given offset.
+func (npm *NTCP2PaddingModifier) validateBlockBounds(data []byte, offset int) bool {
+	return offset+3 <= len(data)
+}
+
+// extractBlockHeader reads the block type and size from the data at the given offset.
+func (npm *NTCP2PaddingModifier) extractBlockHeader(data []byte, offset int) (blockType byte, blockSize int) {
+	blockType = data[offset]
+	blockSize = int(binary.BigEndian.Uint16(data[offset+1 : offset+3]))
+	return blockType, blockSize
+}
+
+// validateBlockSize ensures the block size doesn't exceed the available data.
+func (npm *NTCP2PaddingModifier) validateBlockSize(data []byte, offset, blockSize int) bool {
+	return offset+3+blockSize <= len(data)
 }
 
 // SetPaddingRatio updates the padding ratio, allowing dynamic adjustment

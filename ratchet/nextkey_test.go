@@ -468,7 +468,7 @@ func TestNextKeyExchange_SecondRoundTagSetIDs(t *testing.T) {
 		assert.Equal(t, expected, sendTS, "sender outbound tag set ID")
 		assert.Equal(t, sendTS, recvTS, "both peers must compute the same tag set ID")
 		// Spec progression for the tag-set sender: 0*, 1*, 1, 2*, 2, ...
-		assert.Equal(t, uint16((expected)/2), sendKey, "sender key ID at tag set %d", expected)
+		assert.Equal(t, uint16(expected/2), sendKey, "sender key ID at tag set %d", expected)
 		t.Logf("tag set %d: sender key %d, receiver key %d", expected, sendKey, recvKey)
 	}
 

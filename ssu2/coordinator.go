@@ -1,11 +1,12 @@
 package ssu2
 
 import (
-	"github.com/go-i2p/crypto/ed25519"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/go-i2p/crypto/ed25519"
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/common/data"
 	"github.com/go-i2p/go-noise/ssu2/wire"

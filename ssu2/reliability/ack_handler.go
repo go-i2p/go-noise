@@ -383,7 +383,7 @@ func (h *ACKHandler) ProcessACK(ackBlock *SSU2Block) ([]uint32, error) {
 // transmitter must determine what I2NP messages and fragments were in that
 // packet, to decide what to retransmit." A loss response therefore needs the
 // NACK set, which ProcessACK discards.
-func (h *ACKHandler) ProcessACKWithNacks(ackBlock *SSU2Block) (acked []uint32, nacked []uint32, err error) {
+func (h *ACKHandler) ProcessACKWithNacks(ackBlock *SSU2Block) (acked, nacked []uint32, err error) {
 	flog("ProcessACK").Debug("Processing ACK block")
 	h.mu.Lock()
 	defer h.mu.Unlock()

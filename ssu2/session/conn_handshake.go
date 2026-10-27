@@ -197,7 +197,8 @@ func (h *SSU2Conn) sendSessionRequest() (*SSU2Packet, error) {
 	// (perhaps because Bob restarted)") — Bob replies with a Retry and Alice
 	// resends with the fresh token, which handleRetryResponse already does.
 	sessionRequest, err := h.handshakeHandler.CreateSessionRequest(
-		h.config.ConnectionID, destConnID, h.savedTokenOption()...)
+		h.config.ConnectionID, destConnID, h.savedTokenOption()...,
+	)
 	if err != nil {
 		return nil, oops.Wrapf(err, "failed to create SessionRequest")
 	}

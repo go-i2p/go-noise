@@ -226,7 +226,7 @@ func (spec *IntroKeyMessageSpec) networkID() uint8 {
 // that does not de-obfuscate to a coherent packet, or AEAD verification failure
 // — returns an error, and callers must then drop the message without
 // responding, per the spec's probing-resistance rules.
-func OpenIntroKeyMessage(introKey []byte, data []byte) (*SSU2Packet, []*SSU2Block, error) {
+func OpenIntroKeyMessage(introKey, data []byte) (*SSU2Packet, []*SSU2Block, error) {
 	if len(introKey) != HeaderKeySize {
 		return nil, nil, oops.Errorf("intro key must be %d bytes", HeaderKeySize)
 	}

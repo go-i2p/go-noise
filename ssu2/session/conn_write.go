@@ -2,9 +2,10 @@ package session
 
 import (
 	"encoding/binary"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"time"
+
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/ssu2/wire"
 	"github.com/go-i2p/logger"
@@ -429,7 +430,6 @@ func (h *SSU2Conn) retransmitExpired() {
 		default:
 		}
 	}
-
 }
 
 // releaseInFlight removes one outstanding entry's bytes from the congestion

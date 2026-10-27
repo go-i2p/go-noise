@@ -3,6 +3,7 @@ package handshake
 import (
 	"crypto/sha256"
 	"encoding/binary"
+
 	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/internal/securemem"

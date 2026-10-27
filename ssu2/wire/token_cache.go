@@ -124,7 +124,7 @@ func tokenKey(addr, localAddr *net.UDPAddr) string {
 // Returns the token value.
 // If a valid (non-expired) token already exists for this address, returns
 // the existing token instead of generating a new one to prevent retry storms.
-func (tc *TokenCache) GenerateToken(addr *net.UDPAddr, localAddr *net.UDPAddr) ([]byte, error) {
+func (tc *TokenCache) GenerateToken(addr, localAddr *net.UDPAddr) ([]byte, error) {
 	flog("GenerateToken").Debug("Generating new token")
 	if addr == nil {
 		return nil, oops.
@@ -174,7 +174,7 @@ func (tc *TokenCache) GenerateToken(addr *net.UDPAddr, localAddr *net.UDPAddr) (
 
 // ValidateToken checks if a token is valid for the specified address.
 // Returns true if the token exists, matches the address, and hasn't expired.
-func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr, localAddr *net.UDPAddr) bool {
+func (tc *TokenCache) ValidateToken(tokenValue []byte, addr, localAddr *net.UDPAddr) bool {
 	flog("ValidateToken", logger.Fields{"addr": addr}).Debug("Validating token for address")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false
@@ -195,7 +195,7 @@ func (tc *TokenCache) ValidateToken(tokenValue []byte, addr *net.UDPAddr, localA
 // ConsumeToken validates and removes a token from the cache.
 // This should be called when a valid SessionRequest with token is received.
 // Returns true if the token was valid and consumed.
-func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr *net.UDPAddr, localAddr *net.UDPAddr) bool {
+func (tc *TokenCache) ConsumeToken(tokenValue []byte, addr, localAddr *net.UDPAddr) bool {
 	flog("ConsumeToken", logger.Fields{"addr": addr}).Debug("Validating and consuming token")
 	if addr == nil || len(tokenValue) != TokenSize {
 		return false

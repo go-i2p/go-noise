@@ -612,6 +612,38 @@ func TestNTCP2PaddingModifier_ProductionFeatures(t *testing.T) {
 		assert.Equal(t, []byte{254, 0, 10, 1, 2}, sizeMismatch)
 	})
 
+	t.Run("AEAD Frame Validation", func(t *testing.T) {
+		modifier, err := newNTCP2TestModifier(t, "validation_test", 4, 8, true)
+		require.NoError(t, err)
+
+		// An empty frame is valid.
+		assert.True(t, modifier.ValidateAEADFrame(nil))
+
+		// A well-formed frame (I2NP block followed by a trailing padding
+		// block) must validate.
+		i2npBlock := []byte{3, 0, 5, 1, 2, 3, 4, 5} // I2NP block type 3, size 5, data
+		padded, err := modifier.ModifyOutbound(handshake.PhaseData, i2npBlock)
+		require.NoError(t, err)
+		assert.True(t, modifier.ValidateAEADFrame(padded))
+
+		// A single I2NP block with no padding is also a valid frame.
+		assert.True(t, modifier.ValidateAEADFrame(i2npBlock))
+
+		// Incomplete block header (claims a size but has no data bytes).
+		assert.False(t, modifier.ValidateAEADFrame([]byte{254, 0}))
+
+		// Declared block size exceeds the available data.
+		assert.False(t, modifier.ValidateAEADFrame([]byte{254, 0, 10, 1, 2}))
+
+		// Multiple padding blocks in a single frame are not allowed.
+		multiPadding := []byte{254, 0, 2, 1, 2, 254, 0, 2, 3, 4}
+		assert.False(t, modifier.ValidateAEADFrame(multiPadding))
+
+		// A padding block that is not the last block is not allowed.
+		paddingNotLast := []byte{254, 0, 2, 1, 2, 3, 0, 5, 1, 2, 3, 4, 5}
+		assert.False(t, modifier.ValidateAEADFrame(paddingNotLast))
+	})
+
 	t.Run("Padding Size Estimation", func(t *testing.T) {
 		// Test with ratio-based padding
 		modifier, err := NewNTCP2PaddingModifierWithRatio("estimate_test", 4, 32, true, 0.5)

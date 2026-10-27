@@ -2,8 +2,9 @@ package wire
 
 import (
 	"bytes"
-	"github.com/go-i2p/crypto/rand"
 	"testing"
+
+	"github.com/go-i2p/crypto/rand"
 
 	"github.com/go-i2p/go-noise/handshake"
 	"github.com/stretchr/testify/assert"

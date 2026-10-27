@@ -2,9 +2,10 @@ package config
 
 import (
 	"fmt"
-	"github.com/go-i2p/crypto/rand"
 	"net"
 	"sync"
+
+	"github.com/go-i2p/crypto/rand"
 
 	i2pbase64 "github.com/go-i2p/common/base64"
 	"github.com/go-i2p/common/data"

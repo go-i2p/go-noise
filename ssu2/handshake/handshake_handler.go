@@ -74,7 +74,13 @@ type HandshakeHandler struct {
 	sessionConfirmedHeaderKey []byte
 
 	// replayCache detects replayed handshake messages per SSU2 spec.
-	// Only used by responders to protect ProcessSessionRequest.
+	// Used by both sides: responders in ProcessSessionRequest to reject
+	// replayed SessionRequest messages, and initiators in ProcessSessionCreated
+	// to reject replayed SessionCreated messages.
+	//
+	// Spec ref: ssu2.rst §"Session Created" -> §"Notes": "Alice must maintain a
+	// local cache of previously-used handshake values and reject duplicates, to
+	// prevent replay attacks."
 	replayCache *replaycache.TTLCache
 
 	// localOptions are this peer's padding parameters, sent in Options blocks.
@@ -227,14 +233,18 @@ func NewHandshakeHandler(initiator bool, staticKey, remoteStaticKey, prologue []
 		handshakeState:  hs,
 	}
 
-	// Responders need a replay cache to protect against replayed SessionRequests
-	if !initiator {
-		handler.replayCache = replaycache.New(replaycache.Config{
-			TTL:             4 * time.Minute,
-			MaxSize:         1024,
-			CleanupInterval: 30 * time.Second,
-		})
-	}
+	// Both sides need a replay cache: responders to protect against replayed
+	// SessionRequests, and initiators to protect against replayed
+	// SessionCreated messages.
+	//
+	// Spec ref: ssu2.rst §"Session Created" -> §"Notes": "Alice must maintain a
+	// local cache of previously-used handshake values and reject duplicates, to
+	// prevent replay attacks."
+	handler.replayCache = replaycache.New(replaycache.Config{
+		TTL:             4 * time.Minute,
+		MaxSize:         1024,
+		CleanupInterval: 30 * time.Second,
+	})
 
 	return handler, nil
 }
@@ -300,14 +310,18 @@ func NewHandshakeHandlerWithKeys(initiator bool, staticKeypair noise.DHKey, remo
 		handshakeState:  hs,
 	}
 
-	// Responders need a replay cache to protect against replayed SessionRequests
-	if !initiator {
-		handler.replayCache = replaycache.New(replaycache.Config{
-			TTL:             4 * time.Minute,
-			MaxSize:         1024,
-			CleanupInterval: 30 * time.Second,
-		})
-	}
+	// Both sides need a replay cache: responders to protect against replayed
+	// SessionRequests, and initiators to protect against replayed
+	// SessionCreated messages.
+	//
+	// Spec ref: ssu2.rst §"Session Created" -> §"Notes": "Alice must maintain a
+	// local cache of previously-used handshake values and reject duplicates, to
+	// prevent replay attacks."
+	handler.replayCache = replaycache.New(replaycache.Config{
+		TTL:             4 * time.Minute,
+		MaxSize:         1024,
+		CleanupInterval: 30 * time.Second,
+	})
 
 	return handler, nil
 }

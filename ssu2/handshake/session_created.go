@@ -53,6 +53,23 @@ func (h *HandshakeHandler) ProcessSessionCreated(packet *SSU2Packet) error {
 		return oops.Errorf("SessionCreated missing ephemeral key")
 	}
 
+	// Replay protection for Alice (initiator).
+	//
+	// Spec ref: ssu2.rst §"Session Created" -> §"Notes": "Alice must maintain a
+	// local cache of previously-used handshake values and reject duplicates, to
+	// prevent replay attacks. Values in the cache must have a lifetime of at
+	// least 2*D. The cache values are implementation-dependent, however the
+	// 32-byte Y value (or its encrypted equivalent) may be used."
+	//
+	// The 32-byte Y value is Bob's ephemeral key, which is exactly 32 bytes.
+	if h.replayCache != nil {
+		var y [32]byte
+		copy(y[:], packet.EphemeralKey)
+		if h.replayCache.CheckAndAdd(y) {
+			return oops.Errorf("replayed SessionCreated detected")
+		}
+	}
+
 	// Verify the responder echoed our connection IDs back, swapped.
 	//
 	// Spec ref: ssu2.md §"Session Created" -> §"Notes": "Alice must drop the message

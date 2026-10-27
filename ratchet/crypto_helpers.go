@@ -25,7 +25,7 @@ import (
 //	keydata2 = HKDF(ck, ZEROLEN, "TagAndKeyGenKeys", 64)
 //	sessTag_ck = keydata2[0:32]
 //	symmKey_ck = keydata2[32:64]
-func deriveDirectionalTagSet(rootKey [32]byte, k [32]byte) (nextRootKey, sessTagCK, symmKeyCK [32]byte, err error) {
+func deriveDirectionalTagSet(rootKey, k [32]byte) (nextRootKey, sessTagCK, symmKeyCK [32]byte, err error) {
 	// Step 1: DH_INITIALIZE(rootKey, k)
 	nextRootKey, ck, err := ratchet.DH_INITIALIZEFull(rootKey, k)
 	if err != nil {
