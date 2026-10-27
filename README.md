@@ -257,9 +257,29 @@ NoiseConn (net.Conn)
 
 ## Dependencies
 
+Direct requirements, as declared in `go.mod`:
+
 - **go-i2p/noise**: Core Noise Protocol implementation
+- **go-i2p/crypto**: Cryptographic primitives — `curve25519`, `chacha20`,
+  `chacha20poly1305`, `aes`, `siphash`, `hkdf`, `hmac`, `kdf`, `ecies`,
+  `elligator2`, `ed25519`, `ratchet`, `rand`
+- **go-i2p/common**: I2P common data structures — `data`, `router_info`,
+  `router_identity`, `router_address`, `signature`, `keys_and_cert`,
+  `key_certificate`, `base64`
+- **go-i2p/path**: SSU2 relay, hole-punch and path-validation logic, re-exported
+  through `ssu2` and `ssu2/session` and used by `ssu2/server`
+- **go-i2p/pool**: Connection pooling used by the root `transport.go` and
+  `pool_wrapper.go`
 - **go-i2p/logger**: Structured logging support
 - **samber/oops**: Rich error context
+- **stretchr/testify**: Assertions, declared as a direct requirement because the
+  `internal/testri` fixture helper is a regular (non-`_test`) source file
+
+`go-i2p/path` and `go-i2p/go-noise` reference each other at the module level
+(`path` imports `go-noise/ssu2/wire`), but there is no package cycle:
+`go-noise/ssu2/wire` imports nothing from `path`. The pins do form a
+release-ordering constraint — see the upstream report
+`go-i2p/bugs/path-ssu2-path-validation-and-build.md`.
 
 ## Logging
 
