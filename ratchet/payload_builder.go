@@ -318,7 +318,9 @@ func ValidateNewSessionPayload(payload []byte) error {
 			blocks[0].Type,
 		)
 	}
-	return nil
+	// The allowlist, ordering and size rules beyond "DateTime first" are the same
+	// ones every outbound path is checked against.
+	return validateOutboundPayload(messageTypeNewSession, payload)
 }
 
 // BuildNSPayload is a convenience wrapper that constructs a spec-compliant
@@ -449,4 +451,57 @@ func FindBlocks(blocks []PayloadBlock, blockType BlockType) []PayloadBlock {
 		}
 	}
 	return result
+}
+
+// validateOutboundPayload enforces the spec's payload rules on bytes about to be
+// encrypted and sent as the given message type.
+//
+// ecies.md §"Block Ordering Rules" fixes both the per-message-type block
+// allowlist — "In the New Session Reply message, no blocks are required. Other
+// allowed blocks: Garlic Clove (type 11) / Options (type 5) / Padding (type 254).
+// No other blocks are allowed" — and the ordering rules ("Termination, if
+// present, must be the last block except for Padding"), and §"Unencrypted data"
+// fixes the size: "Encrypted data is 65535 bytes max … so the max unencrypted
+// data is 65519 bytes."
+//
+// The EncryptGarlicMessage / EncryptNewSessionReply wire paths take an opaque
+// caller payload, so without this the rules are enforced only on traffic built
+// through a PayloadBuilder: a caller could put a Termination block inside a New
+// Session Reply or emit an oversized frame that no conformant peer can decrypt.
+//
+// The size limit is always enforced. The block rules are enforced when the
+// payload parses as a block sequence; a payload that does not parse is opaque
+// caller data (the API accepts arbitrary plaintext garlic bytes) and only the
+// size rule applies to it.
+func validateOutboundPayload(mt payloadMessageType, payload []byte) error {
+	if len(payload) > maxPayloadSize {
+		return oops.
+			Code("PAYLOAD_TOO_LARGE").
+			In("ratchet").
+			With("size", len(payload)).
+			With("max", maxPayloadSize).
+			Errorf("%s payload is %d bytes, exceeding the %d-byte maximum (ecies.md §\"Unencrypted data\": encrypted data is 65535 bytes max, so the max unencrypted data is 65519 bytes)",
+				mt, len(payload), maxPayloadSize)
+	}
+
+	blocks, err := ParsePayload(payload)
+	if err != nil {
+		// Not a block sequence: nothing further to check without inventing a
+		// parse failure for data the caller is entitled to treat as opaque.
+		return nil
+	}
+
+	// Reuse the builder's rules rather than restating them, so the two paths
+	// cannot drift apart.
+	pb := NewPayloadBuilder()
+	pb.messageType = mt
+	pb.allowlist = allowedBlocksForMessageType(mt)
+	pb.blocks = blocks
+	if err := pb.validate(); err != nil {
+		return oops.
+			Code("PAYLOAD_BLOCK_RULES").
+			In("ratchet").
+			Wrapf(err, "%s payload violates ecies.md §\"Block Ordering Rules\"", mt)
+	}
+	return nil
 }

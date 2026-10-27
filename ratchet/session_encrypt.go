@@ -259,6 +259,13 @@ func (sm *SessionManager) encryptExistingSession(
 		return nil, oops.Wrapf(err, "failed to prepend NextKey blocks to payload")
 	}
 
+	// ecies.md §"Block Ordering Rules" and §"Unencrypted data" constrain what an
+	// Existing Session payload may contain and how large it may be. Validated on
+	// the assembled payload so our own prepended control blocks are covered too.
+	if err := validateOutboundPayload(messageTypeExistingSession, payload); err != nil {
+		return nil, err
+	}
+
 	ciphertext, tag, err := encryptWithSessionKey(messageKey, payload, sessionTag, session.MessageCounter)
 	if err != nil {
 		return nil, err
@@ -369,6 +376,16 @@ func (sm *SessionManager) EncryptNewSessionReply(
 	// then fall back to the head NS, which may legitimately receive several
 	// replies. Consuming the head state only when the queue is empty is what keeps
 	// both rules of §"Multiple NSR Messages" true at once.
+	// ecies.md §"Block Ordering Rules": "In the New Session Reply message, no
+	// blocks are required. Other allowed blocks: Garlic Clove (type 11) / Options
+	// (type 5) / Padding (type 254). No other blocks are allowed." A Termination
+	// block smuggled into an NSR would be acted on by a peer that treats the reply
+	// as session traffic, so the caller payload is checked before it is encrypted.
+	if err := validateOutboundPayload(messageTypeNewSessionReply, payload); err != nil {
+		session.mu.Unlock()
+		return nil, err
+	}
+
 	hs := session.handshakeState
 	if len(session.awaitingNSRReplies) > 0 {
 		hs = session.awaitingNSRReplies[0]
