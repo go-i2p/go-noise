@@ -153,6 +153,18 @@ func NewTerminationBlock(reason TerminationReason, additionalData []byte) Payloa
 // NewMessageNumberBlock creates a Message Number block with the given PN
 // value. PN is the index of the last tag sent in the previous tag set,
 // stored as 2 bytes in big-endian order.
+//
+// Sending is optional: ecies.md §"Message Numbers" opens with
+// "Implementation is optional." The value is a hint that lets a receiver delete
+// previous-tag-set tags it can no longer expect, and this package already acts on
+// a received block (§"4b) Session Tag Ratchet": "the recipient can delete any tags
+// higher than that value in the previous tag set", implemented by
+// trimRecvWindowByPN). Without a block, the peer's previous-tag-set tags expire on
+// the 3-minute grace period instead, which is the spec's fallback (§"Message
+// Numbers": "Receiver may expire tags less than or equal to PN from the previous
+// tag set after a short time"). Nothing on the wire is broken by omitting it, and
+// §"Message Numbers" also forbids the block in tag set 0 ("there was no previous
+// tag set"), so a sender must know its own tagset index to include it.
 func NewMessageNumberBlock(pn uint16) PayloadBlock {
 	data := make([]byte, 2)
 	binary.BigEndian.PutUint16(data, pn)
