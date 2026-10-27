@@ -154,6 +154,20 @@ type Config struct {
 	// instantiated once per listener). Initiator connections ignore this field.
 	ReplayDetector ReplayDetector
 
+	// FailureTracker records handshake and AEAD failures per source and refuses a
+	// source that fails repeatedly. See ntcp2.md §"AEAD Error Handling": "Bob should
+	// maintain a blacklist of IPs with repeated failures", and §"1) SessionRequest"
+	// DoS Mitigation: "Maintain blacklists for sources that repeatedly fail."
+	//
+	// The spec fixes neither a failure threshold nor a ban duration, and a wrong
+	// guess bans real peers behind a shared NAT, so no tracker is installed by
+	// default. Use [NewFailureTracker] for the built-in sliding-window
+	// implementation, or supply your own to apply a policy the router already has.
+	//
+	// Shared across all responder connections using this config (typically
+	// instantiated once per listener). Initiator connections ignore this field.
+	FailureTracker FailureTracker
+
 	// VersionDetector is handed any inbound connection that version detection
 	// identifies as NTCP version 1, so a router published as "NTCP" can serve both
 	// protocol versions from one listener. See ntcp2.md §"Version Detection".
@@ -506,6 +520,16 @@ func (nc *Config) versionDetectWindow() time.Duration {
 		window = nc.HandshakeTimeout
 	}
 	return window
+}
+
+// WithFailureTracker sets the tracker that blacklists sources with repeated
+// handshake or AEAD failures.
+//
+// Passing nil disables blacklisting (the default). The tracker is shared across all
+// responder connections using this config, so create one per listener.
+func (nc *Config) WithFailureTracker(tracker FailureTracker) *Config {
+	nc.FailureTracker = tracker
+	return nc
 }
 
 // WithVersionDetector sets the handler for inbound connections that version
@@ -1088,6 +1112,7 @@ func (nc *Config) Clone() *Config {
 		MaxClockSkew:         nc.MaxClockSkew,
 		ReplayDetector:       nc.ReplayDetector,  // Shared across clones for responder
 		VersionDetector:      nc.VersionDetector, // Shared across clones for responder
+		FailureTracker:       nc.FailureTracker,  // Shared across clones for responder
 		VersionDetectTimeout: nc.VersionDetectTimeout,
 		AllowKeyRotation:     nc.AllowKeyRotation,
 	}

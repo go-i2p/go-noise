@@ -149,6 +149,22 @@ func (nc *Conn) closeHandshakeError(err error, underlying net.Conn) {
 	nc.applyProbingResistance(underlying, false)
 }
 
+// recordFailure attributes this connection's failure to its source address, for the
+// optional [FailureTracker]. Best-effort: blacklisting is a DoS mitigation, so a
+// missing tracker or an unresolvable address must never change the required
+// probing-resistance outcome.
+func (nc *Conn) recordFailure(underlying net.Conn) {
+	cfg := nc.ntcp2Config.Load()
+	if cfg == nil || cfg.FailureTracker == nil {
+		return
+	}
+	addr := underlying.RemoteAddr()
+	if addr == nil {
+		return
+	}
+	cfg.FailureTracker.RecordFailure(addr)
+}
+
 // applyProbingResistance performs the spec's error action: mark the connection
 // broken, read a random number of junk bytes over a random timeout, optionally
 // let the transport layer emit a Termination block, then RST the socket.
@@ -161,6 +177,12 @@ func (nc *Conn) closeHandshakeError(err error, underlying net.Conn) {
 func (nc *Conn) applyProbingResistance(underlying net.Conn, sendTermination bool) {
 	flog("NTCP2Conn.applyProbingResistance").Warn("authentication/protocol error detected, applying probing-resistance behaviour")
 	nc.broken.Store(true)
+
+	// §"AEAD Error Handling": "Bob should maintain a blacklist of IPs with repeated
+	// failures." Record before the probe window opens, so a source that is refused
+	// at accept time is refused on the next connection rather than after another
+	// full round of probing resistance.
+	nc.recordFailure(underlying)
 
 	// Generate a random byte count in [0, AEADErrorMaxJunkBytes) to read before
 	// returning. RandInRange uses rejection sampling so there is no modulo bias.

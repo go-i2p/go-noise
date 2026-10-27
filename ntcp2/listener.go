@@ -256,6 +256,24 @@ func (nl *Listener) Accept() (net.Conn, error) {
 				Wrapf(err, "failed to accept connection")
 		}
 
+		// A source that has failed repeatedly is refused without being given another
+		// handshake window. ntcp2.md §"AEAD Error Handling": "Bob should maintain a
+		// blacklist of IPs with repeated failures"; §"1) SessionRequest" DoS
+		// Mitigation: "Limit repeated or simultaneous connections from the same source.
+		// Maintain blacklists for sources that repeatedly fail."
+		//
+		// Checked before version detection, because detection itself costs a socket and
+		// a bounded read window — the resource the blacklist exists to stop exhausting.
+		// Only enforced when a tracker is configured: the spec fixes no threshold or
+		// ban duration, so refusing traffic is a policy the operator opts into.
+		if tracker := nl.config.Load().FailureTracker; tracker != nil && tracker.IsBlacklisted(underlying.RemoteAddr()) {
+			flog("Accept", logger.Fields{
+				"remote_addr": underlying.RemoteAddr().String(),
+			}).Debug("refusing a source blacklisted for repeated handshake failures")
+			underlying.Close()
+			continue
+		}
+
 		// Identify the protocol version before running any NTCP2 handshake, and
 		// replay the bytes consumed for detection so the handshake sees the same
 		// stream it would have seen without it. ntcp2.md §"Version Detection":
