@@ -74,6 +74,13 @@ type SSU2Listener struct {
 	pendingByInitiator map[string]*SSU2Conn
 	sessionMutex       sync.RWMutex
 
+	// sessionsByPeer maps a peer's router hash to the connection ID of the one
+	// session the listener keeps with that peer. ssu2.md §"Multiple Sessions":
+	// "Peers should not establish multiple sessions with the same peer", and when
+	// Bob receives a Session Confirmed completing a new one he should "Remove the
+	// old session and replace it with the new one". Protected by sessionMutex.
+	sessionsByPeer map[data.Hash]uint64
+
 	// tokenCache validates retry tokens
 	tokenCache *TokenCache
 
@@ -240,6 +247,7 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 		underlying:         underlying,
 		addr:               addr,
 		pendingByInitiator: make(map[string]*SSU2Conn),
+		sessionsByPeer:     make(map[data.Hash]uint64),
 		tokenCache:         newTokenCacheFromConfig(config),
 		sessionTokens:      sharedSessionTokenStore(config),
 		sessionRateLimiter: newIPRateLimiter(sessionRequestsPerSecond, sessionRateLimiterMaxIPs),
@@ -882,6 +890,11 @@ func (l *SSU2Listener) installCloseHook(conn *SSU2Conn, connID uint64, dedupKey 
 		if registered.Load() {
 			l.router.RemoveSession(connID)
 		}
+		// Drop the peer index entry so a later session with the same peer is not
+		// told it is replacing a session that is already gone. Only removes the
+		// entry if it still points at this connection, so a superseded session
+		// closing late cannot evict its replacement.
+		l.unindexPeerSession(conn)
 		// Remove from pending dedup index (safe even if never inserted).
 		l.sessionMutex.Lock()
 		delete(l.pendingByInitiator, dedupKey)
@@ -966,6 +979,14 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	// Install close hook early so cleanup runs regardless of
 	// whether registration succeeds.
 	registered := l.installCloseHook(conn, connID, dedupKey)
+
+	// ssu2.md §"Multiple Sessions": when Bob finishes a handshake with a peer he
+	// already has a session with, he migrates that session's unacknowledged
+	// outbound I2NP messages, terminates the old session with reason 22 and
+	// replaces it. The trigger is Session-Confirmed completion, which is what the
+	// established hook fires on; tracking is what makes the first bullet possible.
+	conn.TrackOutboundI2NP()
+	conn.SetEstablishedHook(l.supersedePeerSession)
 
 	// Perform dedup check, router registration, and
 	// pendingByInitiator insert as a single atomic operation under sessionMutex.

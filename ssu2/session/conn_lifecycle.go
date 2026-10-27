@@ -33,6 +33,8 @@ func (h *SSU2Conn) CloseImmediate() error {
 func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []byte) error {
 	h.closeOnce.Do(func() {
 		flog("CloseWithReason", logger.Fields{"reason": reason}).Debug("Closing SSU2 connection")
+		h.closeReason.Store(uint32(reason))
+		h.closeReasonSet.Store(true)
 		// Update state first
 		h.stateMutex.Lock()
 		h.state = StateClosing
@@ -379,6 +381,18 @@ func (h *SSU2Conn) GetSSU2Addr() *SSU2Addr {
 
 // IsInitiator reports whether this connection was created as the initiating side
 // of the SSU2 handshake.
+// CloseReason returns the Termination reason this session was closed with, or nil
+// if it is still open. A router uses it to tell a session it superseded with a new
+// one (reason 22, ssu2.md §"Multiple Sessions") from one that timed out or was
+// closed normally.
+func (h *SSU2Conn) CloseReason() *TerminationReason {
+	if !h.closeReasonSet.Load() {
+		return nil
+	}
+	reason := TerminationReason(h.closeReason.Load())
+	return &reason
+}
+
 func (h *SSU2Conn) IsInitiator() bool {
 	return h.initiator
 }

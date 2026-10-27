@@ -982,6 +982,18 @@ func (h *SSU2Conn) finalizeHandshake() error {
 		h.sendSessionConfirmedACK()
 	}
 
+	// ssu2.md §"Multiple Sessions" pins the replacement of an older session with
+	// the same peer to exactly this moment: "when Bob receives the Session
+	// Confirmed from Alice, completing the handshake and establishing a new
+	// session". The listener owns the session index, so it is the one that acts;
+	// the hook is non-blocking by contract.
+	h.establishedHookMu.Lock()
+	hook := h.establishedHook
+	h.establishedHookMu.Unlock()
+	if hook != nil {
+		hook(h)
+	}
+
 	return nil
 }
 

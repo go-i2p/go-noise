@@ -73,6 +73,9 @@ const (
 	TerminationConnectionLimits     = wire.TerminationConnectionLimits
 	TerminationWrongNetID           = wire.TerminationWrongNetID
 	TerminationBanned               = wire.TerminationBanned
+	// TerminationReplacedByNewSession is reason 22, sent on an older session when
+	// the same peer establishes a new one. ssu2.md §"Multiple Sessions".
+	TerminationReplacedByNewSession = wire.TerminationReplacedByNewSession
 )
 
 const (

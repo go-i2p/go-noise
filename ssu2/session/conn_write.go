@@ -782,6 +782,14 @@ func (h *SSU2Conn) trackPendingPacket(packet *SSU2Packet, plaintext []byte, wire
 	h.pendingPackets[packet.PacketNumber] = entry
 	h.pendingMutex.Unlock()
 
+	// ssu2.md §"Multiple Sessions": an unacknowledged outbound I2NP message must
+	// survive the session it was queued on when that session is superseded by a
+	// new one with the same peer, so record it for migration until acknowledged.
+	h.migrationMutex.Lock()
+	tracker := h.migration
+	h.migrationMutex.Unlock()
+	tracker.note(packet.PacketNumber, blocks)
+
 	if !ackOnly && h.congestionController != nil {
 		h.congestionController.OnPacketSent(wireSize)
 	}
@@ -877,6 +885,12 @@ func (h *SSU2Conn) retireAckedPackets(numbers []uint32) {
 		// Room in the window: release a sender parked in waitForWindow.
 		h.signalWindowOpen()
 	}
+
+	// Delivered, so it must not be replayed on a replacement session.
+	h.migrationMutex.Lock()
+	tracker := h.migration
+	h.migrationMutex.Unlock()
+	tracker.retire(numbers)
 }
 
 // sendImmediateACK generates and sends an ACK packet without delay, honoring

@@ -151,7 +151,14 @@ type SSU2Conn struct {
 	closeChan  chan struct{}
 	closeOnce  sync.Once
 	closeErr   error
-	closeMutex sync.Mutex
+	// closeReason records the Termination reason this session closed with, so a
+	// caller can tell a superseded session (reason 22, ssu2.md §"Multiple
+	// Sessions") from an idle timeout or a normal close. closeReasonSet is the
+	// validity flag: reason 0 is itself a legal code ("NormalClose"), so it cannot
+	// double as "not closed".
+	closeReason    atomic.Uint32
+	closeReasonSet atomic.Bool
+	closeMutex     sync.Mutex
 
 	// forceDestroy is closed by listener.Close() during parallel teardown to
 	// cancel the DestroyTimeout wait in CloseWithReason, preventing serial
@@ -296,6 +303,20 @@ type SSU2Conn struct {
 	// for all sessions (initiator and responder) sharing the listener socket.
 	// Capacity 1; send is non-blocking.
 	recvDataKeyNotifyCh chan *wire.HeaderProtector
+
+	// migration records the outbound I2NP packets this session has not had
+	// acknowledged, so a replacement session can take them over when ssu2.md
+	// §"Multiple Sessions" retires this one. Guarded by migrationMutex because
+	// the write path records while the listener drains it from another goroutine.
+	migration      *migrationTracker
+	migrationMutex sync.Mutex
+
+	// establishedHook, if set, runs once when this responder's handshake
+	// completes — the moment §"Multiple Sessions" names for superseding an older
+	// session with the same peer. The listener wires it to its own replacement
+	// logic; it must not block for long, since it runs inline with finalization.
+	establishedHook   func(*SSU2Conn)
+	establishedHookMu sync.Mutex
 
 	// closeHook, if set, is invoked once during CloseWithReason after the
 	// connection's goroutines have been torn down. The listener wires this
