@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -244,4 +246,101 @@ func TestNewSSU2Listener_KeepsCallerConfigAliased(t *testing.T) {
 
 	// The per-session copy path reads through the same pointer.
 	assert.Len(t, listener.Config().IntroKey, 32)
+}
+
+// TestUpdateIdentity_BlocksRotationWithoutRekey covers ssu2.md §"Public Key and IV
+// Rotation": "Due to caching of RouterInfos, routers must not rotate the static
+// public key or IV while the router is up, whether in a published address or not",
+// and "Intro key rotation is subject to identical rules as key rotation."
+func TestUpdateIdentity_BlocksRotationWithoutRekey(t *testing.T) {
+	pc := createMockPacketConn(t)
+	cfg := createValidConfig(t)
+	static := make([]byte, 32)
+	for i := range static {
+		static[i] = byte(i)
+	}
+	cfg = cfg.WithStaticKey(static)
+	introKey := make([]byte, 32)
+	copy(introKey, "initial-intro-key-32-bytes-ok!!!")
+	cfg.IntroKey = introKey
+
+	listener, err := NewSSU2Listener(pc, cfg)
+	require.NoError(t, err)
+	defer listener.Close()
+
+	// Same router identity, different key material: a rotation while up.
+	rotated := createValidConfig(t)
+	rotated.RouterHash = cfg.RouterHash
+	rotated.StaticKey = bytes.Repeat([]byte{0x5A}, 32)
+	rotated.IntroKey = bytes.Repeat([]byte{0x33}, 32)
+
+	err = listener.UpdateIdentity(rotated)
+	require.Error(t, err, "rotating the static or intro key under an unchanged hash must be refused")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "KEY_ROTATION_WHILE_UP", oopsErr.Code())
+
+	assert.Equal(t, static, listener.Config().StaticKey, "the live static key must be unchanged")
+	assert.Equal(t, introKey, listener.Config().IntroKey, "the live intro key must be unchanged")
+}
+
+// TestUpdateIdentity_AllowsRotationOnRekey covers the section's exception: "If the
+// router \"rekeys\" to a different Router Hash, it should generate a new noise key
+// and intro key as well."
+func TestUpdateIdentity_AllowsRotationOnRekey(t *testing.T) {
+	pc := createMockPacketConn(t)
+	cfg := createValidConfig(t)
+	cfg = cfg.WithStaticKey(bytes.Repeat([]byte{0x11}, 32))
+	listener, err := NewSSU2Listener(pc, cfg)
+	require.NoError(t, err)
+	defer listener.Close()
+
+	// createValidConfig generates a fresh random router hash, so this is a rekey.
+	rekeyed := createValidConfig(t)
+	rekeyed.StaticKey = bytes.Repeat([]byte{0x22}, 32)
+	rekeyed.IntroKey = bytes.Repeat([]byte{0x44}, 32)
+	require.NotEqual(t, cfg.RouterHash, rekeyed.RouterHash)
+
+	require.NoError(t, listener.UpdateIdentity(rekeyed),
+		"a rekey must be allowed to carry new key material")
+	assert.Equal(t, rekeyed.StaticKey, listener.Config().StaticKey)
+}
+
+// TestUpdateIdentity_AllowsFirstPopulation pins the startup path documented on the
+// listener: go-i2p's SSU2 transport starts the listener and only then loads the
+// intro key and IV from persistent storage, publishing them here.
+func TestUpdateIdentity_AllowsFirstPopulation(t *testing.T) {
+	pc := createMockPacketConn(t)
+	cfg := createValidConfig(t)
+	cfg.IntroKey = nil
+	listener, err := NewSSU2Listener(pc, cfg)
+	require.NoError(t, err)
+	defer listener.Close()
+
+	updated := cfg
+	updated.IntroKey = bytes.Repeat([]byte{0x77}, 32)
+
+	require.NoError(t, listener.UpdateIdentity(updated),
+		"filling in a previously-empty intro key is not a rotation")
+	assert.NotNil(t, listener.introHeaderProtector.Load(),
+		"the first population must still build the header protector")
+}
+
+// TestUpdateIdentity_AllowKeyRotationOverride covers the escape hatch for a caller
+// that has verified the required downtime itself.
+func TestUpdateIdentity_AllowKeyRotationOverride(t *testing.T) {
+	pc := createMockPacketConn(t)
+	cfg := createValidConfig(t)
+	cfg = cfg.WithStaticKey(bytes.Repeat([]byte{0xAA}, 32))
+	listener, err := NewSSU2Listener(pc, cfg)
+	require.NoError(t, err)
+	defer listener.Close()
+
+	rotated := createValidConfig(t)
+	rotated.RouterHash = cfg.RouterHash
+	rotated.StaticKey = bytes.Repeat([]byte{0xBB}, 32)
+	rotated.AllowKeyRotation = true
+
+	require.NoError(t, listener.UpdateIdentity(rotated))
+	assert.Equal(t, rotated.StaticKey, listener.Config().StaticKey)
 }

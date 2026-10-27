@@ -124,6 +124,10 @@ func detectNTCPVersion(cfg *Config, raw net.Conn, deadline time.Time) ([]byte, d
 			In("ntcp2").
 			Wrapf(err, "version detection: failed to set the read deadline")
 	}
+	// Detection owns only its own window. Restore "no deadline" on the way out so
+	// the handshake's own deadline (set by Accept for TCP) is the only one in
+	// effect, and a transport that cannot set deadlines is left as it was found.
+	defer raw.SetReadDeadline(time.Time{}) //nolint:errcheck // best-effort restore
 
 	buf := make([]byte, 0, ntcp2MaxMsg1Size)
 	tmp := make([]byte, ntcp2MaxMsg1Size)

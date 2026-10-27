@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/go-i2p/go-noise/internal/rotation"
 	"github.com/go-i2p/go-noise/mod/replaycache"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
@@ -51,6 +53,11 @@ type SSU2Listener struct {
 	// Sessions receive their own Clone(), so an in-flight handshake is never
 	// affected by a later update.
 	config atomic.Pointer[SSU2Config]
+
+	// identity is a snapshot of the key material this listener last published.
+	// It is taken because the config is stored by pointer and callers mutate that
+	// same struct in place, so the previous values are not recoverable from it.
+	identity atomic.Pointer[rotation.Inputs]
 
 	// addr is the SSU2 address for this listener
 	addr *SSU2Addr
@@ -257,6 +264,8 @@ func NewSSU2Listener(underlying net.PacketConn, config *SSU2Config) (*SSU2Listen
 	// sessions. Callers that need to change identity material after start must
 	// use UpdateIdentity, which republishes atomically.
 	l.config.Store(config)
+	first := identityInputs(config)
+	l.identity.Store(&first)
 
 	// Create packet router with session creation callback
 	l.router = NewPacketRouter(l.handleNewSession)
@@ -1411,6 +1420,10 @@ func (l *SSU2Listener) UpdateIdentity(cfg *SSU2Config) error {
 			Wrapf(err, "refusing to apply invalid identity config")
 	}
 
+	if err := l.checkRotation(cfg); err != nil {
+		return err
+	}
+
 	l.closeMutex.Lock()
 	if l.closed {
 		l.closeMutex.Unlock()
@@ -1436,7 +1449,65 @@ func (l *SSU2Listener) UpdateIdentity(cfg *SSU2Config) error {
 	l.addr.UpdateRouterHash(cfg.RouterHash)
 
 	l.config.Store(cfg)
+	updated := identityInputs(cfg)
+	l.identity.Store(&updated)
 	return nil
+}
+
+// identityInputs extracts the rotation-relevant material from an SSU2 config.
+func identityInputs(cfg *SSU2Config) rotation.Inputs {
+	return rotation.Inputs{
+		StaticKey:    cfg.StaticKey,
+		IV:           cfg.ObfuscationIV,
+		IntroKey:     cfg.IntroKey,
+		IdentityHash: cfg.RouterHash,
+	}
+}
+
+// checkRotation rejects an identity update that rotates the static key, intro key
+// or IV underneath an unchanged router identity.
+//
+// ssu2.md §"Public Key and IV Rotation": "Due to caching of RouterInfos, routers
+// must not rotate the static public key or IV while the router is up, whether in a
+// published address or not", and "Intro key rotation is subject to identical rules
+// as key rotation." A live listener is precisely "while the router is up".
+//
+// The spec states the consequence plainly: "changing the static public key or IV
+// will prohibit incoming SSU2 connections from routers that have cached an older
+// RouterInfo". Rotation is legitimate only at startup, after a downtime long
+// enough for those caches to expire ("several days at least", "for example one
+// month" with a published SSU2 address, "one day" SSU-only, "as short as two
+// hours" unpublished) — and only the router, which stores the last-shutdown time,
+// can evaluate that. So the listener accepts the one in-place case the spec
+// prescribes: "If the router \"rekeys\" to a different Router Hash, it should
+// generate a new noise key and intro key as well." A change of
+// [SSU2Config.RouterHash] therefore permits new key material, and
+// [AllowKeyRotation] opts out of the check entirely for a caller that has verified
+// the downtime itself.
+//
+// Filling in a field that was previously empty is not a rotation: go-i2p's SSU2
+// transport constructs and starts the listener before it loads the intro key and
+// IV from persistent storage, then publishes them through this method.
+func (l *SSU2Listener) checkRotation(next *SSU2Config) error {
+	current := l.identity.Load()
+	if current == nil {
+		return nil // nothing published yet, so nothing can have been rotated
+	}
+	change := rotation.Compare(*current, identityInputs(next))
+	forbidden := change.Forbidden()
+	if len(forbidden) == 0 || next.AllowKeyRotation {
+		return nil
+	}
+
+	return oops.
+		Code("KEY_ROTATION_WHILE_UP").
+		In("ssu2_listener").
+		With("rotated", forbidden).
+		Errorf("refusing to rotate the %s while the listener is up without a change of router hash: "+
+			"ssu2.md §\"Public Key and IV Rotation\" requires peers that cached the old RouterInfo "+
+			"to keep connecting. Rotate at startup after the required downtime (set AllowKeyRotation "+
+			"once you have checked it), or rekey to a new router hash.",
+			strings.Join(forbidden, " and "))
 }
 
 // TokenCache returns the token cache used by this listener.

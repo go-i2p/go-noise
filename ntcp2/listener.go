@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-i2p/common/data"
 	noise "github.com/go-i2p/go-noise"
+	"github.com/go-i2p/go-noise/internal/rotation"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
@@ -33,6 +35,11 @@ type Listener struct {
 	// updates. Callers that must change identity after construction use
 	// UpdateIdentity, which republishes atomically.
 	config atomic.Pointer[Config]
+
+	// identity is a snapshot of the key material this listener last published.
+	// It is taken so an update can be checked for rotation even when the caller
+	// hands back the same aliased *Config it has been mutating in place.
+	identity atomic.Pointer[rotation.Inputs]
 
 	// addr is the NTCP2 address for this listener
 	addr *Addr
@@ -106,6 +113,10 @@ func initializeListener(underlying net.Listener, config *Config, ntcp2Addr *Addr
 		logger:     log,
 	}
 	nl.config.Store(config)
+	// Store a pointer to a fresh value each time: an atomic.Pointer must never
+	// hand two readers the same address they could write through.
+	inputs := identityInputs(config)
+	nl.identity.Store(&inputs)
 
 	nl.logger.Info("NTCP2 listener created",
 		"pattern", config.Pattern,
@@ -220,23 +231,78 @@ func (nl *Listener) wrapInNTCP2Conn(noiseConn *noise.NoiseConn, remoteAddr *Addr
 // RemoteAddr().(*Addr).RouterHash is a zero value until Handshake(ctx) and
 // PropagatePeerStaticKey() complete. Most callers should use
 // AcceptWithHandshake, or call Handshake explicitly after Accept.
+// Accept waits for and returns the next connection to the listener that is
+// running NTCP version 2.
+//
+// A connection detected as NTCP version 1 does not produce an error here: it is
+// dispatched to the configured [VersionDetector] (or closed when there is none)
+// and Accept keeps waiting, so an accept loop does not have to know that the two
+// protocol versions share the port.
 func (nl *Listener) Accept() (net.Conn, error) {
-	if err := nl.validateAcceptState(); err != nil {
-		return nil, err
-	}
+	for {
+		if err := nl.validateAcceptState(); err != nil {
+			return nil, err
+		}
 
-	// Accept raw TCP connection from the underlying listener.
-	// No mutex needed: isClosed() uses atomic.Bool, and
-	// net.TCPListener.Accept() is concurrency-safe.
-	underlying, err := nl.underlying.Accept()
+		// Accept raw TCP connection from the underlying listener.
+		// No mutex needed: isClosed() uses atomic.Bool, and
+		// net.TCPListener.Accept() is concurrency-safe.
+		underlying, err := nl.underlying.Accept()
+		if err != nil {
+			return nil, oops.
+				Code("ACCEPT_FAILED").
+				In("ntcp2").
+				With("listener_addr", nl.addr.String()).
+				Wrapf(err, "failed to accept connection")
+		}
+
+		// Identify the protocol version before running any NTCP2 handshake, and
+		// replay the bytes consumed for detection so the handshake sees the same
+		// stream it would have seen without it. ntcp2.md §"Version Detection":
+		// "When published as \"NTCP\", the router must automatically detect the
+		// protocol version for incoming connections."
+		cfg := nl.config.Load()
+		initial, proto := nl.detectProtocolVersion(cfg, underlying)
+		if proto == protocolNTCP1 {
+			flog("Accept", logger.Fields{
+				"remote_addr":    underlying.RemoteAddr().String(),
+				"detected_bytes": len(initial),
+			}).Debug("inbound connection detected as NTCP version 1")
+			if cfg.VersionDetector != nil {
+				// The detector takes ownership and must close the connection.
+				cfg.VersionDetector.DetectNTCP1(underlying, initial)
+			} else {
+				underlying.Close()
+			}
+			continue
+		}
+
+		return nl.acceptNTCP2Conn(newPrefetchConn(underlying, initial))
+	}
+}
+
+// detectProtocolVersion classifies a freshly accepted connection, returning the
+// bytes it read. Detection is capped by the handshake timeout so it can never
+// widen the window an unverified peer holds open.
+//
+// A connection that cannot carry a read deadline (a custom [net.Listener] over a
+// non-TCP transport) is assumed to be NTCP2 and left untouched: skipping the
+// detection keeps such transports working, exactly as the post-message probe
+// does, and an NTCP1 peer on one would fail the handshake anyway.
+func (nl *Listener) detectProtocolVersion(cfg *Config, raw net.Conn) ([]byte, detectedProtocol) {
+	deadline := time.Now().Add(cfg.versionDetectWindow())
+	initial, proto, err := detectNTCPVersion(cfg, raw, deadline)
 	if err != nil {
-		return nil, oops.
-			Code("ACCEPT_FAILED").
-			In("ntcp2").
-			With("listener_addr", nl.addr.String()).
-			Wrapf(err, "failed to accept connection")
+		flog("Accept", logger.Fields{"error": err}).
+			Debug("protocol version detection unavailable, assuming NTCP2")
+		return nil, protocolNTCP2
 	}
+	return initial, proto
+}
 
+// acceptNTCP2Conn wraps a connection already known to be NTCP2 in the Noise and
+// NTCP2 layers and returns it ready for the handshake.
+func (nl *Listener) acceptNTCP2Conn(underlying net.Conn) (*Conn, error) {
 	// Create ConnConfig with full NTCP2 settings (CipherSuite, ProtocolName, Modifiers).
 	connConfig, perConnConfig, err := nl.createResponderConnConfig()
 	if err != nil {
@@ -279,7 +345,7 @@ func (nl *Listener) Accept() (net.Conn, error) {
 	acceptDeadline := time.Now().Add(handshakeTimeout)
 	// Set the deadline immediately so the TCP stack enforces it even before
 	// Handshake() is called.
-	if tcpConn, ok := underlying.(*net.TCPConn); ok {
+	if tcpConn := asTCPConn(underlying); tcpConn != nil {
 		if err := tcpConn.SetDeadline(acceptDeadline); err != nil {
 			flog("Accept", logger.Fields{"error": err}).Warn("failed to set initial handshake deadline on accepted TCP conn")
 		}
@@ -395,12 +461,74 @@ func (nl *Listener) UpdateIdentity(cfg *Config) error {
 			Wrapf(err, "refusing to apply invalid identity config")
 	}
 
+	if err := nl.checkRotation(cfg); err != nil {
+		return err
+	}
+
 	// The listener address carries the responder router hash and is guarded by
 	// Addr's own RWMutex, so readers never observe a torn value.
 	nl.addr.SetRouterHash(cfg.BobRouterHash)
 
 	nl.config.Store(cfg)
+	newInputs := identityInputs(cfg)
+	nl.identity.Store(&newInputs)
 	return nil
+}
+
+// identityInputs extracts the rotation-relevant material from a config.
+func identityInputs(cfg *Config) rotation.Inputs {
+	return rotation.Inputs{
+		StaticKey:    cfg.StaticKey,
+		IV:           cfg.ObfuscationIV,
+		IdentityHash: cfg.BobRouterHash,
+	}
+}
+
+// checkRotation rejects an identity update that rotates the static key or IV
+// underneath an unchanged router identity.
+//
+// ntcp2.md §"Public Key and IV Rotation" is a must-not: "Due to caching of
+// RouterInfos, routers must not rotate the static public key or IV while the
+// router is up, whether in a published address or not." A live listener is exactly
+// "while the router is up". Rotating either while the hash stays the same leaves
+// the published address looking unchanged while every peer that cached the old
+// RouterInfo fails to connect, and the spec names that consequence directly:
+// "changing the static public key or IV will prohibit incoming NTCP2 connections
+// from routers that have cached an older RouterInfo".
+//
+// Rotation is legitimate only at startup, after a downtime meeting the spec's
+// thresholds ("for example one month" with a published NTCP2 address, "one day"
+// SSU-only, "as short as two hours" unpublished) — and only the router, which
+// stores the last-shutdown time, can evaluate them. So the listener permits what
+// the spec itself prescribes for the one in-place case: §"Public Key and IV
+// Rotation" — "If the router \"rekeys\" to a different Router Hash, it should
+// generate a new noise key and IV as well." A change of [Config.BobRouterHash] is
+// therefore accepted together with new key material; [AllowKeyRotation] opts out
+// entirely for a caller that has checked the downtime itself.
+//
+// The first update that fills an empty field is not a rotation either: a listener
+// is routinely constructed before its keys are loaded from the keystore, and
+// go-i2p's transport publishes them once the listener is running.
+func (nl *Listener) checkRotation(next *Config) error {
+	current := nl.identity.Load()
+	if current == nil {
+		return nil // nothing published yet, so nothing can have been rotated
+	}
+	change := rotation.Compare(*current, identityInputs(next))
+	forbidden := change.Forbidden()
+	if len(forbidden) == 0 || next.AllowKeyRotation {
+		return nil
+	}
+
+	return oops.
+		Code("KEY_ROTATION_WHILE_UP").
+		In("ntcp2_listener").
+		With("rotated", forbidden).
+		Errorf("refusing to rotate the %s while the listener is up without a change of router hash: "+
+			"ntcp2.md §\"Public Key and IV Rotation\" requires peers that cached the old RouterInfo "+
+			"to keep connecting. Rotate at startup after the required downtime (set AllowKeyRotation "+
+			"once you have checked it), or rekey to a new router hash.",
+			strings.Join(forbidden, " and "))
 }
 
 // isClosed returns true if the listener has been closed.

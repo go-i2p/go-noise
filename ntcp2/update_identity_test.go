@@ -1,12 +1,14 @@
 package ntcp2
 
 import (
+	"bytes"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-i2p/common/data"
+	"github.com/samber/oops"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -227,4 +229,128 @@ func TestNTCP2Listener_CloseDoesNotCloseSharedDetector(t *testing.T) {
 
 	assert.False(t, detector.wasClosed(),
 		"a listener must not close a detector it does not own")
+}
+
+// TestNTCP2UpdateIdentity_BlocksRotationWithoutRekey covers ntcp2.md §"Public Key
+// and IV Rotation": "Due to caching of RouterInfos, routers must not rotate the
+// static public key or IV while the router is up, whether in a published address or
+// not."
+//
+// Rotating a key while keeping the same router hash leaves the published address
+// looking unchanged while every peer that cached the old RouterInfo fails to
+// connect, so the listener refuses it.
+func TestNTCP2UpdateIdentity_BlocksRotationWithoutRekey(t *testing.T) {
+	config := newTestResponderConfigNoAES(t)
+
+	// Populate the identity material the way go-i2p's transport does: after the
+	// listener exists, through UpdateIdentity.
+	static := make([]byte, StaticKeySize)
+	for i := range static {
+		static[i] = byte(i)
+	}
+	config.StaticKey = static
+	config.ObfuscationIV = make([]byte, IVSize)
+	copy(config.ObfuscationIV, "initial-iv-16-by")
+
+	ntcp2Ln, _ := startTestNTCP2Listener(t, config)
+
+	rotated := newAltResponderConfig(t)
+	rotated.BobRouterHash = config.BobRouterHash // same identity
+	rotated.StaticKey = make([]byte, StaticKeySize)
+	for i := range rotated.StaticKey {
+		rotated.StaticKey[i] = byte(0x40 + i)
+	}
+	rotated.ObfuscationIV = make([]byte, IVSize)
+	copy(rotated.ObfuscationIV, "rotated-iv-16-by")
+
+	err := ntcp2Ln.UpdateIdentity(rotated)
+	require.Error(t, err, "rotating the static key/IV under an unchanged router hash must be refused")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "KEY_ROTATION_WHILE_UP", oopsErr.Code())
+
+	// The rejected update must not have taken effect.
+	assert.Equal(t, static, ntcp2Ln.Config().StaticKey, "the live static key must be unchanged")
+}
+
+// TestNTCP2UpdateIdentity_AllowsRotationOnRekey covers the same section's
+// exception: "If the router \"rekeys\" to a different Router Hash, it should
+// generate a new noise key and IV as well."
+func TestNTCP2UpdateIdentity_AllowsRotationOnRekey(t *testing.T) {
+	config := newTestResponderConfigNoAES(t)
+	config.StaticKey = make([]byte, StaticKeySize)
+
+	ntcp2Ln, _ := startTestNTCP2Listener(t, config)
+
+	// newAltResponderConfig uses a different router hash, so the key change that
+	// follows a rekey is the spec's prescribed behaviour.
+	rotated := newAltResponderConfig(t)
+	rotated.StaticKey = make([]byte, StaticKeySize)
+	for i := range rotated.StaticKey {
+		rotated.StaticKey[i] = byte(0x80 + i)
+	}
+
+	require.NoError(t, ntcp2Ln.UpdateIdentity(rotated))
+	assert.Equal(t, rotated.StaticKey, ntcp2Ln.Config().StaticKey)
+}
+
+// TestNTCP2UpdateIdentity_AllowsFirstPopulation pins the startup path: a listener
+// is normally constructed before its keys are loaded from the keystore, and
+// go-i2p's transport publishes them afterwards. That first fill is not a rotation.
+func TestNTCP2UpdateIdentity_AllowsFirstPopulation(t *testing.T) {
+	config := newTestResponderConfigNoAES(t)
+	require.Empty(t, config.StaticKey, "test requires a listener started without keys")
+
+	ntcp2Ln, _ := startTestNTCP2Listener(t, config)
+
+	filled := config.Clone()
+	filled.StaticKey = make([]byte, StaticKeySize)
+	for i := range filled.StaticKey {
+		filled.StaticKey[i] = byte(i + 1)
+	}
+	filled.ObfuscationIV = make([]byte, IVSize)
+
+	require.NoError(t, ntcp2Ln.UpdateIdentity(filled),
+		"filling in previously-empty key material must be allowed")
+	assert.Equal(t, filled.StaticKey, ntcp2Ln.Config().StaticKey)
+}
+
+// TestNTCP2UpdateIdentity_AllowKeyRotationOverride covers the escape hatch for a
+// caller that has verified the required downtime itself.
+func TestNTCP2UpdateIdentity_AllowKeyRotationOverride(t *testing.T) {
+	config := newTestResponderConfigNoAES(t)
+	config.StaticKey = make([]byte, StaticKeySize)
+	ntcp2Ln, _ := startTestNTCP2Listener(t, config)
+
+	rotated := config.Clone()
+	rotated.BobRouterHash = config.BobRouterHash
+	rotated.StaticKey = make([]byte, StaticKeySize)
+	for i := range rotated.StaticKey {
+		rotated.StaticKey[i] = byte(0xFF)
+	}
+	rotated.AllowKeyRotation = true
+
+	require.NoError(t, ntcp2Ln.UpdateIdentity(rotated))
+	assert.Equal(t, rotated.StaticKey, ntcp2Ln.Config().StaticKey)
+}
+
+// TestNTCP2UpdateIdentity_AliasedConfigRotation detects a rotation performed by
+// mutating the very config pointer the listener holds, which is how go-i2p's
+// transports populate identity material.
+func TestNTCP2UpdateIdentity_AliasedConfigRotation(t *testing.T) {
+	config := newTestResponderConfigNoAES(t)
+	require.Empty(t, config.StaticKey, "listener must start without key material")
+	ntcp2Ln, _ := startTestNTCP2Listener(t, config)
+
+	// Mutate in place, then re-publish the same pointer.
+	config.StaticKey = bytes.Repeat([]byte{0xAB}, StaticKeySize)
+	require.NoError(t, ntcp2Ln.UpdateIdentity(config),
+		"the first fill after construction is not a rotation")
+
+	config.StaticKey = bytes.Repeat([]byte{0xCD}, StaticKeySize)
+	err := ntcp2Ln.UpdateIdentity(config)
+	require.Error(t, err, "an in-place rotation under an unchanged hash must be detected")
+	var oopsErr oops.OopsError
+	require.ErrorAs(t, err, &oopsErr)
+	assert.Equal(t, "KEY_ROTATION_WHILE_UP", oopsErr.Code())
 }

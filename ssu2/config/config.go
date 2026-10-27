@@ -289,6 +289,22 @@ type SSU2Config struct {
 	// Required for responder configs (Initiator=false).
 	RouterInfoValidator func(routerInfo, authenticatedStaticKey []byte) error
 
+	// AllowKeyRotation permits [SSU2Listener.UpdateIdentity] to swap the static key,
+	// intro key or IV while the listener is up, which the spec otherwise forbids.
+	//
+	// ssu2.md §"Public Key and IV Rotation" allows rotation only at startup, after a
+	// downtime long enough that peers holding a cached RouterInfo have dropped it
+	// ("several days at least", "for example one month" with a published SSU2
+	// address, "one day" SSU-only, "as short as two hours" unpublished). Only the
+	// router stores the last-shutdown time needed to check that, so a listener that
+	// cannot see it refuses the rotation and the caller sets this flag once it has
+	// verified the downtime itself. A change of [SSU2Config.RouterHash] — a rekey —
+	// is accepted without this flag, as the spec requires new key material on a
+	// rekey.
+	//
+	// Default: false.
+	AllowKeyRotation bool
+
 	// SessionTokens stores the tokens this router has *received* from peers in
 	// New Token blocks, so a later Session Request can present one instead of
 	// doing a Token Request / Retry round trip.

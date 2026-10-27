@@ -225,6 +225,21 @@ func (nc *Conn) PropagateSipHash() error {
 	return nil
 }
 
+// PaddingModifier returns the NTCP2 padding modifier created during
+// ToConnConfig() for this connection, or nil if no config was stored
+// (SetNTCP2Config was not called) or frame padding is disabled.
+//
+// The router transport layer can use this to apply renegotiated data-phase
+// padding options (from the peer's Options block, see PeerOptions) via
+// SetPaddingRatio and SetPaddingLimits.
+func (nc *Conn) PaddingModifier() *NTCP2PaddingModifier {
+	cfg := nc.ntcp2Config.Load()
+	if cfg == nil {
+		return nil
+	}
+	return cfg.PaddingModifier()
+}
+
 // shouldCloseUnderlyingConn reports whether noiseConn.Close() should be called.
 // Returns false when sendTCPRST already closed the socket via SetLinger+Close,
 // preventing a double-close race on the file descriptor.
@@ -529,6 +544,49 @@ func (nc *Conn) PeerRouterInfoBytes() []byte {
 			out := make([]byte, blockSize-riFlag)
 			copy(out, payload[dataStart+riFlag:dataEnd])
 			return out
+		}
+		off = dataEnd
+	}
+	return nil
+}
+
+// PeerOptions finds the Options block (type 1) inside the message-3 part-2
+// payload and decodes it into an OptionsParams. It returns nil if no payload
+// was captured, the payload is malformed, no Options block is present, or the
+// block data is too short to parse.
+//
+// Each block in the frame has this layout:
+//
+//	byte 0    : block type
+//	bytes 1-2 : block size (two bytes, big-endian) — number of bytes that follow
+//	bytes 3+  : block data (size bytes)
+//
+// The Options block data is the 12-byte tmin/tmax/rmin/rmax/tdmy/rdmy/tdelay/rdelay
+// structure described in the NTCP2 spec §"Options".
+//
+// See [I2P Spec: NTCP2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ntcp2.rst) for details.
+func (nc *Conn) PeerOptions() *OptionsParams {
+	payload := nc.PeerMessage3Payload()
+	if payload == nil {
+		return nil
+	}
+	const blockHeader = 3 // type (1) + size (2)
+	for off := 0; off+blockHeader <= len(payload); {
+		blockType := payload[off]
+		blockSize := int(payload[off+1])<<8 | int(payload[off+2])
+		dataStart := off + blockHeader
+		dataEnd := dataStart + blockSize
+		if dataEnd > len(payload) {
+			return nil // malformed: declared size overruns payload
+		}
+		if blockType == OptionsBlockType {
+			opts, err := ParseOptionsBlock(payload[dataStart:dataEnd])
+			if err != nil {
+				flog("NTCP2Conn.PeerOptions", logger.Fields{"err": err.Error()}).
+					Warn("failed to parse peer options block")
+				return nil
+			}
+			return opts
 		}
 		off = dataEnd
 	}

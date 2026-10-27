@@ -514,7 +514,7 @@ func sendInitiatorMsg1(cfg *Config, nc *noise.NoiseConn, m3p2Len uint16) error {
 // SendSessionConfirmed each hand one assembled buffer to a single
 // boost::asio::async_write.
 func writeMessageAtOnce(raw net.Conn, frame, padding []byte) (int, error) {
-	if tcp, ok := raw.(*net.TCPConn); ok {
+	if tcp := asTCPConn(raw); tcp != nil {
 		// Best-effort: a SetNoDelay failure does not change the required
 		// single-flush outcome, only the kernel-side latency of that flush.
 		_ = tcp.SetNoDelay(true)

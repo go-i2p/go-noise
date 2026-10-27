@@ -271,7 +271,7 @@ func randomAEADTimeout() time.Duration {
 // second close of the same socket, avoiding an fd-reuse double-close race.
 func (nc *Conn) sendTCPRST(conn net.Conn) {
 	flog("NTCP2Conn.sendTCPRST").Debug("Sending TCP RST (abnormal close) per NTCP2 spec")
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
+	if tcpConn := asTCPConn(conn); tcpConn != nil {
 		// These are best-effort cleanup calls. Any failure still leaves the
 		// socket on the path toward close, and the caller treats this as terminal.
 		tcpConn.SetLinger(0) //nolint:errcheck

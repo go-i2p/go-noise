@@ -135,6 +135,13 @@ type Config struct {
 	// PostHandshakeHook goroutine and SipHashModifier() callers.
 	sipHashModifier atomic.Pointer[SipHashLengthModifier]
 
+	// paddingModifier stores the NTCP2 padding modifier created during
+	// ToConnConfig() so it can be passed to NTCP2Conn for data-phase
+	// padding. It is populated only when FramePaddingEnabled is true.
+	// Access is via atomic.Pointer to avoid data races between the
+	// PostHandshakeHook goroutine and PaddingModifier() callers.
+	paddingModifier atomic.Pointer[NTCP2PaddingModifier]
+
 	// ReplayDetector checks for replayed ephemeral keys during handshakes.
 	//
 	// Leave it nil to use the shared process-wide default cache; replay
@@ -146,6 +153,38 @@ type Config struct {
 	// Shared across all responder connections using this config (typically
 	// instantiated once per listener). Initiator connections ignore this field.
 	ReplayDetector ReplayDetector
+
+	// VersionDetector is handed any inbound connection that version detection
+	// identifies as NTCP version 1, so a router published as "NTCP" can serve both
+	// protocol versions from one listener. See ntcp2.md §"Version Detection".
+	//
+	// Detection itself always runs on a responder: "When published as \"NTCP\", the
+	// router must automatically detect the protocol version for incoming
+	// connections." Only the disposition of a version-1 connection is optional —
+	// with a nil detector the listener closes it, because this package implements
+	// NTCP2 only.
+	//
+	// Shared across all responder connections using this config (typically
+	// instantiated once per listener). Initiator connections ignore this field.
+	VersionDetector VersionDetector
+
+	// AllowKeyRotation permits [Listener.UpdateIdentity] to swap the static key or
+	// IV while the listener is up, which the spec otherwise forbids.
+	//
+	// ntcp2.md §"Public Key and IV Rotation" allows rotation only at startup, after
+	// a downtime long enough that peers holding a cached RouterInfo have dropped it
+	// (about one month with a published NTCP2 address, one day SSU-only, two hours
+	// unpublished). Only the router stores the last-shutdown time needed to check
+	// that, so a listener that cannot see it refuses the rotation and the caller
+	// sets this flag once it has verified the downtime itself.
+	//
+	// Default: false.
+	AllowKeyRotation bool
+
+	// VersionDetectTimeout is how long Bob waits for the bytes needed to classify
+	// an inbound connection before deciding on what has arrived. Zero selects
+	// [DefaultVersionDetectTimeout]; the handshake deadline always caps it.
+	VersionDetectTimeout time.Duration
 
 	// AllowReuseAddress, when true, enables the SO_REUSEADDR socket
 	// option for ListenNTCP2. This reduces restart-race delay by allowing
@@ -452,6 +491,42 @@ func (nc *Config) WithLocalRouterInfo(ri []byte) *Config {
 // field.
 func (nc *Config) WithReplayDetector(detector ReplayDetector) *Config {
 	nc.ReplayDetector = detector
+	return nc
+}
+
+// versionDetectWindow returns how long protocol-version detection may wait for
+// bytes on an accepted connection. It never exceeds the handshake timeout, so
+// detection cannot extend the window an unverified peer keeps the connection open.
+func (nc *Config) versionDetectWindow() time.Duration {
+	window := nc.VersionDetectTimeout
+	if window <= 0 {
+		window = DefaultVersionDetectTimeout
+	}
+	if nc.HandshakeTimeout > 0 && nc.HandshakeTimeout < window {
+		window = nc.HandshakeTimeout
+	}
+	return window
+}
+
+// WithVersionDetector sets the handler for inbound connections that version
+// detection identifies as NTCP version 1.
+//
+// An NTCP2-only listener can pass nil and simply have such connections closed; a
+// router published as "NTCP" that also runs an NTCP version 1 transport registers
+// it so the legacy connection is handed over instead of rejected. The detector
+// takes ownership of the connection and must close it.
+func (nc *Config) WithVersionDetector(detector VersionDetector) *Config {
+	nc.VersionDetector = detector
+	return nc
+}
+
+// WithVersionDetectTimeout overrides how long an accepted connection may take to
+// produce the bytes needed to identify its protocol version. Zero restores the
+// default. A value larger than the handshake timeout has no effect — detection is
+// always capped by the handshake deadline so it cannot extend the window an
+// unverified peer keeps open.
+func (nc *Config) WithVersionDetectTimeout(timeout time.Duration) *Config {
+	nc.VersionDetectTimeout = timeout
 	return nc
 }
 
@@ -936,7 +1011,25 @@ func (nc *Config) createPaddingModifierIfEnabled() (handshake.HandshakeModifier,
 			In("ntcp2").
 			Wrap(err)
 	}
+	// Store the modifier on the config so NTCP2Conn can retrieve it via
+	// PaddingModifier() after the handshake, mirroring the SipHash modifier.
+	nc.paddingModifier.Store(mod)
 	return mod, nil
+}
+
+// PaddingModifier returns the NTCP2 padding modifier created during
+// ToConnConfig().
+//
+// It returns nil if frame padding is disabled or ToConnConfig() has not
+// been called. Each call to ToConnConfig() creates a fresh modifier
+// instance, so a config can be reused for multiple connections without
+// sharing padding state.
+//
+// The router transport layer can use this to apply renegotiated data-phase
+// padding options (from the peer's Options block) via SetPaddingRatio and
+// SetPaddingLimits.
+func (nc *Config) PaddingModifier() *NTCP2PaddingModifier {
+	return nc.paddingModifier.Load()
 }
 
 // SipHashModifier returns the SipHash length modifier created during
@@ -993,7 +1086,10 @@ func (nc *Config) Clone() *Config {
 		MaxPaddingSize:       nc.MaxPaddingSize,
 		NetworkID:            nc.NetworkID,
 		MaxClockSkew:         nc.MaxClockSkew,
-		ReplayDetector:       nc.ReplayDetector, // Shared across clones for responder
+		ReplayDetector:       nc.ReplayDetector,  // Shared across clones for responder
+		VersionDetector:      nc.VersionDetector, // Shared across clones for responder
+		VersionDetectTimeout: nc.VersionDetectTimeout,
+		AllowKeyRotation:     nc.AllowKeyRotation,
 	}
 	clone.BobRouterHash = nc.BobRouterHash
 	clone.LocalRouterHash = nc.LocalRouterHash
