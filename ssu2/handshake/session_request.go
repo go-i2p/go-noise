@@ -179,8 +179,10 @@ func (h *HandshakeHandler) ResetForRetry() error {
 		securemem.SecureZero(oldEphem.Private)
 	}
 	h.handshakeState = hs
+	h.cipherMutex.Lock()
 	h.sendCipher = nil
 	h.recvCipher = nil
+	h.cipherMutex.Unlock()
 	h.sessCreateHeaderKey = nil
 	h.sessionConfirmedHeaderKey = nil
 	return nil

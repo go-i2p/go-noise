@@ -3,6 +3,7 @@ package handshake
 import (
 	"encoding/binary"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/go-i2p/crypto/curve25519"
@@ -61,7 +62,28 @@ type HandshakeHandler struct {
 	// handshakeState manages the Noise protocol state machine
 	handshakeState *noise.HandshakeState
 
+	// cipherMutex guards sendCipher / recvCipher.
+	//
+	// These two pointers are written from the handshake goroutine when the
+	// cipher states are split (updateCipherStates), and from the teardown path
+	// (Close, ResetForRetry) when they are dropped and zeroed. They are read
+	// from whichever goroutine is feeding packets into the session
+	// (SSU2Conn.processHandshakePacket calls IsHandshakeComplete on the listener
+	// packet-worker goroutine) and from the goroutine that completes the
+	// handshake. Those are genuinely different goroutines: a session may be
+	// closed the moment it is refused — accept-queue overflow, admission
+	// shedding, a duplicate connection ID — while a retransmit of its
+	// SessionRequest is still being routed to it. Without this lock that is a
+	// data race on key material, and it can be observed by the race detector as
+	// soon as any caller closes an accepted-but-unestablished connection.
+	//
+	// The pair is always read and written together, so one RWMutex protects both
+	// fields; readers only ever need a consistent snapshot of "both present" or
+	// "both nil", never one field independently.
+	cipherMutex sync.RWMutex
+
 	// cipherStates store the transport cipher states after handshake
+	// (guarded by cipherMutex).
 	sendCipher *noise.CipherState
 	recvCipher *noise.CipherState
 
@@ -331,6 +353,14 @@ func NewHandshakeHandlerWithKeys(initiator bool, staticKeypair noise.DHKey, remo
 // all three messages (SessionRequest, SessionCreated, SessionConfirmed).
 func (h *HandshakeHandler) IsHandshakeComplete() bool {
 	flog("IsHandshakeComplete").Debug("checking cipher state availability")
+	h.cipherMutex.RLock()
+	defer h.cipherMutex.RUnlock()
+	return h.ciphersLocked()
+}
+
+// ciphersLocked reports whether both transport cipher states are present. The
+// caller must hold cipherMutex for reading or writing.
+func (h *HandshakeHandler) ciphersLocked() bool {
 	return h.sendCipher != nil && h.recvCipher != nil
 }
 
@@ -338,7 +368,9 @@ func (h *HandshakeHandler) IsHandshakeComplete() bool {
 // Returns error if handshake is not complete.
 func (h *HandshakeHandler) GetCipherStates() (*noise.CipherState, *noise.CipherState, error) {
 	flog("GetCipherStates").Debug("retrieving transport cipher states")
-	if !h.IsHandshakeComplete() {
+	h.cipherMutex.RLock()
+	defer h.cipherMutex.RUnlock()
+	if !h.ciphersLocked() {
 		return nil, nil, oops.Errorf("handshake not complete")
 	}
 	return h.sendCipher, h.recvCipher, nil
@@ -825,6 +857,8 @@ func (h *HandshakeHandler) buildHandshakePacket(blocks []*SSU2Block, msgType uin
 // updateCipherStates updates the send/receive cipher states when available.
 func (h *HandshakeHandler) updateCipherStates(cs1, cs2 *noise.CipherState) {
 	if cs1 != nil && cs2 != nil {
+		h.cipherMutex.Lock()
+		defer h.cipherMutex.Unlock()
 		if h.initiator {
 			h.sendCipher = cs1
 			h.recvCipher = cs2
@@ -849,6 +883,13 @@ func (h *HandshakeHandler) updateCipherStates(cs1, cs2 *noise.CipherState) {
 //
 // See [I2P Spec: SSU2](https://github.com/i2p/i2p.www/blob/master/i2p2www/spec/ssu2.rst) for details.
 func (h *HandshakeHandler) DeriveHeaderKeys() (sendKHeader2, recvKHeader2 []byte, err error) {
+	// Hold the read guard across the derivation: DeriveHeaderKeys installs the
+	// data-phase k_data into each cipher state (UnsafeSetKey), and Close zeroes
+	// those same states, so running the two concurrently would corrupt key
+	// material. The read lock lets other readers see a consistent pair while
+	// excluding the teardown writer.
+	h.cipherMutex.RLock()
+	defer h.cipherMutex.RUnlock()
 	return DeriveHeaderKeys(h.sendCipher, h.recvCipher)
 }
 
@@ -896,12 +937,20 @@ func (h *HandshakeHandler) Close() {
 
 	// Transport cipher keys. ZeroKey also marks the state invalid, so a
 	// post-close Encrypt/Decrypt fails loudly instead of using a zero key.
+	//
+	// Take the write guard: a concurrent reader (IsHandshakeComplete from the
+	// packet worker, or DeriveHeaderKeys completing the handshake) must never
+	// observe a half-zeroed pair or race the nil-out below.
+	h.cipherMutex.Lock()
 	if h.sendCipher != nil {
 		h.sendCipher.ZeroKey()
 	}
 	if h.recvCipher != nil {
 		h.recvCipher.ZeroKey()
 	}
+	h.sendCipher = nil
+	h.recvCipher = nil
+	h.cipherMutex.Unlock()
 
 	// Local static private key and the intermediate header keys (SessCreateHeader
 	// / SessionConfirmed), which are symmetric key material.
@@ -913,11 +962,9 @@ func (h *HandshakeHandler) Close() {
 	h.sessionConfirmedHeaderKey = nil
 
 	// The handshake state itself holds the ephemeral key pair (e) and the
-	// chaining key; drop the reference so it can be collected, and nil the
-	// cipher states so any later use fails rather than reading zeroed keys.
+	// chaining key; drop the reference so it can be collected. The cipher
+	// states were already zeroed and dropped under cipherMutex above.
 	h.handshakeState = nil
-	h.sendCipher = nil
-	h.recvCipher = nil
 }
 
 // ReconfigureReplayCache replaces the replay cache with one using the
