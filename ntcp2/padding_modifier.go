@@ -131,6 +131,17 @@ func (npm *NTCP2PaddingModifier) ModifyOutbound(phase handshake.HandshakePhase, 
 //
 // PhaseFinal (message 3) is skipped — padding in message 3 is inside the
 // encrypted payload and parsed by the block-format layer, not the modifier.
+//
+// The data phase (phase > PhaseFinal) is the only place AEAD padding is
+// stripped, and there the payload is an NTCP2 block stream ([type:1][size:2]
+// [data] repeated), so the padding boundary is resolved from that structure
+// first. See [handshake.PaddingEngine.RemoveTrailingAEADPaddingStructured]:
+// scanning backwards for bytes that look like a padding header truncates an
+// unpadded frame whose last bytes happen to be FE 00 00, and fails closed on a
+// frame carrying two coincidental headers, which lets a remote peer drop a
+// connection with ordinary message content. Frames that do not parse as blocks
+// at all still go through the scan, but the transport's block parser rejects
+// them either way.
 func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, data []byte) ([]byte, error) {
 	npm.mu.Lock()
 	defer npm.mu.Unlock()
@@ -138,7 +149,7 @@ func (npm *NTCP2PaddingModifier) ModifyInbound(phase handshake.HandshakePhase, d
 	flog("NTCP2PaddingModifier.ModifyInbound").Debug("Removing NTCP2 inbound padding")
 
 	if npm.useAEADPadding && phase > handshake.PhaseFinal {
-		return npm.engine.RemoveTrailingAEADPadding(data, npm.engine.Config.MaxPadding)
+		return npm.engine.RemoveTrailingAEADPaddingStructured(data, npm.engine.Config.MaxPadding)
 	} else if !npm.useAEADPadding && phase < handshake.PhaseFinal {
 		return data, nil
 	}

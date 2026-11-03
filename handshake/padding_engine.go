@@ -277,6 +277,83 @@ func (pe *PaddingEngine) RemoveTrailingAEADPadding(data []byte, maxScanPadding i
 	return data[:matchStart], nil
 }
 
+// RemoveTrailingAEADPaddingStructured removes a trailing I2P padding block from
+// a payload that may or may not be an I2P block stream.
+//
+// When the payload parses as a well-formed block stream ([type:1][size:2][data]
+// repeated, which is the NTCP2 data-phase frame format), the padding boundary is
+// taken from the structure: the trailing block is removed if and only if it is a
+// Padding (type 254) block and it is the only one in the frame. Nothing is
+// removed otherwise, including when the frame is padding-free or malformed —
+// deciding what to do about a malformed frame belongs to the transport's block
+// parser, not to the padding layer.
+//
+// When the payload does not parse as a block stream it is treated as opaque and
+// the heuristic scan in [PaddingEngine.RemoveTrailingAEADPadding] is used
+// instead, which is the only thing that can be done for data with no structure
+// to consult.
+//
+// Preferring the structure is what makes this correct where the scan is not. The
+// scan looks for bytes that look like a padding header at the end of the
+// payload, so an *unpadded* payload whose last bytes happen to be FE 00 00 is
+// truncated by three bytes, and a payload carrying two coincidental headers is
+// reported as ambiguous and fails closed. Both are reachable by a remote peer
+// with ordinary message content. Walking the blocks forward reaches those same
+// bytes as data inside the preceding block, so they are never mistaken for a
+// header, and there is never more than one candidate boundary to choose from.
+func (pe *PaddingEngine) RemoveTrailingAEADPaddingStructured(data []byte, maxScanPadding int) ([]byte, error) {
+	if stripped, structural := pe.stripTrailingBlockPadding(data); structural {
+		flog("PaddingEngine.RemoveTrailingAEADPaddingStructured", logger.Fields{"data_len": len(data), "stripped_len": len(stripped)}).Debug("Removed trailing AEAD padding from block stream")
+		return stripped, nil
+	}
+	return pe.RemoveTrailingAEADPadding(data, maxScanPadding)
+}
+
+// stripTrailingBlockPadding walks data as an I2P block stream and reports the
+// payload with any trailing padding block removed.
+//
+// The second result says whether the payload was a block stream at all. When it
+// is false the caller must not trust the first result: the stream was truncated,
+// a block's declared size ran past the end of the frame or exceeded the spec
+// maximum, and the payload has to be handled as opaque.
+func (pe *PaddingEngine) stripTrailingBlockPadding(data []byte) (stripped []byte, structural bool) {
+	offset := 0
+	lastStart := -1
+	lastType := byte(0)
+	paddingBlocks := 0
+
+	for offset < len(data) {
+		if offset+I2PBlockHeaderSize > len(data) {
+			// Truncated block header: not a block stream we can reason about.
+			return data, false
+		}
+		blockType := data[offset]
+		blockSize := int(binary.BigEndian.Uint16(data[offset+1 : offset+I2PBlockHeaderSize]))
+		if blockSize > I2PMaxBlockDataSize || offset+I2PBlockHeaderSize+blockSize > len(data) {
+			// Declared size over the spec maximum (ntcp2.rst:1441) or running
+			// past the end of the frame.
+			return data, false
+		}
+
+		if blockType == I2PPaddingBlockType {
+			paddingBlocks++
+		}
+
+		lastStart = offset
+		lastType = blockType
+		offset += I2PBlockHeaderSize + blockSize
+	}
+
+	// The frame parsed completely, so the structure is authoritative from here
+	// on: strip only a single trailing Padding block, and leave anything else
+	// (no padding, padding not last, more than one padding block) for the
+	// transport's block-ordering validator to judge.
+	if lastStart < 0 || paddingBlocks != 1 || lastType != I2PPaddingBlockType {
+		return data, true
+	}
+	return data[:lastStart], true
+}
+
 func (pe *PaddingEngine) calculateRatioPadding(dataLen int) int {
 	if pe.Config.PaddingRatio > 0.0 {
 		return int(float64(dataLen) * pe.Config.PaddingRatio)
