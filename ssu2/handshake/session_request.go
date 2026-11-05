@@ -288,9 +288,13 @@ func (h *HandshakeHandler) ProcessSessionRequest(packet *SSU2Packet) ([]byte, er
 
 	// After processing message 1 (→ e, es), derive "SessCreateHeader" from
 	// the intermediate chainKey per ssu2.rst "KDF for Session Request".
-	h.sessCreateHeaderKey = deriveIntermediateHeaderKey(
+	sessCreateHeaderKey, err := deriveIntermediateHeaderKey(
 		h.handshakeState.ChainingKey(), "SessCreateHeader",
 	)
+	if err != nil {
+		return nil, err
+	}
+	h.sessCreateHeaderKey = sessCreateHeaderKey
 
 	// Store cipher states
 	h.updateCipherStates(cs1, cs2)

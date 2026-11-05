@@ -15,14 +15,19 @@ import (
 // This is standard HKDF (RFC 5869) with an empty IKM, so it delegates to the
 // canonical go-i2p/crypto/kdf.StandardHKDF one-shot wrapper (salt=chainKey,
 // ikm=ZEROLEN).
-func deriveIntermediateHeaderKey(chainKey []byte, info string) []byte {
+//
+// Derivation failures are returned, never panicked: this runs while processing
+// peer-supplied handshake messages, so a panic here would turn a malformed
+// packet into a router crash. In practice the only reachable failure is an
+// over-long info string (the crypto layer caps it at 255 bytes), and callers
+// pass short spec constants, so the error path is defensive rather than
+// expected.
+func deriveIntermediateHeaderKey(chainKey []byte, info string) ([]byte, error) {
 	key, err := kdf.StandardHKDF(chainKey, nil, []byte(info), 32)
 	if err != nil {
-		// Unreachable: chainKey is a 32-byte chaining key and info is a short
-		// constant, so the HKDF parameter validation can never fail here.
-		panic("ssu2/handshake: deriveIntermediateHeaderKey: " + err.Error())
+		return nil, oops.Wrapf(err, "ssu2/handshake: derive intermediate header key for %q", info)
 	}
-	return key
+	return key, nil
 }
 
 // deriveDataPhaseKeys derives both k_data and k_header_2 for the data phase

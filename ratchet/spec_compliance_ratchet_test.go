@@ -297,9 +297,11 @@ func TestStripECIESControlBlocks_UnknownTypeAsPadding(t *testing.T) {
 
 // TestIsKnownBlockType pins the set of types ecies.md §"5) Payload" defines.
 func TestIsKnownBlockType(t *testing.T) {
-	known := []BlockType{BlockDateTime, BlockTermination, BlockOptions,
+	known := []BlockType{
+		BlockDateTime, BlockTermination, BlockOptions,
 		BlockMessageNumber, BlockNextKey, BlockAck, BlockAckRequest,
-		BlockGarlicClove, BlockPadding}
+		BlockGarlicClove, BlockPadding,
+	}
 	for _, b := range known {
 		assert.True(t, IsKnownBlockType(b), "type %d is defined by the spec", b)
 	}

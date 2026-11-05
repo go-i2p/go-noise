@@ -3,6 +3,7 @@ package handshake
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,7 +41,8 @@ func TestSSU2_KDF_IntermediateHeaderKey(t *testing.T) {
 	info := "SSU2TestInfo"
 
 	// Derive key using the implementation
-	derivedKey := deriveIntermediateHeaderKey(chainKey, info)
+	derivedKey, err := deriveIntermediateHeaderKey(chainKey, info)
+	require.NoError(t, err, "deriving from a valid chain key must not fail")
 	require.Len(t, derivedKey, 32, "derived key must be 32 bytes")
 
 	// Manually reconstruct per spec
@@ -69,8 +71,10 @@ func TestSSU2_KDF_IntermediateHeaderKey_Deterministic(t *testing.T) {
 	info := "SSU2SessionRequest"
 
 	// Derive twice
-	key1 := deriveIntermediateHeaderKey(chainKey, info)
-	key2 := deriveIntermediateHeaderKey(chainKey, info)
+	key1, err := deriveIntermediateHeaderKey(chainKey, info)
+	require.NoError(t, err)
+	key2, err := deriveIntermediateHeaderKey(chainKey, info)
+	require.NoError(t, err)
 
 	// Assert outputs are identical
 	assert.Equal(t, key1, key2, "deriveIntermediateHeaderKey must be deterministic")
@@ -90,14 +94,35 @@ func TestSSU2_KDF_IntermediateHeaderKey_DistinctKeys(t *testing.T) {
 	info2 := "SSU2SessionCreated"
 
 	// Different chain keys, same info
-	key1 := deriveIntermediateHeaderKey(chainKey1, info1)
-	key2 := deriveIntermediateHeaderKey(chainKey2, info1)
+	key1, err := deriveIntermediateHeaderKey(chainKey1, info1)
+	require.NoError(t, err)
+	key2, err := deriveIntermediateHeaderKey(chainKey2, info1)
+	require.NoError(t, err)
 	assert.NotEqual(t, key1, key2, "different chain keys must produce different keys")
 
 	// Same chain key, different info
-	key3 := deriveIntermediateHeaderKey(chainKey1, info1)
-	key4 := deriveIntermediateHeaderKey(chainKey1, info2)
+	key3, err := deriveIntermediateHeaderKey(chainKey1, info1)
+	require.NoError(t, err)
+	key4, err := deriveIntermediateHeaderKey(chainKey1, info2)
+	require.NoError(t, err)
 	assert.NotEqual(t, key3, key4, "different info strings must produce different keys")
+}
+
+// TestSSU2_KDF_IntermediateHeaderKey_OverlongInfoReturnsError is the regression
+// test for the panic that used to sit in deriveIntermediateHeaderKey. The crypto
+// layer rejects info strings longer than its 255-byte defensive bound, so this
+// is the one input that reaches the error path. It must return an error to the
+// caller rather than panicking, because derivation runs while handling
+// peer-supplied handshake messages.
+func TestSSU2_KDF_IntermediateHeaderKey_OverlongInfoReturnsError(t *testing.T) {
+	chainKey := make([]byte, 32)
+	for i := range chainKey {
+		chainKey[i] = byte(i)
+	}
+
+	key, err := deriveIntermediateHeaderKey(chainKey, strings.Repeat("A", 256))
+	assert.Error(t, err, "over-long info must return an error, not panic")
+	assert.Nil(t, key, "no key material is returned when derivation fails")
 }
 
 // TestSSU2_KDF_DeriveHeaderKeys_NilCipherStates verifies error handling when
