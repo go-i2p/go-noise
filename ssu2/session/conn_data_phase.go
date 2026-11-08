@@ -180,6 +180,7 @@ func (h *SSU2Conn) retainBounded(data []byte, addr net.Addr) bool {
 		data: raw,
 		addr: addr,
 	})
+	h.handshakeRetained.Add(1)
 	return true
 }
 

@@ -446,6 +446,13 @@ type SSU2Conn struct {
 	pendingHandshakeDatagrams []pendingHandshakeDatagram
 	pendingHandshakeDataMutex sync.Mutex
 
+	// handshakeRetained counts datagrams that arrived inside the data-phase key
+	// install race and were held instead of dropped, across both entry points (the
+	// connection's own read loop and the listener's fallback). A non-zero value says
+	// the peer answered Session Confirmed immediately; a value pinned at the buffer
+	// bound says the session was losing packets it could never recover.
+	handshakeRetained atomic.Uint64
+
 	// dataPhaseDeadlineTimer bounds the watchdog so a session that does get its
 	// first data packet releases the timer instead of keeping it armed for the
 	// rest of the session.
@@ -722,6 +729,29 @@ func NewMockSSU2Conn(connID uint64) *SSU2Conn {
 	return &SSU2Conn{
 		ssu2Addr:          NewMockSSU2Addr(connID),
 		state:             StateEstablished,
+		closeChan:         make(chan struct{}),
+		forceDestroy:      make(chan struct{}),
+		closedMessageChan: closedChan,
+	}
+}
+
+// NewHandshakingMockSSU2ConnForTest builds a connection that sits in the exact
+// state the listener's data-phase retention fallback is meant for: still
+// handshaking, so a data-phase key install is pending, but with the handshake
+// already complete, so nothing it could be asked to hold would strand it.
+//
+// It exists so the ssu2/server package can test the retention fallback against a
+// real connection. That combination is unreachable from outside this package
+// because the state and the handshake handler are both unexported, and it is the
+// listener-side half of finding 012's addendum. Test use only.
+func NewHandshakingMockSSU2ConnForTest(connID uint64, handler *HandshakeHandler, initiator bool) *SSU2Conn {
+	closedChan := make(chan []byte)
+	close(closedChan)
+	return &SSU2Conn{
+		ssu2Addr:          NewMockSSU2Addr(connID),
+		state:             StateHandshaking,
+		handshakeHandler:  handler,
+		initiator:         initiator,
 		closeChan:         make(chan struct{}),
 		forceDestroy:      make(chan struct{}),
 		closedMessageChan: closedChan,

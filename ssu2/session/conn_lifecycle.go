@@ -331,9 +331,10 @@ func (h *SSU2Conn) GetState() ConnState {
 // Keys: "read_errors", "parse_errors", "decrypt_errors".
 func (h *SSU2Conn) RecvStats() map[string]uint64 {
 	return map[string]uint64{
-		"read_errors":    h.readErrors.Load(),
-		"parse_errors":   h.parseErrors.Load(),
-		"decrypt_errors": h.decryptErrors.Load(),
+		"read_errors":        h.readErrors.Load(),
+		"parse_errors":       h.parseErrors.Load(),
+		"decrypt_errors":     h.decryptErrors.Load(),
+		"handshake_retained": h.handshakeRetained.Load(),
 	}
 }
 
