@@ -195,6 +195,46 @@ func (r *AcceptedSessionRegistry) TrialDeobfuscate(packetData []byte) (*session.
 	return nil, nil, nil
 }
 
+// SessionAwaitingDataProtector returns the connection registered under connID if
+// it is registered, its data-phase inbound protector has NOT been installed yet,
+// and retaining a datagram for it cannot strand the handshake. Nil otherwise.
+//
+// This is the state the race window looks like from the listener's side: the
+// session exists and is being handshaked, its data-phase keys are derived (or
+// about to be) in its own goroutine, and until the protector lands
+// TrialDeobfuscate has nothing to try, so every inbound Data packet for it is
+// dropped. The caller uses this to hand the datagram to the connection's bounded
+// retention buffer instead of losing it.
+//
+// The retention buffer is drained inside finalizeHandshake, so a packet held here
+// must never be one finalizeHandshake is itself waiting for — otherwise the
+// handshake would block on its own buffer. That rules out Session Confirmed, and
+// the two roles are checked differently because only one of them receives it:
+//
+//   - An initiator never receives Session Confirmed; it sends it. Its first
+//     unreadable inbound datagram can only be a data-phase packet, so retaining is
+//     safe unconditionally.
+//   - A responder does receive it, and its SessionConfirmed protector is installed
+//     synchronously in createAndSendSessionCreated before SessionCreated is sent —
+//     so by the time it can be awaiting data keys, the SessionConfirmed stage
+//     already exists and will have claimed any Session Confirmed before this
+//     fallback is reached. If that protector is NOT installed (no intro key, or the
+//     install failed), a Session Confirmed really could land here, so we decline
+//     and the datagram is dropped exactly as it was before this fallback existed.
+func (r *AcceptedSessionRegistry) SessionAwaitingDataProtector(connID uint64) *session.SSU2Conn {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	entry, ok := r.sessions[connID]
+	if !ok || entry.conn == nil || entry.dataInboundProtector != nil {
+		return nil
+	}
+	if !entry.conn.IsInitiator() && entry.sessionConfirmedProtector == nil {
+		return nil
+	}
+	return entry.conn
+}
+
 // Remove unregisters an accepted session from the registry.
 // Safe to call multiple times (idempotent).
 func (r *AcceptedSessionRegistry) Remove(connID uint64) {

@@ -145,6 +145,7 @@ func NewSSU2Config(routerHash data.Hash, initiator bool) (*SSU2Config, error) {
 		ConnectionID:             0,   // Will be generated
 		KeepaliveInterval:        15 * time.Second,
 		IdleTimeout:              5 * time.Minute,
+		DataPhaseTimeout:         13 * time.Second,
 		FragmentTimeout:          10 * time.Second,
 		TokenCacheMaxSize:        10000,
 		GlobalTokenIssuanceRate:  40,

@@ -64,6 +64,14 @@ type SSU2Packet struct {
 	// IPv6 limit. Never serialized on the wire.
 	IsIPv4 bool
 
+	// ResendCount is how many times the contents of this packet have already
+	// been put on the wire. It is never serialized; it travels with the payload
+	// so a retransmission under a fresh packet number keeps the retry budget of
+	// the contents rather than restarting it. ssu2.md §"Packet Numbering"
+	// requires a new number per resend, which changes nothing about how many
+	// resends the contents are allowed. Zero on every freshly built packet.
+	ResendCount int
+
 	// NetworkID is header byte 14 of a long header — the I2P network the packet
 	// belongs to. Deserialize records the value found on the wire; the
 	// config-aware session and listener layers compare it against their own

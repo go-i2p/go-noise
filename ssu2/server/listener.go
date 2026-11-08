@@ -1014,46 +1014,34 @@ func (l *SSU2Listener) registerAndQueueConn(conn *SSU2Conn, connID uint64, remot
 	if regErr := l.acceptedSessions.Register(connID, conn); regErr != nil {
 		flog("registerAndQueueConn", logger.Fields{"conn_id": connID}).WithError(regErr).Warn("failed to register session in AcceptedSessionRegistry; inbound SessionConfirmed/Data will not be decodable")
 	} else {
-		// Wire up SessionConfirmed key notification (responder path only, but
-		// harmless for initiators since notifySessConfirmedKey is a no-op when
-		// sessConfirmedKeyNotifyCh is nil — we set it here for all accepted
-		// sessions since they are all responders).
-		sessConfirmedKeyCh := make(chan *HeaderProtector, 1)
-		conn.SetAcceptedSessionConfirmedKeyNotify(sessConfirmedKeyCh)
-
-		// Wire up data-phase inbound key notification (both roles).
-		recvDataKeyCh := make(chan *HeaderProtector, 1)
-		conn.SetAcceptedDataKeyNotify(recvDataKeyCh)
-
-		// Background goroutines drain the key channels and install protectors.
-		// Each goroutine exits on: key received, session closed, or listener
-		// shutdown — whichever comes first.  l.wg is used so listener.Close()
-		// waits for these goroutines before closing the accept queue.
-		l.wg.Add(1)
-		go func() {
-			defer l.wg.Done()
-			select {
-			case p := <-sessConfirmedKeyCh:
-				if err := l.acceptedSessions.SetSessionConfirmedProtector(connID, p); err != nil {
-					flog("sessConfirmedKeyNotify", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install SessionConfirmed protector in AcceptedSessionRegistry")
-				}
-			case <-conn.CloseChan():
-			case <-l.shutdownChan:
+		// Install the protectors SYNCHRONOUSLY, in the handshake goroutine that
+		// derives them, rather than by handing the key to a background goroutine
+		// through a channel.
+		//
+		// The channel form had two ways to lose every inbound packet for a session
+		// with no error anywhere: the draining goroutine could simply not have run
+		// yet when the packet arrived, and — worse — the notify is a non-blocking
+		// send into a capacity-1 channel that only exists after the listener wires
+		// it, so if the handshake derived the key first the send hit its default
+		// branch and the protector was never installed at all. A datagram the
+		// listener cannot deobfuscate is not recoverable by resending it under a
+		// new number into the same empty entry, so the session was permanently
+		// deaf (finding 012 addendum).
+		//
+		// Both hooks are called from the conn's own handshake goroutine, so the
+		// registry entry is guaranteed present: registration happens before
+		// Handshake() is ever reached.
+		conn.SetSessConfirmedProtectorHook(func(p *HeaderProtector) {
+			if err := l.acceptedSessions.SetSessionConfirmedProtector(connID, p); err != nil {
+				flog("sessConfirmedProtectorHook", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install SessionConfirmed protector in AcceptedSessionRegistry")
 			}
-		}()
+		})
 
-		l.wg.Add(1)
-		go func() {
-			defer l.wg.Done()
-			select {
-			case p := <-recvDataKeyCh:
-				if err := l.acceptedSessions.SetDataPhaseProtector(connID, p); err != nil {
-					flog("recvDataKeyNotify", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install data-phase protector in AcceptedSessionRegistry")
-				}
-			case <-conn.CloseChan():
-			case <-l.shutdownChan:
+		conn.SetDataPhaseProtectorHook(func(p *HeaderProtector) {
+			if err := l.acceptedSessions.SetDataPhaseProtector(connID, p); err != nil {
+				flog("dataPhaseProtectorHook", logger.Fields{"conn_id": connID}).WithError(err).Warn("failed to install data-phase protector in AcceptedSessionRegistry")
 			}
-		}()
+		})
 	}
 
 	// Connection successfully registered; now queue it for accept.

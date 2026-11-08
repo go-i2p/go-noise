@@ -241,6 +241,50 @@ func (hp *HeaderProtector) chaChaOverHeaderExtension(packet []byte, span int) er
 	return nil
 }
 
+// RevealDestConnID returns the destination connection ID of an obfuscated
+// datagram using ONLY k_header_1, without modifying packet.
+//
+// ssu2.rst §"Header Encryption KDF" splits the header masks by key: k_header_1
+// masks bytes 0-7, k_header_2 masks bytes 8-15. For an inbound Data packet
+// k_header_1 is the RECEIVER's introduction key — public, and the very key a
+// listener already holds — while only k_header_2 is the secret KDF-derived
+// recvDataHeader2. So a listener that has not yet obtained a session's data-phase
+// protector can still tell WHICH of its sessions a datagram is addressed to; it
+// simply cannot read the type, the packet number, or the payload.
+//
+// That partial attribution is what lets the listener keep a datagram arriving
+// before the protector is installed instead of dropping it, which finding 012's
+// addendum requires: a datagram the listener cannot deobfuscate is discarded with
+// no trace, and resending it under a fresh packet number into the same
+// protector-less registry entry does not help.
+//
+// ok is false when the datagram is too short to carry a header-protection sample:
+// the mask is drawn from the last 24 bytes, so a short header needs at least
+// 16 + 24 bytes.
+func (hp *HeaderProtector) RevealDestConnID(packet []byte) (uint64, bool) {
+	hp.mu.Lock()
+	defer hp.mu.Unlock()
+
+	if len(hp.kHeader1) != HeaderKeySize || len(packet) < ShortHeaderSize+24 {
+		return 0, false
+	}
+
+	// iv1 = packet[len-24:len-12], per §"Header Encryption KDF".
+	iv1 := make([]byte, 12)
+	copy(iv1, packet[len(packet)-24:len(packet)-12])
+
+	mask, err := hp.generateMask(hp.kHeader1, iv1)
+	if err != nil {
+		return 0, false
+	}
+
+	unmasked := make([]byte, 8)
+	for i := 0; i < 8; i++ {
+		unmasked[i] = packet[i] ^ mask[i]
+	}
+	return binary.BigEndian.Uint64(unmasked), true
+}
+
 // DecryptHeader decrypts the header bytes of an SSU2 packet in place.
 // Per SSU2 spec, decryption order: XOR masks first, then ChaCha20 extension.
 // Reversing this order would use masked bytes as ChaCha input and produce an

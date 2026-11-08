@@ -403,7 +403,16 @@ func (h *SSU2Conn) retransmitExpired() {
 		pp.NextRetry = now.Add(backoff)
 
 		// Per spec: retransmissions must use a fresh packet number.
+		//
+		// The retry count belongs to the contents, not to the number: ssu2.md
+		// §"Packet Numbering" requires a new number per resend, and this is the
+		// only place a packet's contents are re-sent, so the count has to ride
+		// with them. Re-tracking the new packet at zero made maxPacketRetries
+		// unreachable — contents that no peer ever acknowledged were retransmitted
+		// forever, each hop consuming a fresh packet number and a fresh RTO
+		// deadline (finding 012).
 		newPacket := h.newDataPacket()
+		newPacket.ResendCount = pp.Retries
 		newPacket.Payload = make([]byte, len(pp.PlaintextPayload))
 		copy(newPacket.Payload, pp.PlaintextPayload)
 
@@ -588,7 +597,30 @@ func (h *SSU2Conn) sendPacketDirectAndCapture(packet *SSU2Packet) ([]byte, error
 	if packet.MessageType == MessageTypeData {
 		h.validDataPacketsSent.Add(1)
 	}
-	h.updateActivity()
+	// A retransmission is not activity. Refreshing the idle timer on every resend
+	// made the timer unreachable for exactly the sessions that most need it: the
+	// peer answers nothing, we resend forever, and each resend resets the clock
+	// that was supposed to notice (finding 012).
+	//
+	// This does not put live-but-quiet sessions at risk, because the keepalive is
+	// an ACK-only packet: with nothing received it has nothing to acknowledge,
+	// GenerateACK returns nil, and sendImmediateACK writes nothing at all. So the
+	// clock here is refreshed by inbound traffic (parseInboundPacket) and by our
+	// own fresh sends, and a session that hears nothing and has nothing new to
+	// send is reaped by the idle timeout as intended.
+	//
+	// Residual, not addressed by this finding: a session with a continuous stream
+	// of *fresh* outbound packets to a peer that answers nothing still refreshes
+	// the clock from its own sends, so the idle timer cannot reap it. Recovery for
+	// that shape is the retry cap (contents are abandoned once maxPacketRetries is
+	// hit, the loss is reported to congestion control, and the caller is told the
+	// delivery is unconfirmed) plus the data-phase deadline in conn_data_phase.go.
+	// Turning the timer into a pure inbound-activity clock would require the
+	// keepalive to become an ack-eliciting probe, which is a wider change than
+	// this finding.
+	if packet.ResendCount == 0 {
+		h.updateActivity()
+	}
 	h.trackPendingPacket(packet, plaintextPayload, len(datagram))
 
 	return datagram, nil
@@ -772,10 +804,12 @@ func (h *SSU2Conn) trackPendingPacket(packet *SSU2Packet, plaintext []byte, wire
 		Packet:           packet,
 		PlaintextPayload: plaintext,
 		SentTime:         time.Now(),
-		Retries:          0,
-		NextRetry:        time.Now().Add(h.rttEstimator.GetRTO()),
-		WireSize:         wireSize,
-		AckOnly:          ackOnly,
+		// Carried from the packet so a retransmission under a new number keeps
+		// the retry budget of the contents. Zero on a freshly built packet.
+		Retries:   packet.ResendCount,
+		NextRetry: time.Now().Add(h.rttEstimator.GetRTO()),
+		WireSize:  wireSize,
+		AckOnly:   ackOnly,
 	}
 
 	h.pendingMutex.Lock()

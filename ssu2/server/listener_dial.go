@@ -113,29 +113,20 @@ func (l *SSU2Listener) DialSSU2ViaListener(ctx context.Context, remoteAddr *net.
 	// Register in AcceptedSessionRegistry so inbound Data packets (which use a
 	// per-session KDF-derived recvDataHeader2 that the intro-key protector cannot
 	// decode) can be trial-deobfuscated and routed to this connection after the
-	// handshake completes.  The data-phase key is notified via recvDataKeyNotifyCh
-	// once finalizeHandshake calls deriveDataPhaseKeys.
+	// handshake completes.  The data-phase protector is installed synchronously by
+	// the hook below, from the handshake goroutine that derives it, so there is no
+	// window in which the registry holds no protector for this session.
 	// Failures are non-fatal (the handshake still works; only data-phase receive
 	// is degraded if capacity is exceeded).
-	recvDataKeyCh := make(chan *wire.HeaderProtector, 1)
 	if regErr := l.acceptedSessions.Register(sourceConnID, conn); regErr != nil {
 		flog("DialSSU2ViaListener", logger.Fields{"source_conn_id": sourceConnID}).WithError(regErr).Warn("failed to register outbound session in AcceptedSessionRegistry; inbound Data will not be decodable")
 	} else {
-		conn.SetAcceptedDataKeyNotify(recvDataKeyCh)
-		conn.SetCloseHook(func() { l.acceptedSessions.Remove(sourceConnID) })
-
-		l.wg.Add(1)
-		go func() {
-			defer l.wg.Done()
-			select {
-			case p := <-recvDataKeyCh:
-				if err := l.acceptedSessions.SetDataPhaseProtector(sourceConnID, p); err != nil {
-					flog("DialSSU2ViaListener.recvDataKeyNotify", logger.Fields{"source_conn_id": sourceConnID}).WithError(err).Warn("failed to install data-phase protector in AcceptedSessionRegistry")
-				}
-			case <-conn.CloseChan():
-			case <-l.shutdownChan:
+		conn.SetDataPhaseProtectorHook(func(p *HeaderProtector) {
+			if err := l.acceptedSessions.SetDataPhaseProtector(sourceConnID, p); err != nil {
+				flog("dataPhaseProtectorHook", logger.Fields{"source_conn_id": sourceConnID}).WithError(err).Warn("failed to install data-phase protector in AcceptedSessionRegistry")
 			}
-		}()
+		})
+		conn.SetCloseHook(func() { l.acceptedSessions.Remove(sourceConnID) })
 	}
 
 	// Arm the key notification channel so the handshake goroutine can signal

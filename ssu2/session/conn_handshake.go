@@ -264,17 +264,24 @@ func (h *SSU2Conn) notifySessCreateKey() {
 	}
 }
 
-// notifySessConfirmedKey fires the sessConfirmedKeyNotifyCh (if set) with the
-// inbound SessionConfirmed HeaderProtector.  For a responder (isInitiator=false),
+// notifySessConfirmedKey hands the listener the inbound SessionConfirmed
+// HeaderProtector.  For a responder (isInitiator=false),
 // GetProtectorForType(SessionConfirmed) returns k_header_1=introKey and
 // k_header_2=sessionConfirmedHeader2, which are exactly the keys the listener
 // needs to deobfuscate the inbound SessionConfirmed from the initiator.
 // Called from createAndSendSessionCreated after installBothHeaderKeys, while
 // the responder still holds the socket-write goroutine — before the initiator
 // can send SessionConfirmed — so the listener registry is updated in time.
-// Non-blocking; only fires for responder-role connections.
+// Only fires for responder-role connections.
+//
+// Synchronous, for the same reason as notifyRecvDataKey: the install used to be a
+// non-blocking send into a channel drained by another goroutine, so the registry
+// could still hold no protector when SessionConfirmed arrived, and a dropped
+// SessionConfirmed is not recoverable — the initiator retransmits it, but into a
+// registry entry that is still empty.
 func (h *SSU2Conn) notifySessConfirmedKey() {
-	if h.sessConfirmedKeyNotifyCh == nil || h.headerProtector == nil {
+	hook := h.sessConfirmedProtectorHook
+	if hook == nil || h.headerProtector == nil {
 		return
 	}
 	p, err := h.headerProtector.GetProtectorForType(wire.HeaderTypeSessionConfirmed)
@@ -282,19 +289,27 @@ func (h *SSU2Conn) notifySessConfirmedKey() {
 		flog("notifySessConfirmedKey").WithError(err).Warn("could not build SessionConfirmed inbound protector for listener notify")
 		return
 	}
-	select {
-	case h.sessConfirmedKeyNotifyCh <- p:
-	default:
-	}
+	hook(p)
 }
 
-// notifyRecvDataKey fires the recvDataKeyNotifyCh (if set) with the inbound
-// Data-phase HeaderProtector (k_header_1=introKey, k_header_2=recvDataHeader2).
+// notifyRecvDataKey hands the inbound Data-phase HeaderProtector
+// (k_header_1=introKey, k_header_2=recvDataHeader2) to the listener so it can
+// install it in AcceptedSessionRegistry.
 // Called from deriveDataPhaseKeys after SetKDFKeys installs recvDataHeader2.
 // Fires for both initiator and responder connections that share a listener socket.
-// Non-blocking.
+//
+// The install is synchronous, in the handshake goroutine, before
+// deriveDataPhaseKeys returns. It used to be a non-blocking send into a buffered
+// channel drained by a separate goroutine, which had two failure modes that both
+// silently dropped every inbound Data packet for the session: the goroutine could
+// run late (a window, though a short one), and if the notify fired before the
+// listener had wired the channel the send hit its default branch and the
+// protector was never installed at all — permanently, since a packet the listener
+// cannot deobfuscate is not recoverable by resending it under a new number into
+// the same broken registry entry.
 func (h *SSU2Conn) notifyRecvDataKey() {
-	if h.recvDataKeyNotifyCh == nil || h.headerProtector == nil {
+	hook := h.dataPhaseProtectorHook
+	if hook == nil || h.headerProtector == nil {
 		return
 	}
 	p, err := h.headerProtector.GetDataInboundProtector()
@@ -302,10 +317,7 @@ func (h *SSU2Conn) notifyRecvDataKey() {
 		flog("notifyRecvDataKey").WithError(err).Warn("could not build inbound Data protector for listener notify")
 		return
 	}
-	select {
-	case h.recvDataKeyNotifyCh <- p:
-	default:
-	}
+	hook(p)
 }
 
 // awaitSessionCreated waits for a SessionCreated response, handling Retry
@@ -395,23 +407,35 @@ func (h *SSU2Conn) SetListenerKeyNotify(ch chan *wire.HeaderProtector) {
 	h.sessCreateKeyNotifyCh = ch
 }
 
-// SetAcceptedSessionConfirmedKeyNotify arms the SessionConfirmed inbound-key
-// notification channel for responder-role connections sharing a listener socket.
-// The listener calls this after creating an accepted session so it can install
-// the inbound SessionConfirmed header protector in AcceptedSessionRegistry as
-// soon as createAndSendSessionCreated derives the key.
-// The channel must have capacity ≥ 1; the send is non-blocking.
-func (h *SSU2Conn) SetAcceptedSessionConfirmedKeyNotify(ch chan *wire.HeaderProtector) {
-	h.sessConfirmedKeyNotifyCh = ch
+// SetSessConfirmedProtectorHook arms the synchronous SessionConfirmed inbound-key
+// install for responder-role connections sharing a listener socket.
+//
+// The listener calls this after creating an accepted session so the inbound
+// SessionConfirmed header protector reaches AcceptedSessionRegistry inside
+// createAndSendSessionCreated, in the handshake goroutine, rather than on a
+// separate goroutine after it. The hook must not block.
+//
+// It replaces a non-blocking send into a capacity-1 channel: if the notify fired
+// before the listener wired the channel, or if the draining goroutine had not run
+// when the initiator's SessionConfirmed arrived, the registry had no protector for
+// that session and TrialDeobfuscate silently dropped the packet.
+func (h *SSU2Conn) SetSessConfirmedProtectorHook(hook func(*wire.HeaderProtector)) {
+	h.sessConfirmedProtectorHook = hook
 }
 
-// SetAcceptedDataKeyNotify arms the data-phase inbound-key notification channel
-// for connections sharing a listener socket (initiator or responder role).
-// The listener calls this so it can install the inbound Data header protector
-// in AcceptedSessionRegistry as soon as finalizeHandshake derives the data keys.
-// The channel must have capacity ≥ 1; the send is non-blocking.
-func (h *SSU2Conn) SetAcceptedDataKeyNotify(ch chan *wire.HeaderProtector) {
-	h.recvDataKeyNotifyCh = ch
+// SetDataPhaseProtectorHook arms the synchronous data-phase install callback for
+// connections sharing a listener socket (initiator or responder role).
+//
+// The listener calls this so the inbound Data header protector reaches
+// AcceptedSessionRegistry inside deriveDataPhaseKeys, in the handshake goroutine,
+// rather than on a separate goroutine after it. The hook must not block and must
+// not call back into the connection's handshake path.
+//
+// It must be armed before Handshake() is called; a hook armed after the keys were
+// derived is never fired, which is why the listener arms it at registration and
+// why the datagram-retention path in conn_data_phase.go exists at all.
+func (h *SSU2Conn) SetDataPhaseProtectorHook(hook func(*wire.HeaderProtector)) {
+	h.dataPhaseProtectorHook = hook
 }
 
 // CloseChan returns the connection's close channel, which is closed when the
@@ -963,6 +987,16 @@ func (h *SSU2Conn) finalizeHandshake() error {
 
 	h.applyNegotiatedPadding()
 	h.startDataLoops()
+
+	// A data-phase datagram that arrived while this initiator was still
+	// handshaking was kept rather than dropped; now that the data-phase keys are
+	// installed it can be read. Replay it before arming the watchdog, so a peer
+	// that answered Session Confirmed immediately is not waited for.
+	h.flushPendingHandshakeDatagrams()
+
+	// The handshake is not a session until the peer says so. Arm the deadline for
+	// its first data-phase packet (initiator only) — see conn_data_phase.go.
+	h.startDataPhaseWatchdog()
 
 	// ssu2.rst §"Session Confirmed ACK": "Bob sends an ACK of packet 0, which
 	// acknowledges the Session Confirmed message and allows Alice to proceed to

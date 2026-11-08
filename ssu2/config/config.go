@@ -143,6 +143,19 @@ type SSU2Config struct {
 	// Default: 5 minutes.
 	IdleTimeout time.Duration
 
+	// DataPhaseTimeout bounds how long an initiator waits, after sending
+	// Session Confirmed, for the peer's first data-phase packet. ssu2.md
+	// §"Handshake Retransmission" -> §"Session Confirmed" makes that packet the
+	// condition that ends Session Confirmed retransmission, so the spec expects
+	// an endpoint to know whether it arrived; a peer that never sends one has
+	// not completed the handshake and the session must not be kept.
+	//
+	// Default: 13 seconds — the §"Total Timeout" recommendation of 12.5 s plus
+	// the final 5 s Session Confirmed retransmit interval, so a handshake the
+	// spec still considers in progress is never cut short. Zero selects the
+	// default; a negative value disables the deadline.
+	DataPhaseTimeout time.Duration
+
 	// FragmentTimeout is the duration after which incomplete fragment sets
 	// are discarded by the DataHandler. The SSU2 spec does not prescribe a
 	// specific value; 10 seconds matches the Java I2P default.

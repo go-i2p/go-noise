@@ -68,7 +68,32 @@ const (
 
 	// maxPacketRetries is the maximum number of retransmission attempts
 	// before a pending packet is dropped.
+	//
+	// The count is carried across retransmissions: ssu2.md §"Packet Numbering"
+	// requires each resend to use a fresh packet number ("Data Packets are never
+	// retransmitted with the same packet number"), but that is a wire-format
+	// rule, not a licence to restart the retry budget. Resetting it per hop made
+	// this cap unreachable, so content that no peer ever acknowledged was
+	// retransmitted for the life of the session (finding 012).
 	maxPacketRetries = 5
+
+	// dataPhaseWaitTimeout bounds how long the initiator waits for the peer's
+	// first data-phase packet after completing its half of the handshake.
+	//
+	// ssu2.md §"Handshake Retransmission" -> §"Session Confirmed" makes the
+	// arrival of any data message the condition that ends Session Confirmed
+	// retransmission, which means the spec expects Alice to know whether that
+	// condition was ever met. Before it is, the handshake has only succeeded
+	// unilaterally: a responder that rejects Session Confirmed (a stale
+	// RouterInfo, an ACL, a crash after Session Created) sends nothing, and an
+	// initiator with no deadline here keeps a session that reports itself
+	// established forever. Same class as finding 006 for NTCP2.
+	//
+	// The 13 s floor is the spec's own handshake envelope — §"Total Timeout"
+	// "Recommended total timeout is 12.5 seconds" plus the final 5 s SC
+	// retransmit interval — so this can never fire on a handshake the spec
+	// considers still in progress.
+	dataPhaseWaitTimeout = 13 * time.Second
 
 	// retransmitInterval is how often the retransmit loop checks for
 	// expired pending packets.
@@ -87,6 +112,12 @@ const (
 	// context carries a deadline (LEAK-2 / TIMEOUT-1). A stalling peer
 	// would otherwise hold the handshake goroutine open indefinitely.
 	defaultHandshakeTimeout = 30 * time.Second
+
+	// pendingHandshakeDataMax caps how many data-phase packets are buffered
+	// while the data-phase keys are still being installed. The buffer exists so
+	// an immediate first data packet is not lost, not to hold traffic: once it is
+	// full later arrivals are dropped like any other undecryptable packet.
+	pendingHandshakeDataMax = 8
 )
 
 // SSU2Conn implements net.Conn for SSU2 transport connections over UDP.
@@ -282,21 +313,35 @@ type SSU2Conn struct {
 	// The channel has capacity 1; the send is non-blocking (best-effort).
 	sessCreateKeyNotifyCh chan *wire.HeaderProtector
 
-	// sessConfirmedKeyNotifyCh, when non-nil, receives the inbound
-	// SessionConfirmed HeaderProtector (k_header_1 = our intro key,
-	// k_header_2 = KDF-derived sessionConfirmedHeader2) once the responder
-	// derives it in createAndSendSessionCreated. The listener's
-	// AcceptedSessionRegistry uses this to deobfuscate inbound
-	// SessionConfirmed packets.  Capacity 1; send is non-blocking.
-	sessConfirmedKeyNotifyCh chan *wire.HeaderProtector
+	// sessConfirmedProtectorHook, when non-nil, is called SYNCHRONOUSLY from
+	// createAndSendSessionCreated with the inbound SessionConfirmed HeaderProtector
+	// (k_header_1 = our intro key, k_header_2 = KDF-derived
+	// sessionConfirmedHeader2). The listener's AcceptedSessionRegistry uses it to
+	// deobfuscate inbound SessionConfirmed packets.
+	//
+	// A hook rather than a channel, for the same reason as
+	// dataPhaseProtectorHook: a channel hands the install to another goroutine, so
+	// the registry can still be empty when the packet arrives, and a dropped
+	// SessionConfirmed is not recoverable at the listener.
+	sessConfirmedProtectorHook func(*wire.HeaderProtector)
 
-	// recvDataKeyNotifyCh, when non-nil, receives the inbound Data-phase
-	// HeaderProtector (k_header_1 = our intro key, k_header_2 = recvDataHeader2)
-	// once finalizeHandshake derives data-phase keys. The listener's
-	// AcceptedSessionRegistry uses this to deobfuscate inbound Data packets
-	// for all sessions (initiator and responder) sharing the listener socket.
-	// Capacity 1; send is non-blocking.
-	recvDataKeyNotifyCh chan *wire.HeaderProtector
+	// dataPhaseProtectorHook, when non-nil, is called SYNCHRONOUSLY from
+	// deriveDataPhaseKeys with the inbound Data-phase HeaderProtector
+	// (k_header_1 = our intro key, k_header_2 = recvDataHeader2). The listener's
+	// AcceptedSessionRegistry uses it to deobfuscate inbound Data packets for all
+	// sessions (initiator and responder) sharing the listener socket.
+	//
+	// A hook rather than a channel: with a channel the install happened on another
+	// goroutine, so the listener had no protector for this session between the
+	// keys existing and that goroutine running. Inbound Data arriving in the
+	// window was trial-deobfuscated against nothing and dropped, and because SSU2
+	// gives the sender no delivery feedback, a datagram the listener cannot
+	// deobfuscate is not recoverable by resending it under a new number into the
+	// same broken entry (finding 012 addendum). Calling the install inline removes
+	// the handoff entirely; the residual window — a datagram that arrives while
+	// the handshake goroutine is between Register and this hook — is covered by
+	// RetainListenerDatagram.
+	dataPhaseProtectorHook func(*wire.HeaderProtector)
 
 	// migration records the outbound I2NP packets this session has not had
 	// acknowledged, so a replacement session can take them over when ssu2.md
@@ -383,6 +428,29 @@ type SSU2Conn struct {
 
 	// confirmedAckedOnce guards the close of confirmedAcked.
 	confirmedAckedOnce sync.Once
+
+	// peerDataSeen is set when the first data-phase packet from the peer has
+	// been authenticated. The handshake is only then complete in both
+	// directions; until it is set, this initiator holds a session that the peer
+	// may never have accepted. [SSU2Conn.startDataPhaseWatchdog] turns that
+	// condition into a deadline.
+	peerDataSeen atomic.Bool
+
+	// pendingHandshakeDatagrams are raw datagrams that arrived while this
+	// initiator was still handshaking and could not be deobfuscated with the
+	// handshake-phase keys. finalizeHandshake installs the data-phase keys, and
+	// the peer's first Data packet can already be in flight by then, so these are
+	// parsed a second time. [SSU2Conn.retainHandshakeDatagram].
+	//
+	// Guarded by pendingHandshakeDataMutex.
+	pendingHandshakeDatagrams []pendingHandshakeDatagram
+	pendingHandshakeDataMutex sync.Mutex
+
+	// dataPhaseDeadlineTimer bounds the watchdog so a session that does get its
+	// first data packet releases the timer instead of keeping it armed for the
+	// rest of the session.
+	dataPhaseDeadlineTimer *time.Timer
+	dataPhaseDeadlineLock  sync.Mutex
 
 	// closingDatagram is the exact wire bytes of the Termination packet this
 	// session sent when it entered the closing phase, retained so the closing

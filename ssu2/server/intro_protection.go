@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 
+	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
 
@@ -123,6 +124,39 @@ func (l *SSU2Listener) parseInboundPacket(data []byte, from *net.UDPAddr) (*SSU2
 		packet := &SSU2Packet{}
 		if err := packet.Deserialize(deobfuscated); err == nil {
 			return stamp(packet), true
+		}
+	}
+
+	// Retention fallback for the data-phase protector install race.
+	//
+	// Everything above has now declined this datagram, so it is not a handshake
+	// message for any session we know: the SessionConfirmed protector is installed
+	// synchronously before SessionCreated is even sent, so a Session Confirmed was
+	// offered its own stage and failed it. What is left is a data-phase packet for
+	// a session whose recvDataHeader2 protector has not reached the registry yet.
+	//
+	// Header protection masks bytes 0-7 with k_header_1, which for an inbound Data
+	// packet is OUR OWN introduction key — a key the listener holds from startup —
+	// while only bytes 8-15 need the secret KDF-derived k_header_2. So the
+	// destination connection ID can be recovered and used to attribute the
+	// datagram, even though the packet cannot be read.
+	//
+	// Dropping it was not harmless. SSU2 gives the sender no delivery feedback, and
+	// a resend arrives under a fresh packet number into the same protector-less
+	// entry, so a first data packet lost here left the session deaf until the peer
+	// happened to retransmit (finding 012 addendum). The connection replays what we
+	// hand it inside finalizeHandshake, once the protector is installed.
+	if hp := l.introHeaderProtector.Load(); hp != nil {
+		if destConnID, ok := hp.RevealDestConnID(data); ok {
+			if conn := l.acceptedSessions.SessionAwaitingDataProtector(destConnID); conn != nil {
+				if conn.RetainListenerDatagram(data, from) {
+					flog("handleIncomingPacket", logger.Fields{
+						"conn_id":     destConnID,
+						"remote_addr": from.String(),
+					}).Debug("retaining data-phase datagram received before the session's header protector was installed")
+				}
+				return nil, false
+			}
 		}
 	}
 

@@ -118,13 +118,30 @@ func (h *SSU2Conn) copyInboundMessageToBuffer(b, msg []byte) (int, error) {
 // readOnePacket attempts to parse and process a single inbound packet from the given buffer and address.
 // Returns true if the packet was valid (parsed) or false if it should be dropped.
 func (h *SSU2Conn) readOnePacket(buf []byte, addr net.Addr) bool {
+	// Header deobfuscation rewrites the datagram in place and carries no
+	// integrity check of its own — the payload AEAD is what authenticates — so a
+	// parse attempt leaves buf holding a header unmasked under whatever key the
+	// current state implies. Take the wire copy before trying, because the only
+	// sound retry after a new key is installed starts from the bytes as they
+	// arrived. Copying only for a handshaking initiator keeps this off the hot path.
+	var raw []byte
+	if h.awaitingDataPhaseKeys() {
+		raw = make([]byte, len(buf))
+		copy(raw, buf)
+	}
+
 	packet := h.parseInboundPacket(buf, addr)
 	if packet != nil {
 		flog("readOnePacket", logger.Fields{"type": packet.MessageType, "pktnum": packet.PacketNumber}).Debug("Parsed inbound packet")
 		h.ProcessInboundPacket(packet)
 		return true
 	}
-	flog("readOnePacket").Debug("Inbound packet dropped (parse returned nil)")
+	// Nothing parsed. A handshaking initiator keeps the datagram so it can try
+	// again once finalizeHandshake installs the data-phase keys; every other
+	// session drops it, as before. See [SSU2Conn.retainHandshakeDatagram].
+	if !h.retainHandshakeDatagram(raw, addr) {
+		flog("readOnePacket").Debug("Inbound packet dropped (parse returned nil)")
+	}
 	return false
 }
 
@@ -569,8 +586,10 @@ func (h *SSU2Conn) handleReadyDataPacket(readyPacket *SSU2Packet) {
 	// ssu2.md §"Handshake Retransmission" -> §"Session Confirmed" option 2:
 	// retransmit Session Confirmed "until a data message is received". A packet
 	// that reaches this point has decrypted and passed the duplicate filter, so
-	// it is genuinely the peer's data message.
-	h.markSessionConfirmedAcked()
+	// it is genuinely the peer's data message. This is also the moment the
+	// handshake becomes bilateral, which is what the data-phase deadline waits
+	// for (finding 012).
+	h.notePeerDataPacket()
 
 	// Connection migration: this packet has now successfully decrypted
 	// (decryptInboundPayload) and passed the receive-window duplicate filter
