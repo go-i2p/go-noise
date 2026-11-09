@@ -35,10 +35,14 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 		flog("CloseWithReason", logger.Fields{"reason": reason}).Debug("Closing SSU2 connection")
 		h.closeReason.Store(uint32(reason))
 		h.closeReasonSet.Store(true)
-		// Update state first
-		h.stateMutex.Lock()
-		h.state = StateClosing
-		h.stateMutex.Unlock()
+		// The state transition happens AFTER the Termination packet is sent and its
+		// bytes captured, below. ssu2.md §"Session Termination" -> §"Data phase"
+		// orders it that way anyway ("After sending or receiving a Termination block,
+		// the session should enter the closing phase"), and the closing-phase answer
+		// depends on it: resendClosingTermination only runs once the state reads
+		// StateClosing, and it can only re-send bytes that were already captured.
+		// Transitioning first opened a window in which a session was in the closing
+		// phase with nothing to re-send.
 
 		// Send Termination block (best effort)
 		// Spec §Termination: validDataPacketsReceived(8 bytes, big-endian) + reason(1 byte) + additionalData
@@ -91,6 +95,15 @@ func (h *SSU2Conn) CloseWithReason(reason TerminationReason, additionalData []by
 				socketDead = isSocketDeadError(err)
 			}
 		}
+
+		// Enter the closing phase only now that the retransmission bytes above are
+		// captured, so the state change implies a closing-phase answer is possible.
+		// This holds whether or not the send succeeded: a session whose Termination
+		// could not be written still spends the destroy window in the closing phase,
+		// exactly as before.
+		h.stateMutex.Lock()
+		h.state = StateClosing
+		h.stateMutex.Unlock()
 
 		// Per spec §Termination: wait briefly for the peer's Termination
 		// response before tearing down the session. This avoids lingering

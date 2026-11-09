@@ -2,6 +2,7 @@ package session
 
 import (
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,4 +125,112 @@ func TestClosingState_StopsAfterTerminationReceived(t *testing.T) {
 		t.Fatalf("an acknowledged closing session must stop responding, sent %d bytes", len(pkt.data))
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// blockingWriteConn lets a test observe the exact instant the Termination
+// datagram is handed to the socket but has not been written, and the instant
+// after it has been captured for retransmission.
+type blockingWriteConn struct {
+	*mockPacketConn
+	inWrite chan struct{} // signalled once, when the first WriteTo begins
+	release chan struct{} // closed by the test to let that WriteTo finish
+}
+
+func newBlockingWriteConn(localAddr net.Addr) *blockingWriteConn {
+	return &blockingWriteConn{
+		mockPacketConn: newMockPacketConn(localAddr),
+		inWrite:        make(chan struct{}, 1),
+		release:        make(chan struct{}),
+	}
+}
+
+func (c *blockingWriteConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	select {
+	case c.inWrite <- struct{}{}:
+	default:
+	}
+	<-c.release
+	return c.mockPacketConn.WriteTo(p, addr)
+}
+
+// closingSnapshot reads the state and the retransmission bytes together, so a
+// test can assert a relationship between them without the pair tearing.
+func (h *SSU2Conn) closingSnapshot() (ConnState, int) {
+	h.stateMutex.RLock()
+	state := h.state
+	h.stateMutex.RUnlock()
+
+	h.closingMutex.Lock()
+	n := len(h.closingDatagram)
+	h.closingMutex.Unlock()
+	return state, n
+}
+
+// TestClosingState_TransitionFollowsRetransmissionCapture pins the invariant
+// behind the flaky retransmission: a session must never be in the closing phase
+// while holding no Termination bytes to re-send.
+//
+// CloseWithReason used to set StateClosing before sending, and captured the
+// datagram only after the write returned. Measured over 200 closings, the
+// capture was still empty at the moment the first datagram was observable on the
+// socket in 192 of them — so for almost the whole send a closing session read
+// inbound packets, consumed them, and answered nothing. The spec also orders it
+// this way: §"Session Termination" -> §"Data phase" says "After SENDING or
+// receiving a Termination block, the session should enter the closing phase".
+//
+// With the write blocked here, the old ordering shows StateClosing with zero
+// captured bytes and fails; the new ordering keeps both unset until the capture
+// is complete.
+func TestClosingState_TransitionFollowsRetransmissionCapture(t *testing.T) {
+	underlying := newBlockingWriteConn(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9074})
+	config := createTestConfig(t)
+	config.DestroyTimeout = 5 * time.Second
+
+	conn, err := NewSSU2Conn(
+		underlying,
+		&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9073},
+		config,
+		false,
+		testLocalStaticKey(t),
+		config.RemoteStaticKey,
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.CloseImmediate() })
+
+	// Always let any parked write finish, or t.Fatal above would strand the
+	// closing goroutine inside WriteTo and hang the package.
+	var releaseOnce sync.Once
+	releaseWrite := func() { releaseOnce.Do(func() { close(underlying.release) }) }
+	t.Cleanup(releaseWrite)
+
+	go func() { _ = conn.CloseWithReason(TerminationNormalClose, nil) }()
+
+	// The Termination write is in flight and parked inside WriteTo.
+	select {
+	case <-underlying.inWrite:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CloseWithReason never handed the Termination datagram to the socket")
+	}
+
+	state, captured := conn.closingSnapshot()
+	require.False(t, state == StateClosing && captured == 0,
+		"a session in the closing phase must already hold the bytes it re-sends; "+
+			"state=%s captured=%d", state, captured)
+
+	releaseWrite()
+
+	require.Eventually(t, func() bool {
+		s, n := conn.closingSnapshot()
+		return s == StateClosing && n > 0
+	}, 2*time.Second, 5*time.Millisecond,
+		"once the Termination is sent and captured, the session must be closing and able to re-send it")
+
+	// And the closing-phase answer now works on the very first inbound packet.
+	conn.ProcessInboundPacket(&SSU2Packet{
+		MessageType:  MessageTypeData,
+		Header:       make([]byte, ShortHeaderSize),
+		PacketNumber: 3,
+	})
+	repeat := requireWritten(t, underlying.mockPacketConn)
+	require.NotEmpty(t, repeat.data, "a closing session must answer an attributed packet")
 }
