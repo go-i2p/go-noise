@@ -380,8 +380,9 @@ func TestListenerIntegration_AddressInfo(t *testing.T) {
 
 	serverStaticKey := make([]byte, 32)
 	serverConfig = serverConfig.WithStaticKey(serverStaticKey)
-
-	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 12345})
+	// Port 0 lets the kernel pick a free port, so the test doesn't collide with
+	// anything already bound to a fixed port.
+	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
 	require.NoError(t, err)
 
 	listener, err := NewSSU2Listener(pc, serverConfig)

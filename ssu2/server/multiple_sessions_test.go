@@ -44,7 +44,11 @@ func newMultiSessionHarness(t *testing.T) *multiSessionHarness {
 	serverConfig.WithStaticKey(serverStaticPriv)
 	serverConfig.IntroKey = serverIntroKey
 	serverConfig.RouterInfoValidator = DefaultRouterInfoValidator
-	serverConfig.WithHandshakeTimeout(5 * time.Second).WithDestroyTimeout(100 * time.Millisecond)
+	// Only the destroy wait is shortened: it is what would otherwise make each
+	// superseded session linger for 11 s. The handshake keeps the spec-recommended
+	// budgets (12-15 s per message, 20 s total) — a tight per-message cap turns
+	// ordinary retransmission under CI load into a spurious handshake failure.
+	serverConfig.WithDestroyTimeout(100 * time.Millisecond)
 
 	listener, err := ListenSSU2(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0}, serverConfig)
 	require.NoError(t, err)
@@ -92,36 +96,46 @@ func (h *multiSessionHarness) dialAlice(t *testing.T) (initiator, responder *SSU
 		WithRemoteRouterHash(serverHash).
 		WithRemoteStaticKey(mustDerivePublic(t, h.serverCfg.StaticKey)).
 		WithLocalRouterInfo(h.aliceRI).
-		WithDestroyTimeout(100 * time.Millisecond).
-		WithHandshakeTimeout(5 * time.Second)
+		WithDestroyTimeout(100 * time.Millisecond)
 	config.IntroKey = h.aliceIntroKey
 	config.RemoteIntroKey = h.serverIntroKey
 
 	respAddr := h.listener.Addr().(*SSU2Addr).UnderlyingAddr().(*net.UDPAddr)
 
-	accepted := make(chan *SSU2Conn, 1)
+	type acceptedConn struct {
+		conn *SSU2Conn
+		err  error
+	}
+	accepted := make(chan acceptedConn, 1)
 	go func() {
 		conn, aerr := h.listener.Accept()
 		if aerr != nil {
-			accepted <- nil
+			accepted <- acceptedConn{err: aerr}
 			return
 		}
 		sc := conn.(*SSU2Conn)
-		hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer hcancel()
-		_ = sc.Handshake(hctx)
-		accepted <- sc
+		// No explicit deadline: the responder handshake applies the config's own
+		// budgets, and a hand-picked cap shorter than those budgets only turns a
+		// slow-but-valid handshake under load into a failure.
+		if herr := sc.Handshake(context.Background()); herr != nil {
+			accepted <- acceptedConn{err: herr}
+			return
+		}
+		accepted <- acceptedConn{conn: sc}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Let the config's own handshake budgets govern both sides: a caller deadline
+	// shorter than those budgets would reintroduce the failure this test was hitting.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	initiator, err = DialSSU2WithConn(socket, respAddr, config)
 	require.NoError(t, err)
 	require.NoError(t, initiator.Handshake(ctx), "initiator handshake must complete")
 
-	responder = <-accepted
-	require.NotNil(t, responder, "the listener must accept the connection")
+	result := <-accepted
+	require.NoError(t, result.err, "the listener must accept and complete the handshake")
+	responder = result.conn
 	return initiator, responder, socket
 }
 
