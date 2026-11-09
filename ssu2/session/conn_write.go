@@ -384,6 +384,14 @@ func (h *SSU2Conn) retransmitExpired() {
 	decisions := make([]pending, 0, len(h.pendingPackets))
 	requeued := make([]*SSU2Packet, 0, len(h.pendingPackets))
 
+	// rekeys pairs each retransmission with the number it replaced, so the
+	// migration tracker can follow the contents onto the fresh number instead of
+	// recording them a second time.
+	type rekey struct {
+		from, to uint32
+	}
+	rekeys := make([]rekey, 0, len(h.pendingPackets))
+
 	for pn, pp := range h.pendingPackets {
 		if now.Before(pp.NextRetry) {
 			continue
@@ -416,6 +424,11 @@ func (h *SSU2Conn) retransmitExpired() {
 		newPacket.Payload = make([]byte, len(pp.PlaintextPayload))
 		copy(newPacket.Payload, pp.PlaintextPayload)
 
+		// The contents move to a new number, so the migration record must move with
+		// them; otherwise note() records the same I2NP again under newPacket's
+		// number and a superseded session replays it once per resend.
+		rekeys = append(rekeys, rekey{from: pn, to: newPacket.PacketNumber})
+
 		// Remove the old entry and hand its bytes back: sendPacketDirect
 		// re-adds them for the new packet number, so leaving the old entry
 		// counted would double the in-flight total on every retransmit.
@@ -424,6 +437,17 @@ func (h *SSU2Conn) retransmitExpired() {
 		requeued = append(requeued, newPacket)
 	}
 	h.pendingMutex.Unlock()
+
+	// Move each retransmitted packet's migration record onto its new number before
+	// the resend reaches the send loop: trackPendingPacket calls note() under the
+	// new number, and rekeying first makes that note() a no-op instead of a second
+	// copy of the same I2NP message.
+	h.migrationMutex.Lock()
+	migration := h.migration
+	h.migrationMutex.Unlock()
+	for _, rk := range rekeys {
+		migration.rekey(rk.from, rk.to)
+	}
 
 	for _, d := range decisions {
 		h.releaseInFlight(d.entry)

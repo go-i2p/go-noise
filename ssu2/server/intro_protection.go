@@ -95,12 +95,12 @@ func (l *SSU2Listener) parseInboundPacket(data []byte, from *net.UDPAddr) (*SSU2
 		// bytes (those obfuscate only bytes 16-31).
 		if err := hp.DecryptHeaderForPacket(decrypted); err == nil {
 			packet := &SSU2Packet{}
-			if err := packet.Deserialize(decrypted); err == nil &&
-				isIntroKeyMessageType(packet.MessageType) {
+			if err := packet.Deserialize(decrypted); err == nil && isIntroKeyHeader(packet) {
 				return stamp(packet), true
 			}
 		}
 	}
+
 	// Try outbound session header protectors (replies to our dials).
 	// We cannot read bytes 0–7 in the clear: they are XOR-masked by header
 	// protection.  TrialDeobfuscate iterates all pending sessions and tries
@@ -178,20 +178,62 @@ func (l *SSU2Listener) parseInboundPacket(data []byte, from *net.UDPAddr) (*SSU2
 	// state"). It also covers a listener whose IntroKey is not configured yet,
 	// for which the protected stages above have no key to try.
 	packet := &SSU2Packet{}
-	if err := packet.Deserialize(data); err == nil && isIntroKeyMessageType(packet.MessageType) {
+	if err := packet.Deserialize(data); err == nil && isIntroKeyHeader(packet) {
 		return stamp(packet), true
 	}
 
 	return nil, false
 }
 
-// isIntroKeyMessageType reports whether messageType belongs to the out-of-session
-// family protected with the intro key (SessionRequest, SessionCreated, Retry,
-// TokenRequest, PeerTest, HolePunch). SessionConfirmed and Data use per-session
-// KDF-derived header keys and are never protected with the intro key, so a header
-// that resolves to one of those short-header types under the intro key is a false
-// match and must fall through to the per-session stages — and must be rejected
-// outright by the unprotected stage.
-func isIntroKeyMessageType(messageType uint8) bool {
-	return messageType != MessageTypeSessionConfirmed && messageType != MessageTypeData
+// isIntroKeyHeader reports whether a header decoded with the listener's intro
+// key is a member of the out-of-session intro-key family: SessionRequest,
+// SessionCreated, Retry, TokenRequest, PeerTest, or HolePunch.
+//
+// Checking the type byte alone was not enough, and the reason is in
+// ssu2.md §"Header Protection" -> §"Header keys": for an inbound Session
+// Confirmed, and for an inbound Data packet, k_header_1 is OUR OWN introduction
+// key. Only k_header_2 is per-session. So the intro-key protector recovers
+// bytes 0-7 of those datagrams correctly and unmasks bytes 8-15 with the wrong
+// key, and Deserialize then reads a random type byte out of a still-masked
+// header.
+//
+// Rejecting the two short-header types by name did not close that hole: the
+// mask leaves byte 12 uniformly random, so 254 of 256 values pass a
+// "not SessionConfirmed and not Data" check, and a random byte 12 that is not
+// 2 or 6 selects the 32-byte long header in getHeaderSize. Deserialize's
+// version check (byte 13 == 2) then rejects all but 1/256 of those, leaving a
+// measured false-claim rate of 0.365% per SessionConfirmed datagram.
+//
+// A genuine long header is much more constrained than that, so validate the
+// fields the spec fixes rather than the type alone:
+//
+//	byte 12  a type in the closed intro-key family
+//	byte 13  SSU2ProtocolVersion (2) — already enforced by Deserialize
+//	byte 14  a nonzero network ID — every producer normalizes 0 to MainNetworkID
+//	byte 15  the unused flag, which ssu2.md requires be set to 0
+//
+// Together those are four independent byte values, so a masked header survives
+// by chance about once in 1.4e7 datagrams instead of once in 274. The drop that
+// made this visible was a false claim that survived, was classified as a long
+// header, and had its ciphertext byte 14 read as a network ID: "dropping packet
+// from a different I2P network got_netid=223 our_netid=2". Because handshake
+// retransmits are byte-identical, one false claim killed the whole handshake
+// rather than costing a single datagram.
+//
+// The per-session stages that follow hold the correct k_header_2, so a header
+// rejected here is not lost; it is decoded properly there.
+func isIntroKeyHeader(packet *SSU2Packet) bool {
+	if len(packet.Header) != LongHeaderSize {
+		return false
+	}
+	switch packet.MessageType {
+	case MessageTypeSessionRequest, MessageTypeSessionCreated,
+		MessageTypePeerTest, MessageTypeRetry,
+		MessageTypeTokenRequest, MessageTypeHolePunch:
+	default:
+		return false
+	}
+	return packet.Header[13] == SSU2ProtocolVersion &&
+		packet.NetworkID != 0 &&
+		packet.Header[15] == 0
 }

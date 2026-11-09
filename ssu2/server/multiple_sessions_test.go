@@ -213,20 +213,27 @@ func TestMultipleSessions_TerminatesOldWithReason22(t *testing.T) {
 func TestMultipleSessions_MigratesUnacknowledgedMessages(t *testing.T) {
 	h := newMultiSessionHarness(t)
 
-	_, first, _ := h.dialAlice(t)
+	_, first, firstPeerSocket := h.dialAlice(t)
 	oldConnID := first.GetSSU2Addr().ConnectionID()
 
-	// Queue an outbound I2NP message on Bob's first session and leave it
-	// unacknowledged: Write goes through the send queue, and startDataLoops is
-	// running, so it seals and records without any peer acknowledging it.
+	// The message must be genuinely unacknowledged, which means stopping the peer
+	// from acknowledging it. An ACK retires the migration record, so leaving Alice
+	// live races her ~1 s ACK against the second handshake: at idle the handshake
+	// wins in ~9 ms, but under load it takes longer than the ACK window and the
+	// backlog is empty before the replacement session can adopt it.
 	_, err := first.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08})
 	require.NoError(t, err)
+	require.NoError(t, firstPeerSocket.Close())
+
 	// Recording happens when the send loop seals the packet, not at Write.
 	require.Eventually(t, func() bool { return first.MigrationTracker().Len() == 1 },
 		3*time.Second, 20*time.Millisecond,
 		"an unacknowledged outbound I2NP packet must be tracked")
 
-	_, second, _ := h.dialAlice(t)
+	_, second, secondPeerSocket := h.dialAlice(t)
+	// Silence the replacement peer too, or its ACK drains the migrated record
+	// before the assertion below can observe it.
+	require.NoError(t, secondPeerSocket.Close())
 
 	require.Eventually(t, func() bool {
 		return h.listener.router.GetSession(oldConnID) == nil
@@ -236,9 +243,9 @@ func TestMultipleSessions_MigratesUnacknowledgedMessages(t *testing.T) {
 	// an outstanding I2NP packet of its own.
 	require.Eventually(t, func() bool {
 		tracker := second.MigrationTracker()
-		return tracker != nil && tracker.Len() >= 1
+		return tracker != nil && tracker.Len() == 1
 	}, 5*time.Second, 50*time.Millisecond,
-		"the unacknowledged message must be re-sent on the replacement session")
+		"the unacknowledged message must be re-sent exactly once on the replacement session")
 
 	assert.Zero(t, first.MigrationTracker().Len(),
 		"the old session's backlog must be drained, not duplicated")

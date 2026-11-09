@@ -204,3 +204,47 @@ func TestEstablishedHook_NotFiredBeforeFinalize(t *testing.T) {
 	})
 	assert.False(t, fired, "the established hook runs only at handshake completion")
 }
+
+// TestMigrationTracker_RetransmitKeepsSingleEntry covers the interaction between
+// §"Packet Numbering" and §"Multiple Sessions". Each resend of an I2NP packet must
+// use a fresh packet number, and tracking keys on the packet number — so without a
+// record that follows the contents, every retransmit adds a new entry for the same
+// logical message. A session superseded after several resends would then replay the
+// one message several times onto its replacement, which is the duplicate send
+// §"Multiple Sessions" exists to prevent.
+func TestMigrationTracker_RetransmitKeepsSingleEntry(t *testing.T) {
+	conn, underlying := migrationResponderConn(t)
+	conn.TrackOutboundI2NP()
+
+	sendDataPacket(t, conn, underlying, i2npBlock())
+	require.Equal(t, 1, conn.MigrationTracker().Len(),
+		"the message is recorded once when first sent")
+
+	// Retransmit repeatedly, the way an unacknowledged packet would be.
+	for i := 0; i < 4; i++ {
+		conn.pendingMutex.Lock()
+		for _, entry := range conn.pendingPackets {
+			entry.NextRetry = time.Now().Add(-time.Second)
+		}
+		conn.pendingMutex.Unlock()
+
+		conn.retransmitExpired()
+		transmitQueued(t, conn, underlying)
+
+		assert.Equal(t, 1, conn.MigrationTracker().Len(),
+			"a retransmit must move the record, not add a second copy (pass %d)", i)
+	}
+
+	// The contents are still tracked under the number the peer will acknowledge,
+	// so an ACK of the most recent packet retires the record entirely.
+	conn.pendingMutex.Lock()
+	var latest uint32
+	for pn := range conn.pendingPackets {
+		latest = pn
+	}
+	conn.pendingMutex.Unlock()
+
+	conn.retireAckedPackets([]uint32{latest})
+	assert.Zero(t, conn.MigrationTracker().Len(),
+		"acknowledging the retransmitted number must retire the migrated record")
+}

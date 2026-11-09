@@ -125,6 +125,59 @@ func (m *migrationTracker) retire(numbers []uint32) {
 	}
 }
 
+// rekey moves the record of a message from the packet number it first went out
+// on to the fresh number its retransmission uses.
+//
+// ssu2.md §"Packet Numbering" requires a resend to carry a new number, so without
+// this the same I2NP contents would be recorded once per attempt: note() keys by
+// packet number, and each resend brings a new one. A superseded session would then
+// migrate one logical message several times, replaying it on the replacement
+// session — exactly the duplicate send §"Multiple Sessions" is written to prevent.
+//
+// Rekeying also keeps the entry pointed at the number the peer most recently saw,
+// so the ACK that finally arrives retires it.
+func (m *migrationTracker) rekey(from, to uint32) {
+	if m == nil || from == to {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	msg, ok := m.pending[from]
+	if !ok {
+		// Never recorded (a non-I2NP packet), or already retired by an ACK.
+		return
+	}
+	delete(m.pending, from)
+	if _, exists := m.pending[to]; exists {
+		// note() recorded the new number first; keep the newer key but drop the
+		// stale one so the contents are still tracked exactly once.
+		m.order = removeNumber(m.order, from)
+		return
+	}
+	msg.packetNumber = to
+	m.pending[to] = msg
+	// Replace in place to preserve send order.
+	for i, num := range m.order {
+		if num == from {
+			m.order[i] = to
+			return
+		}
+	}
+	m.order = append(m.order, to)
+}
+
+// removeNumber returns numbers with every occurrence of n dropped.
+func removeNumber(numbers []uint32, n uint32) []uint32 {
+	out := numbers[:0]
+	for _, num := range numbers {
+		if num != n {
+			out = append(out, num)
+		}
+	}
+	return out
+}
+
 // take removes and returns every recorded message in send order.
 func (m *migrationTracker) take() []migratedMessage {
 	if m == nil {
