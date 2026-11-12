@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"net"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -157,6 +158,27 @@ func (l *SSU2Listener) matchesNetworkID(packet *SSU2Packet) bool {
 // - For TokenRequest, processes directly if routing fails
 // - All other routing failures are silently ignored
 func (l *SSU2Listener) handleIncomingPacket(data []byte, remoteAddr *net.UDPAddr) {
+	// I2P-004: recover-and-drop at the packet-worker join. This is the first
+	// point where one datagram of untrusted remote input is processed on a
+	// worker goroutine, and everything downstream — parseInboundPacket,
+	// matchesNetworkID, processTokenRequest, the out-of-session PeerTest /
+	// HolePunch callbacks into the path managers, and RoutePacket for a brand
+	// new session — runs inline with no upstream recover seam. A panic in any
+	// of them would otherwise kill the router process. (Packets that reach an
+	// established session are additionally protected by the session-side seam
+	// in ProcessInboundPacket; this seam covers the listener-level work that
+	// never reaches a session.)
+	defer func() {
+		if r := recover(); r != nil {
+			atomic.AddUint64(&l.routingErrors, 1)
+			flog("handleIncomingPacket", logger.Fields{
+				"remote_addr": remoteAddr.String(),
+				"data_len":    len(data),
+				"panic":       r,
+				"stack":       string(debug.Stack()),
+			}).Error("recovered from panic processing inbound packet; dropping packet")
+		}
+	}()
 	flog("handleIncomingPacket", logger.Fields{"remote_addr": remoteAddr.String(), "data_len": len(data)}).Debug("handleIncomingPacket: processing received packet")
 	packet, ok := l.parseInboundPacket(data, remoteAddr)
 	if !ok {

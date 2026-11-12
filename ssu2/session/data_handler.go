@@ -241,7 +241,12 @@ func (h *DataHandler) StartReaper() {
 			case <-h.stopReaper:
 				return
 			case <-ticker.C:
-				h.cleanupStaleFragments()
+				// I2P-004: the reaper runs on its own goroutine with no
+				// upstream recover seam, and the fragment state it walks is
+				// built from remote input, so a panic here would otherwise
+				// kill the router process. Recover so one bad tick costs a
+				// skipped cleanup interval, not the process.
+				recoverTick("DataHandler.reaper", h.cleanupStaleFragments)
 			}
 		}
 	}()

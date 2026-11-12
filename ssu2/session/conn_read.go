@@ -3,12 +3,64 @@ package session
 import (
 	"encoding/binary"
 	"net"
+	"runtime/debug"
 	"time"
 
 	"github.com/go-i2p/go-noise/internal/iobuf"
 	"github.com/go-i2p/logger"
 	"github.com/samber/oops"
 )
+
+// recoverPacket processes one inbound packet with panic recovery, dropping the
+// packet if the handler panics. I2P-004: every inbound packet is untrusted
+// remote input, and the handlers it reaches — the DataHandler callbacks
+// (Path Challenge/Response, Relay, PeerTest), the receive window, the
+// reliability layer — run inline with no upstream recover seam on this
+// goroutine. A panic anywhere in that chain would otherwise kill the whole
+// router process, making any callback bug remotely triggerable process death.
+//
+// This is the session-side seam, placed at ProcessInboundPacket because it is
+// the single funnel every inbound packet passes through: the own-socket read
+// path (recvLoop → readOnePacket), the handshake-replay path
+// (finalizeHandshake → flushPendingHandshakeDatagrams), and the listener-routed
+// path (PacketRouter.RoutePacket) all converge here. Recovering here protects
+// all three goroutines at once. The listener worker has its own seam at
+// handleIncomingPacket, which additionally covers listener-level parsing and
+// routing.
+//
+// The panic is logged with a stack and the packet dropped; the goroutine
+// survives to process the next packet. This is a last-resort seam: a panic
+// still means this packet was lost, but the session and process stay alive.
+func recoverPacket(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			flog("recoverPacket", logger.Fields{
+				"panic": r,
+				"stack": string(debug.Stack()),
+			}).Error("recovered from panic processing inbound packet; dropping packet")
+		}
+	}()
+	fn()
+}
+
+// recoverTick runs a periodic maintenance function (a cleanup tick) and
+// recovers from any panic it raises. I2P-004: background cleanup goroutines
+// run with no upstream recover seam, and the state they walk is built from
+// remote input, so a panic there is remotely triggerable process death. The
+// panic is logged with the tick's name; the goroutine survives to the next
+// tick, so a bad tick costs one skipped cleanup interval, not the process.
+func recoverTick(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			flog("recoverTick", logger.Fields{
+				"tick":  name,
+				"panic": r,
+				"stack": string(debug.Stack()),
+			}).Error("recovered from panic in cleanup tick; skipping this interval")
+		}
+	}()
+	fn()
+}
 
 // validateReadyForIO checks that the connection is in the Established state
 // and ready for read/write operations.
@@ -441,6 +493,15 @@ func (h *SSU2Conn) keepaliveLoop() {
 // Parameters:
 //   - packet: The parsed SSU2Packet to process
 func (h *SSU2Conn) ProcessInboundPacket(packet *SSU2Packet) {
+	// I2P-004: this is the single funnel every inbound packet passes through,
+	// so the recover-and-drop seam lives here and protects every goroutine
+	// that delivers a packet (own-socket recvLoop, handshake replay, listener
+	// router). See recoverPacket.
+	recoverPacket(func() { h.processInboundPacket(packet) })
+}
+
+// processInboundPacket is the panic-recovered body of ProcessInboundPacket.
+func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 	// ssu2.md §"Session Termination" -> §"Data phase": "After sending or receiving
 	// a Termination block, the session should enter the closing phase … A session
 	// in the closing state sends a packet containing a Termination block in
