@@ -186,8 +186,32 @@ func TestRelay6StepProcess(t *testing.T) {
 	// === Step 6: Alice → Charlie: SessionRequest ===
 	t.Log("Step 6: Alice sends SessionRequest to Charlie")
 
+	// The response Alice processes here is a distinct message from the Hole
+	// Punch handled in step 5: it carries its own (fresh) timestamp and thus a
+	// fresh signature. The coordinator's replay cache (PATH-007) is keyed by
+	// signature bytes and rejects an exact replay of an already-accepted
+	// message, so reusing step 5's block verbatim would (correctly) be refused.
+	// hpTimestamp+1 stays well within the 5-minute clock-skew window while
+	// guaranteeing distinct signed data and therefore a distinct signature.
+	respTimestamp := hpTimestamp + 1
+	respSignature, err := SignRelayResponse(alice.hpSignPriv, relayTestBobHash,
+		relayIntro.Nonce, respTimestamp, ssu2ProtocolVersion,
+		uint16(charlie.addr.Port), charlie.addr.IP)
+	require.NoError(t, err)
+	respBlock := &RelayResponseBlock{
+		Flag:        0,
+		Code:        0,
+		Nonce:       relayIntro.Nonce,
+		Timestamp:   respTimestamp,
+		Version:     ssu2ProtocolVersion,
+		CharliePort: uint16(charlie.addr.Port),
+		CharlieIP:   charlie.addr.IP,
+		Signature:   respSignature,
+		Token:       make([]byte, 8),
+	}
+
 	// Alice processes the hole punch response
-	err = alice.holePunchCoord.ProcessHolePunchResponse(sessionID, charlie.addr, dummyBlock)
+	err = alice.holePunchCoord.ProcessHolePunchResponse(sessionID, charlie.addr, respBlock)
 	require.NoError(t, err)
 
 	attempt = alice.holePunchCoord.GetAttempt(sessionID)
@@ -555,13 +579,17 @@ func TestConcurrentRelayOperations(t *testing.T) {
 		tagSet[tag] = true
 	}
 
-	// Verify all tags validate correctly
+	// All 20 tags are live in the manager at this point. Check the live-tag
+	// count before validation, because ValidateRelayTag consumes each tag on
+	// success (PATH-007 single-use semantics), which would otherwise drain the
+	// map to zero.
+	stats := bob.relayMgr.GetStats()
+	assert.Equal(t, numClients, stats["relay_tags"])
+
+	// Verify all tags validate correctly (each validation consumes its tag).
 	for i, tag := range tags {
 		assert.True(t, bob.relayMgr.ValidateRelayTag(tag, clients[i].addr))
 	}
-
-	stats := bob.relayMgr.GetStats()
-	assert.Equal(t, numClients, stats["relay_tags"])
 }
 
 // TestRelayMessageRoundTrip tests full message serialization round trips.
