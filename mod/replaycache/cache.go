@@ -202,7 +202,9 @@ func (c *TTLCache) cleanupLoop() {
 		case <-c.done:
 			return
 		case <-ticker.C:
-			c.evictExpired()
+			// I2P-004: cleanupLoop runs unrecovered; a panic in evictExpired would
+			// kill the router. recoverTick skips one cleanup interval instead.
+			recoverTick("replayCleanupLoop", c.evictExpired)
 		}
 	}
 }

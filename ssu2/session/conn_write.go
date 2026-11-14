@@ -322,27 +322,34 @@ func (h *SSU2Conn) sendLoop() {
 	for {
 		select {
 		case packet := <-h.sendQueue:
-			// Congestion/pacing gate. ssu2.md §"Congestion Control" points at
-			// RFC 9002, whose §7.2 requires a sender to respect the congestion
-			// window before releasing a packet. Without this check the controller
-			// computes a cwnd that nothing obeys, and the immediate-ACK heuristic
-			// that reads AvailableWindow() can never see a full window.
-			//
-			// ACK-only packets are explicitly exempt — §"Congestion Control":
-			// "ACK-only data packets … are not congestion-controlled" — so
-			// blocking on the window can never deadlock the peer's loss recovery.
-			if err := h.waitForWindow(packet); err != nil {
-				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err.Error()}).
-					Debug("dropping packet: congestion window stayed closed")
-				h.retireDroppedPacket(packet)
-				continue
-			}
+			// I2P-004: sendLoop runs on its own goroutine with no upstream recover
+			// seam, and the packet it transmits carries state derived from remote
+			// input (the congestion window, the packet the peer is acking). A panic
+			// here would otherwise kill the whole router process. recoverTick keeps
+			// the loop alive; a panic costs one dropped packet, not the process.
+			recoverTick("sendLoop", func() {
+				// Congestion/pacing gate. ssu2.md §"Congestion Control" points at
+				// RFC 9002, whose §7.2 requires a sender to respect the congestion
+				// window before releasing a packet. Without this check the controller
+				// computes a cwnd that nothing obeys, and the immediate-ACK heuristic
+				// that reads AvailableWindow() can never see a full window.
+				//
+				// ACK-only packets are explicitly exempt — §"Congestion Control":
+				// "ACK-only data packets … are not congestion-controlled" — so
+				// blocking on the window can never deadlock the peer's loss recovery.
+				if err := h.waitForWindow(packet); err != nil {
+					flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err.Error()}).
+						Debug("dropping packet: congestion window stayed closed")
+					h.retireDroppedPacket(packet)
+					return
+				}
 
-			if err := h.sendPacketDirect(packet); err != nil {
-				h.writeErrors.Add(1)
-				flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err}).Error("UDP write failed")
-				continue
-			}
+				if err := h.sendPacketDirect(packet); err != nil {
+					h.writeErrors.Add(1)
+					flog("sendLoop", logger.Fields{"pktNum": packet.PacketNumber, "error": err}).Error("UDP write failed")
+					return
+				}
+			})
 		case <-h.closeChan:
 			return
 		}
@@ -361,7 +368,10 @@ func (h *SSU2Conn) retransmitLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			h.retransmitExpired()
+			// I2P-004: retransmitExpired walks pendingPackets, whose contents derive
+			// from remote input; a panic in this unrecovered goroutine would kill the
+			// router. recoverTick skips one tick instead.
+			recoverTick("retransmitLoop", h.retransmitExpired)
 		case <-h.closeChan:
 			return
 		}

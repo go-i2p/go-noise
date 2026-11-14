@@ -130,7 +130,10 @@ func (sm *SessionManager) StartCleanupLoop(ctx context.Context) {
 		for {
 			select {
 			case <-ticker.C:
-				sm.CleanupExpiredSessions()
+				// I2P-004: this cleanup loop runs unrecovered and walks garlic
+				// session state derived from remote input; a panic would kill the
+				// router. recoverTick skips one cleanup interval instead.
+				recoverTick("ratchet.CleanupLoop", func() { sm.CleanupExpiredSessions() })
 			case <-ctx.Done():
 				return
 			case <-sm.ctx.Done():

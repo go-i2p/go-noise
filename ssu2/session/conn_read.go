@@ -439,37 +439,59 @@ func (h *SSU2Conn) keepaliveLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			h.lastActivityLock.RLock()
-			timeSinceActivity := time.Since(h.lastActivity)
-			h.lastActivityLock.RUnlock()
-
-			// Check if we need to send keepalive
-			if timeSinceActivity >= h.config.KeepaliveInterval {
-				// Send an ACK-only packet as keepalive. ssu2.rst has no
-				// dedicated keepalive section; ACKs are described under
-				// "Congestion Control".
-				h.sendImmediateACK()
-			}
-
-			// Check for timeout (configurable idle timeout).
-			idleTimeout := h.config.IdleTimeout
-			if idleTimeout <= 0 {
-				idleTimeout = 5 * time.Minute
-			}
-			if timeSinceActivity >= idleTimeout {
-				h.closeMutex.Lock()
-				h.closeErr = oops.Errorf("idle timeout")
-				h.closeMutex.Unlock()
-				// Run close in a separate goroutine to avoid deadlock.
-				// keepaliveLoop is counted in h.wg, so if we call h.Close() directly,
-				// it will call h.wg.Wait() and deadlock waiting for this goroutine to finish.
-				go h.Close()
+			// I2P-004: keepaliveLoop runs unrecovered; a panic in the tick would
+			// kill the router. keepaliveTick recovers and reports whether to stop.
+			if h.keepaliveTick() {
 				return
 			}
 		case <-h.closeChan:
 			return
 		}
 	}
+}
+
+// keepaliveTick runs one keepalive/timeout check with panic recovery. It
+// returns true when the connection should be closed for idle timeout. A panic
+// is logged and the tick is skipped (returns false), so the loop survives.
+func (h *SSU2Conn) keepaliveTick() (stop bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			flog("keepaliveLoop", logger.Fields{
+				"panic": r,
+				"stack": string(debug.Stack()),
+			}).Error("recovered from panic in keepalive tick; skipping this interval")
+			stop = false
+		}
+	}()
+
+	h.lastActivityLock.RLock()
+	timeSinceActivity := time.Since(h.lastActivity)
+	h.lastActivityLock.RUnlock()
+
+	// Check if we need to send keepalive
+	if timeSinceActivity >= h.config.KeepaliveInterval {
+		// Send an ACK-only packet as keepalive. ssu2.rst has no
+		// dedicated keepalive section; ACKs are described under
+		// "Congestion Control".
+		h.sendImmediateACK()
+	}
+
+	// Check for timeout (configurable idle timeout).
+	idleTimeout := h.config.IdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = 5 * time.Minute
+	}
+	if timeSinceActivity >= idleTimeout {
+		h.closeMutex.Lock()
+		h.closeErr = oops.Errorf("idle timeout")
+		h.closeMutex.Unlock()
+		// Run close in a separate goroutine to avoid deadlock.
+		// keepaliveLoop is counted in h.wg, so if we call h.Close() directly,
+		// it will call h.wg.Wait() and deadlock waiting for this goroutine to finish.
+		go h.Close()
+		return true
+	}
+	return false
 }
 
 // ProcessInboundPacket processes a received packet by routing it to the appropriate

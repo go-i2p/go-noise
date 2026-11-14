@@ -142,6 +142,17 @@ func (l *SSU2Listener) DialSSU2ViaListener(ctx context.Context, remoteAddr *net.
 	// fires, so the ordering is guaranteed on a non-adversarial link).
 	hsErrCh := make(chan error, 1)
 	go func() {
+		// I2P-004: Handshake parses untrusted SessionCreated bytes on this
+		// goroutine with no upstream recover seam; a panic would otherwise kill
+		// the router. Recover and report it as a handshake error so the select
+		// below (which always drains hsErrCh) cannot deadlock.
+		defer func() {
+			if r := recover(); r != nil {
+				flog("DialSSU2ViaListener", logger.Fields{"panic": r}).
+					Error("recovered from panic in outbound handshake goroutine")
+				hsErrCh <- oops.Errorf("panic in outbound handshake: %v", r)
+			}
+		}()
 		hsErrCh <- conn.Handshake(ctx)
 	}()
 

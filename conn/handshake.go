@@ -345,6 +345,17 @@ func (nc *Conn) executeRoleBasedHandshake(ctx context.Context) error {
 	watcherDone := make(chan struct{})
 	defer close(watcherDone)
 	go func() {
+		// I2P-004: this watcher runs on its own goroutine with no upstream
+		// recover seam; a panic would otherwise kill the router. Recover and log.
+		defer func() {
+			if r := recover(); r != nil {
+				nc.logger.WithFields(i2plogger.Fields{
+					"pkg":   "noise",
+					"func":  "executeRoleBasedHandshake",
+					"panic": r,
+				}).Error("recovered from panic in handshake deadline watcher")
+			}
+		}()
 		select {
 		case <-ctx.Done():
 			if err := nc.underlying.SetDeadline(time.Now()); err != nil {

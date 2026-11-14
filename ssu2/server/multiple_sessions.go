@@ -87,6 +87,15 @@ func (l *SSU2Listener) supersedePeerSession(conn *SSU2Conn) {
 	// close hook deregisters it from the routing maps. It blocks for the destroy
 	// window, so it goes on its own goroutine.
 	go func() {
+		// I2P-004: this close runs on its own goroutine with no upstream recover
+		// seam; a panic in CloseWithReason would otherwise kill the router.
+		// Recover and log; the superseded session is being discarded anyway.
+		defer func() {
+			if r := recover(); r != nil {
+				flog("supersedePeerSession", logger.Fields{"panic": r}).
+					Error("recovered from panic closing superseded session")
+			}
+		}()
 		if err := old.CloseWithReason(TerminationReplacedByNewSession, nil); err != nil {
 			flog("supersedePeerSession", logger.Fields{
 				"old_conn_id": previousID,

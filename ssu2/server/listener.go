@@ -1545,11 +1545,15 @@ func (l *SSU2Listener) tokenCleanupLoop() {
 		case <-l.shutdownChan:
 			return
 		case <-ticker.C:
-			l.tokenCache.Cleanup()
-			// Clean up stale first-sight entries so the tracker does not grow
-			// to maxEntries and never shrink, which would permanently bypass
-			// the first-sight gate for any addresses in the full map.
-			l.firstSight.Cleanup()
+			// I2P-004: tokenCleanupLoop runs unrecovered and walks caches fed by
+			// remote input; a panic would kill the router. recoverTick skips one tick.
+			recoverTick("tokenCleanupLoop", func() {
+				l.tokenCache.Cleanup()
+				// Clean up stale first-sight entries so the tracker does not grow
+				// to maxEntries and never shrink, which would permanently bypass
+				// the first-sight gate for any addresses in the full map.
+				l.firstSight.Cleanup()
+			})
 		}
 	}
 }

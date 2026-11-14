@@ -396,7 +396,9 @@ func (r *PendingOutboundRegistry) cleanupLoop() {
 		case <-r.stopChan:
 			return
 		case <-ticker.C:
-			r.removeStale()
+			// I2P-004: cleanupLoop runs unrecovered; a panic in removeStale would
+			// kill the router. recoverTick skips one cleanup interval instead.
+			recoverTick("outboundCleanupLoop", r.removeStale)
 		}
 	}
 }

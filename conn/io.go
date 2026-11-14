@@ -422,6 +422,14 @@ func (nc *Conn) terminateNonceExhausted(direction string) {
 		"remote_addr", nc.RemoteAddr().String())
 	nc.ZeroKeys()
 	go func() {
+		// I2P-004: this close runs on its own goroutine with no upstream recover
+		// seam; a panic in Close would otherwise kill the router. Recover and log.
+		defer func() {
+			if r := recover(); r != nil {
+				nc.logger.Error("recovered from panic closing session after nonce exhaustion",
+					"panic", r)
+			}
+		}()
 		if err := nc.Close(); err != nil {
 			nc.logger.Debug("close after nonce exhaustion returned an error", "error", err.Error())
 		}

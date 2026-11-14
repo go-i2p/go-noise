@@ -249,30 +249,34 @@ func (km *KeepaliveManager) keepaliveLoop() {
 	for {
 		select {
 		case <-tickC:
-			km.mutex.RLock()
-			timeSinceSent := time.Since(km.lastSent)
-			timeSinceRecv := time.Since(km.lastRecv)
-			km.mutex.RUnlock()
+			// I2P-004: keepaliveLoop runs unrecovered; a panic in the tick would
+			// kill the router. recoverTick skips one keepalive interval instead.
+			recoverTick("keepaliveLoop", func() {
+				km.mutex.RLock()
+				timeSinceSent := time.Since(km.lastSent)
+				timeSinceRecv := time.Since(km.lastRecv)
+				km.mutex.RUnlock()
 
-			// Send keepalive if we haven't sent anything recently
-			if timeSinceSent >= km.interval {
-				if err := km.conn.SendKeepalive(); err != nil {
-					// Surface the failure: connection may recover on the next
-					// tick, but silently dropping this signal hides packet-loss
-					// and firewall/NAT timeout events from operators.
-					failures := km.keepaliveFailures.Add(1)
-					wrapped := oops.Wrapf(err, "failed to send keepalive")
-					flog("keepaliveLoop", logger.Fields{"error": wrapped, "failures": failures}).Warn("keepaliveLoop: SendKeepalive failed")
-				} else {
-					// Update lastSent timestamp after successful send
-					km.UpdateLastSent()
+				// Send keepalive if we haven't sent anything recently
+				if timeSinceSent >= km.interval {
+					if err := km.conn.SendKeepalive(); err != nil {
+						// Surface the failure: connection may recover on the next
+						// tick, but silently dropping this signal hides packet-loss
+						// and firewall/NAT timeout events from operators.
+						failures := km.keepaliveFailures.Add(1)
+						wrapped := oops.Wrapf(err, "failed to send keepalive")
+						flog("keepaliveLoop", logger.Fields{"error": wrapped, "failures": failures}).Warn("keepaliveLoop: SendKeepalive failed")
+					} else {
+						// Update lastSent timestamp after successful send
+						km.UpdateLastSent()
+					}
 				}
-			}
 
-			// Note: Dead connection detection (timeSinceRecv >= timeout)
-			// is handled by the caller via IsAlive() checks.
-			// We don't close the connection here to maintain separation of concerns.
-			_ = timeSinceRecv // Used implicitly via IsAlive()
+				// Note: Dead connection detection (timeSinceRecv >= timeout)
+				// is handled by the caller via IsAlive() checks.
+				// We don't close the connection here to maintain separation of concerns.
+				_ = timeSinceRecv // Used implicitly via IsAlive()
+			})
 
 		case <-km.stopChan:
 			return
