@@ -85,6 +85,15 @@ func (h *SSU2Conn) teardownUnconfirmedSession() {
 	// spec's closing exchange and other implementations expect it, so it is kept
 	// and run off this goroutine.
 	go func() {
+		// I2P-004: this one-shot close runs on its own goroutine with no upstream
+		// recover seam; a panic in CloseWithReason would otherwise kill the router.
+		// Recover and log; the session is being closed anyway.
+		defer func() {
+			if r := recover(); r != nil {
+				flog("dataPhaseDeadline", logger.Fields{"panic": r}).
+					Error("recovered from panic closing session that never received a data packet")
+			}
+		}()
 		if err := h.CloseWithReason(TerminationSessionConfirmedError, nil); err != nil {
 			flog("dataPhaseDeadline", logger.Fields{"error": err.Error()}).
 				Debug("failed to close session that never received a data packet")

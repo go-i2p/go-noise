@@ -151,6 +151,14 @@ func (c *Conn) Handshake(ctx context.Context) (retErr error) {
 	if dl, ok := hsCtx.Deadline(); ok {
 		if warnIn := time.Until(dl) - 5*time.Second; warnIn > 0 {
 			go func() {
+				// I2P-004: this warn-timer goroutine runs unrecovered; a panic
+				// would otherwise kill the router. Recover and log.
+				defer func() {
+					if r := recover(); r != nil {
+						flog("Handshake", logger.Fields{"panic": r}).
+							Error("recovered from panic in handshake deadline warn timer")
+					}
+				}()
 				select {
 				case <-time.After(warnIn):
 					flog("Handshake", logger.Fields{
