@@ -1,7 +1,9 @@
 package server
 
 import (
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,4 +47,70 @@ func TestHandleIncomingPacket_RecoveredPanics(t *testing.T) {
 	// The recovered panic is counted as a routing error so operators can see it.
 	assert.NotZero(t, l.Stats()["routing_errors"],
 		"a recovered panic must increment the routing_errors counter")
+}
+
+// TestTokenCleanupLoop_RecoveredPanics proves the I2P-004 seam guarding
+// tokenCleanupLoop (REC-003): the tick body calls tokenCache.Cleanup() and
+// firstSight.Cleanup(), both fed by remote input. A nil tokenCache dereferences
+// its mutex and panics — the exact failure the seam must contain. recoverTick
+// must swallow it so the cleanup goroutine survives to the next tick rather
+// than killing the router.
+func TestTokenCleanupLoop_RecoveredPanics(t *testing.T) {
+	l := newTestListenerWithIntroKey(t, randomKey(t))
+
+	origCache := l.tokenCache
+	l.tokenCache = nil
+	defer func() { l.tokenCache = origCache }()
+
+	// The tick body must panic with a nil cache — this is the panic the seam catches.
+	require.Panics(t, func() { l.tokenCache.Cleanup() })
+
+	// The seam must contain that same panic.
+	assert.NotPanics(t, func() {
+		recoverTick("tokenCleanupLoop", func() {
+			l.tokenCache.Cleanup()
+			l.firstSight.Cleanup()
+		})
+	}, "recoverTick must recover a panic from the token-cleanup tick")
+}
+
+// TestTokenCleanupLoopSurvivesPanic proves the cleanup goroutine keeps ticking
+// after a recovered panic. tokenCleanupInterval is 60s, too long to drive a
+// live tick in-test, so this exercises the loop contract the seam provides: a
+// ticker loop whose body panics every tick, guarded by recoverTick, must keep
+// ticking rather than dying.
+func TestTokenCleanupLoopSurvivesPanic(t *testing.T) {
+	var ticks int
+	var mu sync.Mutex
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				recoverTick("tokenCleanupLoop", func() {
+					mu.Lock()
+					ticks++
+					mu.Unlock()
+					panic("simulated token-cache panic")
+				})
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("token cleanup loop stopped after a recovered panic")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	require.Greater(t, ticks, 1, "token cleanup loop must keep ticking after a recovered panic")
 }

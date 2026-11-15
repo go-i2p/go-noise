@@ -463,7 +463,10 @@ func (krm *KeyRotationManager) runRotationChecker() {
 		case <-krm.stopCh:
 			return
 		case <-ticker.C:
-			krm.checkRotation()
+			// I2P-004: the rotation checker runs on its own goroutine with no
+			// upstream recover seam; recoverTick keeps it alive across a bad
+			// tick instead of letting a panic kill the router.
+			recoverTick("keyRotationChecker", krm.checkRotation)
 		}
 	}
 }

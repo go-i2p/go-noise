@@ -381,9 +381,11 @@ func (l *SSU2Listener) Close() error {
 		// Trigger forceDestroy channel closure to signal cancellation of the
 		// DestroyTimeout wait. Use a goroutine per session to avoid blocking
 		// on individual channel operations.
-		go func(c *SSU2Conn) {
-			c.TriggerForceDestroy()
-		}(conn)
+		// I2P-004: safeGo contains a panic in the force-destroy trigger so it
+		// can't kill the router during shutdown.
+		safeGo("forceDestroy", func() {
+			conn.TriggerForceDestroy()
+		})
 	}
 
 	// Close the underlying connection first to unblock ReadFrom in

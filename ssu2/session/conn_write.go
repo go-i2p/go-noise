@@ -385,14 +385,14 @@ func (h *SSU2Conn) retransmitExpired() {
 	now := time.Now()
 	rto := h.rttEstimator.GetRTO()
 
-	h.pendingMutex.Lock()
-
+	// decisions, requeued and rekeys are built under pendingMutex in the closure
+	// below and consumed after the lock is released, so they are declared outside it.
 	type pending struct {
 		entry *PendingPacket
 		alive bool
 	}
-	decisions := make([]pending, 0, len(h.pendingPackets))
-	requeued := make([]*SSU2Packet, 0, len(h.pendingPackets))
+	var decisions []pending
+	var requeued []*SSU2Packet
 
 	// rekeys pairs each retransmission with the number it replaced, so the
 	// migration tracker can follow the contents onto the fresh number instead of
@@ -400,53 +400,71 @@ func (h *SSU2Conn) retransmitExpired() {
 	type rekey struct {
 		from, to uint32
 	}
-	rekeys := make([]rekey, 0, len(h.pendingPackets))
+	var rekeys []rekey
 
-	for pn, pp := range h.pendingPackets {
-		if now.Before(pp.NextRetry) {
-			continue
-		}
+	// I2P-004 / REC-001: the loop below calls newDataPacket() and walks
+	// pendingPackets, whose contents derive from remote input, so a panic here is
+	// reachable. retransmitExpired runs under recoverTick, which recovers in its own
+	// frame; a plain Unlock at the end of the section would be skipped by the
+	// unwinding panic and leak pendingMutex, wedging every other pendingMutex holder
+	// (trackPendingPacket, notePacketLosses, retireAckedPackets, and the next
+	// retransmit tick) for the life of the connection — turning a recoverable crash
+	// into a permanent send-side hang. The section therefore runs in a closure whose
+	// Unlock is deferred: it still releases before the slow migration/congestion
+	// work below, and it releases on the panic path too.
+	func() {
+		h.pendingMutex.Lock()
+		defer h.pendingMutex.Unlock()
 
-		if pp.Retries >= maxPacketRetries {
-			// The packet is abandoned: its bytes leave the in-flight total and
-			// the loss is reported (§"Congestion Control", RFC 9002 §7).
+		decisions = make([]pending, 0, len(h.pendingPackets))
+		requeued = make([]*SSU2Packet, 0, len(h.pendingPackets))
+		rekeys = make([]rekey, 0, len(h.pendingPackets))
+
+		for pn, pp := range h.pendingPackets {
+			if now.Before(pp.NextRetry) {
+				continue
+			}
+
+			if pp.Retries >= maxPacketRetries {
+				// The packet is abandoned: its bytes leave the in-flight total and
+				// the loss is reported (§"Congestion Control", RFC 9002 §7).
+				delete(h.pendingPackets, pn)
+				decisions = append(decisions, pending{entry: pp, alive: false})
+				continue
+			}
+
+			pp.Retries++
+			// Exponential backoff: double the RTO for each retry
+			backoff := rto * time.Duration(1<<pp.Retries)
+			pp.NextRetry = now.Add(backoff)
+
+			// Per spec: retransmissions must use a fresh packet number.
+			//
+			// The retry count belongs to the contents, not to the number: ssu2.md
+			// §"Packet Numbering" requires a new number per resend, and this is the
+			// only place a packet's contents are re-sent, so the count has to ride
+			// with them. Re-tracking the new packet at zero made maxPacketRetries
+			// unreachable — contents that no peer ever acknowledged were retransmitted
+			// forever, each hop consuming a fresh packet number and a fresh RTO
+			// deadline (finding 012).
+			newPacket := h.newDataPacket()
+			newPacket.ResendCount = pp.Retries
+			newPacket.Payload = make([]byte, len(pp.PlaintextPayload))
+			copy(newPacket.Payload, pp.PlaintextPayload)
+
+			// The contents move to a new number, so the migration record must move with
+			// them; otherwise note() records the same I2NP again under newPacket's
+			// number and a superseded session replays it once per resend.
+			rekeys = append(rekeys, rekey{from: pn, to: newPacket.PacketNumber})
+
+			// Remove the old entry and hand its bytes back: sendPacketDirect
+			// re-adds them for the new packet number, so leaving the old entry
+			// counted would double the in-flight total on every retransmit.
 			delete(h.pendingPackets, pn)
-			decisions = append(decisions, pending{entry: pp, alive: false})
-			continue
+			decisions = append(decisions, pending{entry: pp, alive: true})
+			requeued = append(requeued, newPacket)
 		}
-
-		pp.Retries++
-		// Exponential backoff: double the RTO for each retry
-		backoff := rto * time.Duration(1<<pp.Retries)
-		pp.NextRetry = now.Add(backoff)
-
-		// Per spec: retransmissions must use a fresh packet number.
-		//
-		// The retry count belongs to the contents, not to the number: ssu2.md
-		// §"Packet Numbering" requires a new number per resend, and this is the
-		// only place a packet's contents are re-sent, so the count has to ride
-		// with them. Re-tracking the new packet at zero made maxPacketRetries
-		// unreachable — contents that no peer ever acknowledged were retransmitted
-		// forever, each hop consuming a fresh packet number and a fresh RTO
-		// deadline (finding 012).
-		newPacket := h.newDataPacket()
-		newPacket.ResendCount = pp.Retries
-		newPacket.Payload = make([]byte, len(pp.PlaintextPayload))
-		copy(newPacket.Payload, pp.PlaintextPayload)
-
-		// The contents move to a new number, so the migration record must move with
-		// them; otherwise note() records the same I2NP again under newPacket's
-		// number and a superseded session replays it once per resend.
-		rekeys = append(rekeys, rekey{from: pn, to: newPacket.PacketNumber})
-
-		// Remove the old entry and hand its bytes back: sendPacketDirect
-		// re-adds them for the new packet number, so leaving the old entry
-		// counted would double the in-flight total on every retransmit.
-		delete(h.pendingPackets, pn)
-		decisions = append(decisions, pending{entry: pp, alive: true})
-		requeued = append(requeued, newPacket)
-	}
-	h.pendingMutex.Unlock()
+	}()
 
 	// Move each retransmitted packet's migration record onto its new number before
 	// the resend reaches the send loop: trackPendingPacket calls note() under the
@@ -1109,7 +1127,8 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 	// Hard reject: do not wrap past 0xFFFFFFFF.
 	if h.sendSequence == 0xFFFFFFFF {
 		flog("nextSendSequence").Error("packet number exhausted (0xFFFFFFFF): closing connection per SSU2 spec")
-		go h.Close()
+		// I2P-004: safeGo contains a panic in Close so it can't kill the router.
+		safeGo("seqExhaustedClose", func() { _ = h.Close() })
 		return 0xFFFFFFFF
 	}
 
@@ -1123,7 +1142,10 @@ func (h *SSU2Conn) nextSendSequence() uint32 {
 	}
 
 	if h.rekeyInFlight.CompareAndSwap(false, true) {
-		go h.initiateRekey()
+		// I2P-004: safeGo contains a panic in the rekey so it can't kill the
+		// router. initiateRekey's own defers (rekeyInFlight re-arm, cipherMutex
+		// unlock) run during unwinding, so the mechanism stays consistent.
+		safeGo("initiateRekey", h.initiateRekey)
 	}
 	return seq
 }

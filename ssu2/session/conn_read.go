@@ -488,7 +488,8 @@ func (h *SSU2Conn) keepaliveTick() (stop bool) {
 		// Run close in a separate goroutine to avoid deadlock.
 		// keepaliveLoop is counted in h.wg, so if we call h.Close() directly,
 		// it will call h.wg.Wait() and deadlock waiting for this goroutine to finish.
-		go h.Close()
+		// I2P-004: safeGo contains a panic in Close so it can't kill the router.
+		safeGo("keepaliveClose", func() { _ = h.Close() })
 		return true
 	}
 	return false

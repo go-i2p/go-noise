@@ -63,7 +63,11 @@ func (h *SSU2Conn) Handshake(ctx context.Context) error {
 	// a conn but never call Handshake or Close don't leak a goroutine.
 	if h.readsOwnSocket {
 		h.wg.Add(1)
-		go h.recvLoop()
+		// I2P-004: recvLoop reads untrusted datagrams off the socket; safeGo
+		// contains a panic so it can't kill the router. recvLoop's own
+		// `defer h.wg.Done()` still runs during unwinding, so the wg count is
+		// released before safeGo recovers.
+		safeGo("recvLoop", h.recvLoop)
 	}
 
 	// Ensure recvLoop is cleaned up if handshake fails. The CloseWithReason
