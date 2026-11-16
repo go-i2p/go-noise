@@ -7,7 +7,7 @@ require (
 	github.com/go-i2p/crypto v0.1.70002-0.20261112185239-abff3605c696
 	github.com/go-i2p/logger v0.1.70001
 	github.com/go-i2p/noise v1.1.70001-0.20261108230905-d8e68b967e5c
-	github.com/go-i2p/path v0.1.70002-0.20261115025138-fd6bf4744b12
+	github.com/go-i2p/path v0.1.70002-0.20261116190345-7e8caf31d82b
 	github.com/go-i2p/pool v0.1.70002-0.20260908223948-09bd42c580c8
 	github.com/samber/oops v1.23.1
 	github.com/stretchr/testify v1.12.1
