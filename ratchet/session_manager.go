@@ -82,6 +82,12 @@ type SessionManager struct {
 	// Spec ref: ecies.rst §"DateTime" — "Bob must implement a Bloom filter or
 	// other mechanism to prevent replay attacks, if the time is valid."
 	nsReplayCache *replaycache.TTLCache
+
+	// maxSessions bounds the number of active garlic sessions this manager holds
+	// before LRU eviction. Defaults to MaxGarlicSessions; set via
+	// [WithMaxSessions] so an operator can tune it (go-i2p performance.
+	// garlic_encryption_cache_size).
+	maxSessions int
 }
 
 // Lock ordering invariant for ratchet session code:
@@ -99,6 +105,10 @@ type SessionManager struct {
 // Parameters:
 //   - privateKey: the 32-byte X25519 private key to use for this manager.
 //
+// MaxSessions returns the active-session cap in effect for this manager.
+// Primarily for testing and observability.
+func (sm *SessionManager) MaxSessions() int { return sm.maxSessions }
+
 // sessionExpiry returns the appropriate timeout for the given session based
 // on its handshake state. Pending sessions (NSR not yet exchanged) use the
 // shorter nsrPendingTimeout (3 min); established sessions use sessionTimeout
@@ -148,12 +158,16 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 		pendingSessionTimeout: nsrPendingTimeout,
 		nsMaxPastAge:          defaultNSMaxPastAge,
 		nsMaxFutureAge:        defaultNSMaxFutureAge,
+		maxSessions:           MaxGarlicSessions,
 		ctx:                   ctx,
 		cancel:                cancel,
 	}
 
 	for _, opt := range opts {
 		opt(sm)
+	}
+	if sm.maxSessions <= 0 {
+		sm.maxSessions = MaxGarlicSessions
 	}
 
 	sm.nsReplayCache = replaycache.New(replaycache.Config{
@@ -169,7 +183,7 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 // GenerateSessionManager creates a session manager with a freshly
 // generated X25519 key pair. Use this when you do not already have a key
 // pair to use.
-func GenerateSessionManager() (*SessionManager, error) {
+func GenerateSessionManager(opts ...SessionManagerOption) (*SessionManager, error) {
 	flog("GenerateSessionManager").Debug("Generating new session manager with fresh key pair")
 	_, privBytes, err := ecies.GenerateKeyPair()
 	if err != nil {
@@ -178,7 +192,7 @@ func GenerateSessionManager() (*SessionManager, error) {
 
 	var privateKey [32]byte
 	copy(privateKey[:], privBytes)
-	return NewSessionManager(privateKey)
+	return NewSessionManager(privateKey, opts...)
 }
 
 // EncryptGarlicMessage, encryptNewSession, storeNewSessionState,

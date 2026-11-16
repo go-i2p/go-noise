@@ -137,7 +137,7 @@ func (sm *SessionManager) storeNewSessionState(
 		}
 	}
 
-	if len(sm.sessions) >= MaxGarlicSessions {
+	if len(sm.sessions) >= sm.maxSessions {
 		sm.evictLRUSessionLocked()
 	}
 	// Enforce per-peer quota on outbound sessions too, so a bug or caller

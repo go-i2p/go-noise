@@ -276,9 +276,9 @@ func (sm *SessionManager) initializeInboundRatchetState(remotePubKey [32]byte, k
 	session.handshakeState = hs
 	session.isInitiator = false
 
-	// Enforce MaxGarlicSessions to prevent memory exhaustion from malicious peers
+	// Enforce the session cap to prevent memory exhaustion from malicious peers
 	// sending many New Session messages with different ephemeral keys.
-	if len(sm.sessions) >= MaxGarlicSessions {
+	if len(sm.sessions) >= sm.maxSessions {
 		sm.evictLRUSessionLocked()
 	}
 	// Enforce per-peer quota so one hostile identity cannot starve honest

@@ -40,6 +40,17 @@ func WithNSMaxPastAge(d time.Duration) SessionManagerOption {
 	}
 }
 
+// WithMaxSessions overrides the maximum number of active garlic sessions this
+// manager holds before LRU eviction. The default is MaxGarlicSessions. A
+// non-positive value leaves the default in effect.
+func WithMaxSessions(n int) SessionManagerOption {
+	return func(sm *SessionManager) {
+		if n > 0 {
+			sm.maxSessions = n
+		}
+	}
+}
+
 // WithNSMaxFutureAge overrides the default maximum future age for New
 // Session DateTime freshness. A New Session message whose timestamp is more
 // than this far in the future is rejected (it indicates clock skew or a
