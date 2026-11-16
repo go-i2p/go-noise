@@ -50,11 +50,43 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 		}
 	}
 
-	if removed > 0 {
-		flog("CleanupExpiredSessions", logger.Fields{"removed_sessions": removed, "remaining_sessions": len(sm.sessions), "remaining_indexed_tags": len(sm.tagIndex)}).Info("Expired sessions cleaned up")
+	// Evict one-time garlic reply keys whose build reply never arrived. A key is
+	// consumed on decrypt; a failed, dropped, or abandoned build leaves it here
+	// forever, so a peer that triggers many inbound builds grows the map without
+	// bound. sm.mu is already held.
+	evictedOneTime := sm.evictExpiredOneTimeKeysLocked(time.Now())
+
+	if removed > 0 || evictedOneTime > 0 {
+		flog("CleanupExpiredSessions", logger.Fields{
+			"removed_sessions":         removed,
+			"remaining_sessions":       len(sm.sessions),
+			"remaining_indexed_tags":   len(sm.tagIndex),
+			"evicted_one_time_keys":    evictedOneTime,
+			"remaining_one_time_keys":  len(sm.oneTimeKeys),
+		}).Info("Expired sessions cleaned up")
 	}
 
 	return removed
+}
+
+// evictExpiredOneTimeKeysLocked deletes one-time garlic reply keys older than
+// oneTimeKeyTTL, zeroing their key material. The caller must hold sm.mu.
+// Returns the number of keys evicted.
+func (sm *SessionManager) evictExpiredOneTimeKeysLocked(now time.Time) int {
+	if len(sm.oneTimeKeys) == 0 {
+		return 0
+	}
+	evicted := 0
+	for tag, entry := range sm.oneTimeKeys {
+		if now.Sub(entry.created) > oneTimeKeyTTL {
+			// Zero key material before removal (forward-secrecy hygiene, matching
+			// the consumption path in tryDecryptOneTimeKey).
+			sm.oneTimeKeys[tag] = oneTimeKeyEntry{}
+			delete(sm.oneTimeKeys, tag)
+			evicted++
+		}
+	}
+	return evicted
 }
 
 // GetSessionCount returns the number of active sessions.
@@ -62,6 +94,16 @@ func (sm *SessionManager) GetSessionCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return len(sm.sessions)
+}
+
+// OneTimeKeyCount returns the number of registered one-time garlic reply keys
+// currently held. Exposed for observability and testing: it lets callers assert
+// that the count stays bounded under sustained inbound-build load rather than
+// growing with every build whose reply never arrives.
+func (sm *SessionManager) OneTimeKeyCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.oneTimeKeys)
 }
 
 // GetPublicKey returns this session manager's X25519 public key.

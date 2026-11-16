@@ -595,6 +595,40 @@ func TestCleanupExpiredSessions(t *testing.T) {
 	assert.Equal(t, 0, sm.GetSessionCount())
 }
 
+// TestCleanupExpiredSessions_EvictsStaleOneTimeKeys guards the unbounded-growth
+// fix: a one-time garlic reply key whose build reply never arrives must be
+// evicted once it is older than oneTimeKeyTTL, while a fresh key survives.
+// Without eviction, a peer that triggers many inbound builds that never complete
+// grows sm.oneTimeKeys without bound.
+func TestCleanupExpiredSessions_EvictsStaleOneTimeKeys(t *testing.T) {
+	sm := createTestSessionManager(t)
+
+	var staleTag, freshTag [8]byte
+	staleTag[0] = 0x51
+	freshTag[0] = 0xF0
+	var key [32]byte
+
+	sm.RegisterOneTimeKey(staleTag, key)
+	sm.RegisterOneTimeKey(freshTag, key)
+
+	// Backdate the stale key past the TTL; leave the fresh one at now.
+	sm.mu.Lock()
+	stale := sm.oneTimeKeys[staleTag]
+	stale.created = time.Now().Add(-(oneTimeKeyTTL + time.Minute))
+	sm.oneTimeKeys[staleTag] = stale
+	sm.mu.Unlock()
+
+	sm.CleanupExpiredSessions()
+
+	sm.mu.RLock()
+	_, staleFound := sm.oneTimeKeys[staleTag]
+	_, freshFound := sm.oneTimeKeys[freshTag]
+	sm.mu.RUnlock()
+
+	assert.False(t, staleFound, "a one-time key older than the TTL must be evicted")
+	assert.True(t, freshFound, "a fresh one-time key must survive cleanup")
+}
+
 func TestCleanupLoop(t *testing.T) {
 	sm := createTestSessionManager(t)
 

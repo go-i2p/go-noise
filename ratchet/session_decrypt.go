@@ -131,16 +131,16 @@ func (sm *SessionManager) tryDecryptNSR(msgTag [8]byte, encryptedGarlic []byte) 
 func (sm *SessionManager) tryDecryptOneTimeKey(msgTag [8]byte, msg []byte) ([]byte, error, bool) {
 	flog("tryDecryptOneTimeKey", logger.Fields{"message_len": len(msg)}).Debug("Trying to decrypt as one-time symmetric garlic message")
 	sm.mu.Lock()
-	key, found := sm.oneTimeKeys[msgTag]
+	entry, found := sm.oneTimeKeys[msgTag]
 	if found {
 		// Zero the key material in the map before deleting to prevent recovery
 		// from memory dumps. The ratchet's forward secrecy guarantees rely on
 		// securely destroying keys.
-		var zeroKey [32]byte
-		sm.oneTimeKeys[msgTag] = zeroKey
+		sm.oneTimeKeys[msgTag] = oneTimeKeyEntry{}
 		delete(sm.oneTimeKeys, msgTag)
 	}
 	sm.mu.Unlock()
+	key := entry.key
 
 	if !found {
 		return nil, nil, false

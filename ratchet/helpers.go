@@ -118,6 +118,15 @@ const (
 	// Java I2P uses 2 min (SESSION_REPLACE_AGE); i2pd uses 2 min (RESTART_TIMEOUT).
 	// We follow the spec value of 3 minutes.
 	sessionReplaceAge = 3 * time.Minute
+
+	// oneTimeKeyTTL bounds how long a registered one-time garlic reply key may
+	// linger before CleanupExpiredSessions evicts it. A key is consumed the
+	// moment its ShortTunnelBuildReply arrives; if the build fails or the reply
+	// is dropped, the key would otherwise live forever. The reply is expected
+	// within the STBM build timeout (seconds), so a few minutes is generous
+	// headroom while still bounding the map against a peer that triggers many
+	// inbound builds that never complete.
+	oneTimeKeyTTL = 5 * time.Minute
 )
 
 // targetTagWindowSize computes the desired inbound tag window from N, the index

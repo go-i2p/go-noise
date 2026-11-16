@@ -13,6 +13,14 @@ import (
 	"github.com/samber/oops"
 )
 
+// oneTimeKeyEntry is a registered one-time garlic reply key together with the
+// time it was registered, so the cleanup loop can evict keys whose build reply
+// never arrived. The key material is zeroed on both consumption and eviction.
+type oneTimeKeyEntry struct {
+	key     [32]byte
+	created time.Time
+}
+
 // Compile-time interface checks.
 var (
 	_ GarlicSessionManager = (*SessionManager)(nil)
@@ -48,7 +56,12 @@ type SessionManager struct {
 	// transcript hashes via HKDF("AttachLayerEncryption"). Each key is used
 	// exactly once to decrypt the OBEP's garlic-wrapped ShortTunnelBuildReply,
 	// then deleted. Keyed by the last 8 bytes of the 32-byte HKDF output.
-	oneTimeKeys    map[[8]byte][32]byte
+	//
+	// Entries carry their registration time so CleanupExpiredSessions can evict
+	// keys whose build reply never arrived (failed/dropped/abandoned builds).
+	// Without that, a peer that triggers many inbound builds but never sends the
+	// matching reply grows this map without bound (one entry per build).
+	oneTimeKeys    map[[8]byte]oneTimeKeyEntry
 	ourPrivateKey  [32]byte
 	ourPublicKey   [32]byte
 	sessionTimeout time.Duration
@@ -128,7 +141,7 @@ func NewSessionManager(privateKey [32]byte, opts ...SessionManagerOption) (*Sess
 		tagIndex:              make(map[[8]byte]*Session),
 		nsrTagIndex:           make(map[[8]byte]*Session),
 		tagCounterIndex:       make(map[[8]byte]uint32),
-		oneTimeKeys:           make(map[[8]byte][32]byte),
+		oneTimeKeys:           make(map[[8]byte]oneTimeKeyEntry),
 		ourPrivateKey:         privateKey,
 		ourPublicKey:          publicKey,
 		sessionTimeout:        10 * time.Minute,
@@ -192,7 +205,7 @@ func GenerateSessionManager() (*SessionManager, error) {
 func (sm *SessionManager) RegisterOneTimeKey(tag [8]byte, key [32]byte) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.oneTimeKeys[tag] = key
+	sm.oneTimeKeys[tag] = oneTimeKeyEntry{key: key, created: time.Now()}
 	flog("RegisterOneTimeKey", logger.Fields{"tag": fmt.Sprintf("%x", tag)}).Debug("Registered one-time garlic reply key")
 }
 
