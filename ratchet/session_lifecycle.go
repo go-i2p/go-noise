@@ -21,20 +21,34 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 		expired := false
 		var tags [][8]byte
 
-		// Snapshot session state under its lock
-		session.mu.Lock()
-		// Drop the retained previous inbound tag set once its ~3 minute grace
-		// period has elapsed. Spec ref: ecies.md §"Parameters" - "Remove
-		// previous ES tagset after: 3 minutes".
-		session.expireRecvTagsets(sm.removeTagsFromIndex)
-		if !sm.isSessionValid(session) {
-			expired = true
-			tags = session.pendingTags
-			for _, retired := range session.retiredRecv {
-				tags = append(tags, retired.tags...)
+		// Snapshot session state under its lock.
+		//
+		// I2P-004 / GN-009: expireRecvTagsets and isSessionValid walk session
+		// state derived from remote input, so a panic here is reachable. The
+		// cleanup loop runs this under recoverTick, which recovers in its own
+		// frame; a plain Unlock at the end of the section would be skipped by
+		// the unwinding panic and leak session.mu, wedging every other
+		// session.mu holder (the decrypt/encrypt paths, destroyKeyMaterial, and
+		// every later cleanup tick) for the life of the session — turning a
+		// recoverable crash into a permanently stuck garlic session. The section
+		// therefore runs in a closure whose Unlock is deferred, so the panic
+		// path releases the lock too. The slow removal work below stays outside
+		// the section, so the lock still releases before it.
+		func() {
+			session.mu.Lock()
+			defer session.mu.Unlock()
+			// Drop the retained previous inbound tag set once its ~3 minute grace
+			// period has elapsed. Spec ref: ecies.md §"Parameters" - "Remove
+			// previous ES tagset after: 3 minutes".
+			session.expireRecvTagsets(sm.removeTagsFromIndex)
+			if !sm.isSessionValid(session) {
+				expired = true
+				tags = session.pendingTags
+				for _, retired := range session.retiredRecv {
+					tags = append(tags, retired.tags...)
+				}
 			}
-		}
-		session.mu.Unlock()
+		}()
 
 		if expired {
 			delete(sm.sessions, hash)
