@@ -72,11 +72,11 @@ func (sm *SessionManager) CleanupExpiredSessions() int {
 
 	if removed > 0 || evictedOneTime > 0 {
 		flog("CleanupExpiredSessions", logger.Fields{
-			"removed_sessions":         removed,
-			"remaining_sessions":       len(sm.sessions),
-			"remaining_indexed_tags":   len(sm.tagIndex),
-			"evicted_one_time_keys":    evictedOneTime,
-			"remaining_one_time_keys":  len(sm.oneTimeKeys),
+			"removed_sessions":        removed,
+			"remaining_sessions":      len(sm.sessions),
+			"remaining_indexed_tags":  len(sm.tagIndex),
+			"evicted_one_time_keys":   evictedOneTime,
+			"remaining_one_time_keys": len(sm.oneTimeKeys),
 		}).Info("Expired sessions cleaned up")
 	}
 
