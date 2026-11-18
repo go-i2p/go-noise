@@ -4,11 +4,11 @@ go 1.26.8
 
 require (
 	github.com/go-i2p/common v0.1.70002-0.20261114233851-68e4f56429d3
-	github.com/go-i2p/crypto v0.1.70002-0.20261112185239-abff3605c696
+	github.com/go-i2p/crypto v0.1.70002-0.20261118040611-eb79cb4ff0f9
 	github.com/go-i2p/logger v0.1.70001
 	github.com/go-i2p/noise v1.1.70001-0.20261108230905-d8e68b967e5c
-	github.com/go-i2p/path v0.1.70002-0.20261117040444-7e7685ebf623
-	github.com/go-i2p/pool v0.1.70002-0.20260908223948-09bd42c580c8
+	github.com/go-i2p/path v0.1.70002-0.20261118042004-fbba24a5b706
+	github.com/go-i2p/pool v0.1.70002-0.20261118051347-c9735934f8df
 	github.com/samber/oops v1.23.1
 	github.com/stretchr/testify v1.12.1
 )
