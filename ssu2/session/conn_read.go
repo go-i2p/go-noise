@@ -547,6 +547,15 @@ func (h *SSU2Conn) processInboundPacket(packet *SSU2Packet) {
 		h.processDataPackets(packet)
 	case MessageTypeSessionRequest, MessageTypeSessionCreated, MessageTypeSessionConfirmed:
 		h.processHandshakePacket(packet)
+	// A Retry is a handshake reply to our Session Request. The listener
+	// deobfuscates it with the responder's intro key (retryProtector) and
+	// delivers it here; without this case it falls through the switch and is
+	// silently dropped, so awaitSessionCreated never sees it, retransmits the
+	// initial token=0 SessionRequest, and the peer loops on "token mismatch"
+	// until the handshake times out. Route it to the handshake queue like the
+	// other handshake messages so handleRetryResponse can extract the token.
+	case MessageTypeRetry:
+		h.processHandshakePacket(packet)
 	}
 }
 
