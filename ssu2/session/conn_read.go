@@ -360,11 +360,65 @@ func (h *SSU2Conn) asUDPAddr(addr net.Addr) *net.UDPAddr {
 
 func (h *SSU2Conn) decryptInboundHeader(data []byte) bool {
 	hType := h.expectedInboundHeaderType()
+	// During handshake an initiator cannot know whether the inbound packet is a
+	// SessionCreated (k_header_2 = sessCreateHeader2) or a Retry
+	// (k_header_2 = remoteIntroKey); both share k_header_1 = remoteIntroKey, so
+	// bytes 0-7 unmask correctly under either key but bytes 8-15 — including the
+	// type byte at offset 12 — only unmask correctly under the right k_header_2.
+	// expectedInboundHeaderType() can only guess SessionCreated. If that guess
+	// leaves a type byte that is not SessionCreated, retry from the raw bytes with
+	// the Retry protector, mirroring the listener's
+	// pendingOutbound.TrialDeobfuscate disambiguation-by-type-byte. Without this,
+	// a Retry arriving on the own-socket dial path (DialSSU2, the default Dialer)
+	// is deobfuscated with the wrong k_header_2, its type byte unmasks to garbage,
+	// and handleRetryResponse never runs — the handshake times out.
+	if hType == HeaderTypeSessionCreated {
+		return h.decryptInboundHandshakeInitiator(data)
+	}
 	if err := h.headerProtector.DecryptInboundHeader(data, hType); err != nil {
 		h.parseErrors.Add(1)
 		return false
 	}
 	return true
+}
+
+// decryptInboundHandshakeInitiator deobfuscates an inbound handshake-phase header
+// for an initiator, which may be either a SessionCreated or a Retry. It tries the
+// SessionCreated protector first (the expected fast-path reply); if the resulting
+// type byte is not SessionCreated it retries the original bytes with the Retry
+// protector. On success the chosen deobfuscation is committed to data in place and
+// it returns true; if neither protector yields a valid handshake type byte it
+// leaves data untouched and returns false.
+//
+// Each attempt operates on a scratch copy because header deobfuscation is not a
+// clean undo across two different k_header_2 keys: the XOR masks are self-inverse
+// but the long-header-extension ChaCha20 transform covers a different span per
+// type (16-63 for SessionCreated, 16-31 for Retry), so chaining attempts on one
+// buffer would corrupt it.
+func (h *SSU2Conn) decryptInboundHandshakeInitiator(data []byte) bool {
+	// Attempt 1: SessionCreated (k_header_2 = sessCreateHeader2).
+	sc := make([]byte, len(data))
+	copy(sc, data)
+	if err := h.headerProtector.DecryptInboundHeader(sc, HeaderTypeSessionCreated); err == nil &&
+		len(sc) >= 13 && sc[12] == MessageTypeSessionCreated {
+		copy(data, sc)
+		return true
+	}
+
+	// Attempt 2: Retry (k_header_1 = k_header_2 = remoteIntroKey).
+	retryProtector, err := h.headerProtector.GetProtectorForType(HeaderTypeRetry)
+	if err == nil {
+		rt := make([]byte, len(data))
+		copy(rt, data)
+		if err := retryProtector.DecryptHeader(rt); err == nil &&
+			len(rt) >= 13 && rt[12] == MessageTypeRetry {
+			copy(data, rt)
+			return true
+		}
+	}
+
+	h.parseErrors.Add(1)
+	return false
 }
 
 func (h *SSU2Conn) deserializeInboundPacket(packet *SSU2Packet, data []byte) bool {
