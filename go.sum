@@ -4,8 +4,8 @@ github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UF
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/dchest/siphash v1.2.3 h1:QXwFc8cFOR2dSa/gE6o/HokBMWtLUaNDVd+22aKHeEA=
 github.com/dchest/siphash v1.2.3/go.mod h1:0NvQU092bT0ipiFN++/rXm69QG9tVxLAlQHIXMPAkHc=
-github.com/go-i2p/common v0.1.70002-0.20261118194241-62f47be3c537 h1:mVU7x03Lfg9m2tzNUzW4KM2aXAVDON6IJ/4K12JZ5NY=
-github.com/go-i2p/common v0.1.70002-0.20261118194241-62f47be3c537/go.mod h1:SPeo2kx+kqXwIy9bujdSvF6J7Bys7YgkgDjWG1/sIPY=
+github.com/go-i2p/common v0.1.70002-0.20261119030747-fdf972457881 h1:cw3Jute5wtQjY8TGSXTJD2XYxz/f+1avQ1Un+m85FWE=
+github.com/go-i2p/common v0.1.70002-0.20261119030747-fdf972457881/go.mod h1:C2Nu0uU2lcfJ+8ppa3m+Z1uT2cayRh8OocyUxJhn+m4=
 github.com/go-i2p/crypto v0.1.70002-0.20261118201949-96ca77ddd35f h1:6krw9lSJVgl/ytmzrXxdVMdya2Uf8PR7mqEaOgpDI/c=
 github.com/go-i2p/crypto v0.1.70002-0.20261118201949-96ca77ddd35f/go.mod h1:i1aSJTkQPPIXK0+i9IjyIsaVLeG63v7uXkXKFlRO/z4=
 github.com/go-i2p/elgamal v0.1.70001 h1:VJhHyf2k6wXAUvxTGKp+79RdT6XckcldHeXaOks4f9E=
@@ -14,8 +14,8 @@ github.com/go-i2p/logger v0.1.70001 h1:t5Nexs02kO6rwzkXQa5YR9wHKYzjVUw2A7e5gNjup
 github.com/go-i2p/logger v0.1.70001/go.mod h1:EO05RdRNr1CEsVV2mYURSF3eVbnkNLrc+na7D4UPVX4=
 github.com/go-i2p/noise v1.1.70001-0.20261118202026-19560feb154e h1:g/jXcyRydEBKvc68163fHolqhlXv+4sO1eZbNDf0uus=
 github.com/go-i2p/noise v1.1.70001-0.20261118202026-19560feb154e/go.mod h1:+P5Sh1qrQ/uu0i3nU25eo+tSSjHS0/sBoIvIyUx6CQA=
-github.com/go-i2p/path v0.1.70002-0.20261118201936-9e26f1e3f6ec h1:5gdczAdl+vyuHVtjxZw6opFheEtYSy4ADxuG+vwafkw=
-github.com/go-i2p/path v0.1.70002-0.20261118201936-9e26f1e3f6ec/go.mod h1:Fi9IbtN802sc09cXgCYUZbIcrgv7RJE+Wz+CWhejRA4=
+github.com/go-i2p/path v0.1.70002-0.20261118212450-fe09be02080a h1:3C/n4ekCJN804pxJ+ftTuG5bzHlBlOXdyXOZxFNNoYY=
+github.com/go-i2p/path v0.1.70002-0.20261118212450-fe09be02080a/go.mod h1:horx0je/63L1f4dhL/6Ry25ct0rCpry54m5nJq1wJO0=
 github.com/go-i2p/pool v0.1.70002-0.20261118051347-c9735934f8df h1:Lgt1SBDUzmXKjHwHypMa5Pw+H2CjhXp2U8o+vyeV+Aw=
 github.com/go-i2p/pool v0.1.70002-0.20261118051347-c9735934f8df/go.mod h1:Jkib3Jg/7T4PiCIF+HGARIbvWJcRzQEMPeKZrqcaETk=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
